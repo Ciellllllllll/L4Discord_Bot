@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS stamp_usage;
+DROP TABLE IF EXISTS panel_messages;
+DROP TABLE IF EXISTS reaction_role_messages;
+DROP TABLE IF EXISTS keyword_stats;
+DROP TABLE IF EXISTS economy_ledger;
+DROP TABLE IF EXISTS economy_accounts;
+DROP TABLE IF EXISTS werewolf_games;
+DROP TABLE IF EXISTS modmail_threads;
+DROP TABLE IF EXISTS tickets;
+DROP TABLE IF EXISTS audit_log_cursors;
+DROP TABLE IF EXISTS detecter_incidents;
+DROP TABLE IF EXISTS interaction_sessions;
+DROP TABLE IF EXISTS guild_settings;
