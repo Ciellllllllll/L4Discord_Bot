@@ -106,7 +106,7 @@ export async function createAppealRecord(
 ): Promise<{ id: string; code: string }> {
   const id = randomUUID();
   const code = `AP-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
-  await ctx.db
+  await ctx.ticketDb
     .insertInto("appeals")
     .values({
       id,
@@ -131,7 +131,7 @@ export async function createAppealRecord(
 }
 
 export async function getAppealById(ctx: BotContext, appealId: string): Promise<AppealsRow | undefined> {
-  const row = await ctx.db.selectFrom("appeals").selectAll().where("id", "=", appealId).executeTakeFirst();
+  const row = await ctx.ticketDb.selectFrom("appeals").selectAll().where("id", "=", appealId).executeTakeFirst();
   return row;
 }
 
@@ -145,7 +145,7 @@ export async function patchAppeal(
     review_message_id: string | null;
   }>,
 ): Promise<void> {
-  await ctx.db
+  await ctx.ticketDb
     .updateTable("appeals")
     .set({ ...patch, updated_at: sqliteTimestamp() as unknown as Date })
     .where("id", "=", appealId)
@@ -214,7 +214,7 @@ export async function sendAppealReviewMessage(
 
   const rows = buildAppealReviewRows(appeal.id);
   const sent = await (channel as TextChannel).send({ embeds: [embed], components: rows });
-  await ctx.db
+  await ctx.ticketDb
     .updateTable("appeals")
     .set({
       review_message_id: sent.id,

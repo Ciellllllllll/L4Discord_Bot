@@ -51,6 +51,11 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/009_modmail_replies_events.up.sql"),
     down: join(repoRoot, "migrations/sqlite/009_modmail_replies_events.down.sql"),
   },
+  {
+    version: 10,
+    up: join(repoRoot, "migrations/sqlite/010_ticket_tables_to_ticket_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/010_ticket_tables_to_ticket_db.down.sql"),
+  },
 ];
 
 export function getSqliteUserVersion(db: DatabaseLib.Database): number {
@@ -62,12 +67,21 @@ function setSqliteUserVersion(db: DatabaseLib.Database, v: number): void {
   db.pragma(`user_version = ${v}`);
 }
 
+export type SqliteMigrationHooks = {
+  /** 該当バージョンの up を実行する直前（例: v10 で ticket.db へデータコピー） */
+  beforeApplyVersion?: (version: number, mainDb: DatabaseLib.Database) => void;
+};
+
 /** Applies pending migrations in order. Returns applied version numbers. */
-export function applyPendingSqliteMigrations(db: DatabaseLib.Database): number[] {
+export function applyPendingSqliteMigrations(
+  db: DatabaseLib.Database,
+  hooks?: SqliteMigrationHooks,
+): number[] {
   const applied: number[] = [];
   let v = getSqliteUserVersion(db);
   for (const m of SQLITE_MIGRATIONS) {
     if (v < m.version) {
+      hooks?.beforeApplyVersion?.(m.version, db);
       db.exec(readFileSync(m.up, "utf8"));
       setSqliteUserVersion(db, m.version);
       v = m.version;

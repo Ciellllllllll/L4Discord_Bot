@@ -7,7 +7,7 @@ export async function logModmailEvent(
   payload: Record<string, unknown>,
 ): Promise<void> {
   try {
-    await ctx.db
+    await ctx.ticketDb
       .insertInto("modmail_events")
       .values({
         event_type: eventType,

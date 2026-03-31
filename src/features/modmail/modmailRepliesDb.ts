@@ -47,12 +47,12 @@ function asReplyRow(r: Record<string, unknown>): ModmailReplyRow {
 }
 
 export async function replyById(ctx: BotContext, id: string): Promise<ModmailReplyRow | undefined> {
-  const row = await ctx.db.selectFrom("modmail_replies").selectAll().where("id", "=", id).executeTakeFirst();
+  const row = await ctx.ticketDb.selectFrom("modmail_replies").selectAll().where("id", "=", id).executeTakeFirst();
   return row ? asReplyRow(row as Record<string, unknown>) : undefined;
 }
 
 export async function pendingReplyByTicket(ctx: BotContext, ticketId: string): Promise<ModmailReplyRow | undefined> {
-  const row = await ctx.db
+  const row = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
     .where("ticket_id", "=", ticketId)
@@ -63,7 +63,7 @@ export async function pendingReplyByTicket(ctx: BotContext, ticketId: string): P
 }
 
 export async function allPendingReplies(ctx: BotContext): Promise<ModmailReplyRow[]> {
-  const rows = await ctx.db
+  const rows = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
     .where("status", "=", REPLY_STATUS.PENDING)
@@ -73,7 +73,7 @@ export async function allPendingReplies(ctx: BotContext): Promise<ModmailReplyRo
 }
 
 export async function pendingRepliesBySource(ctx: BotContext, sourceMessageId: string): Promise<ModmailReplyRow[]> {
-  const rows = await ctx.db
+  const rows = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
     .where("source_message_id", "=", sourceMessageId)
@@ -83,7 +83,7 @@ export async function pendingRepliesBySource(ctx: BotContext, sourceMessageId: s
 }
 
 export async function pendingRepliesByTicket(ctx: BotContext, ticketId: string): Promise<ModmailReplyRow[]> {
-  const rows = await ctx.db
+  const rows = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
     .where("ticket_id", "=", ticketId)
@@ -105,7 +105,7 @@ export async function createReplyRow(ctx: BotContext, input: {
   attachment_metadata: string;
 }): Promise<void> {
   const ts = sqliteTimestamp();
-  await ctx.db
+  await ctx.ticketDb
     .insertInto("modmail_replies")
     .values({
       id: input.id,
@@ -137,7 +137,7 @@ export async function createReplyRow(ctx: BotContext, input: {
 
 export async function setReplyConfirmMessageId(ctx: BotContext, replyId: string, confirmId: string): Promise<void> {
   const ts = sqliteTimestamp();
-  await ctx.db
+  await ctx.ticketDb
     .updateTable("modmail_replies")
     .set({
       confirm_message_id: confirmId,
@@ -165,7 +165,7 @@ export async function updateReplyStatus(
   }>,
 ): Promise<number> {
   const ts = sqliteTimestamp();
-  const result = await ctx.db
+  const result = await ctx.ticketDb
     .updateTable("modmail_replies")
     .set({
       status: toStatus,
@@ -188,7 +188,7 @@ export async function appendReplyAttachmentsMeta(
   const base = parseAttachmentMetadata(row.attachment_metadata);
   const merged = mergeAttachmentLists(base, extra);
   const ts = sqliteTimestamp();
-  await ctx.db
+  await ctx.ticketDb
     .updateTable("modmail_replies")
     .set({
       attachment_metadata: attachmentMetaToJson(merged),

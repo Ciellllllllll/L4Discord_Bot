@@ -74,7 +74,7 @@ export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
     }
   }
 
-  const openTickets = await ctx.db
+  const openTickets = await ctx.ticketDb
     .selectFrom("modmail_threads")
     .selectAll()
     .where("status", "=", "open")
@@ -100,7 +100,7 @@ export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
       const sent = await thread.send(payload).catch(() => null);
       if (sent) {
         const merged = { ...data, panel_message_id: sent.id, info_message_id: sent.id };
-        await ctx.db
+        await ctx.ticketDb
           .updateTable("modmail_threads")
           .set({
             data: JSON.stringify(merged) as unknown as Record<string, unknown>,

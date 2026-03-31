@@ -1,5 +1,7 @@
 import "dotenv/config";
-import { z } from "zod";
+import { copyTicketDataFromMainToTicketDb } from "../features/tickets/copyTicketDataFromMain.js";
+import { ensureTicketDatabaseSchema } from "../features/tickets/ticketDbSchema.js";
+import { loadConfig } from "../core/config.js";
 import {
   SQLITE_MIGRATIONS,
   applyPendingSqliteMigrations,
@@ -8,22 +10,22 @@ import {
 } from "../core/db/sqliteMigrations.js";
 import { createSqliteDatabase } from "../core/db/sqlite.js";
 
-const envSchema = z.object({
-  DATABASE_PATH: z.string().min(1),
-});
-
 function main(): void {
-  const parsed = envSchema.safeParse(process.env);
-  if (!parsed.success) {
-    console.error("Invalid env: set DATABASE_PATH to your .sqlite file path");
-    process.exit(1);
-  }
+  const config = loadConfig();
   const cmd = process.argv[2] ?? "up";
-  const db = createSqliteDatabase(parsed.data.DATABASE_PATH);
+  const db = createSqliteDatabase(config.DATABASE_PATH);
+  const ticketDb = createSqliteDatabase(config.TICKET_DATABASE_PATH);
 
   try {
+    ensureTicketDatabaseSchema(ticketDb);
     if (cmd === "up") {
-      const applied = applyPendingSqliteMigrations(db);
+      const applied = applyPendingSqliteMigrations(db, {
+        beforeApplyVersion(version, mainSqlite) {
+          if (version === 10) {
+            copyTicketDataFromMainToTicketDb(mainSqlite, ticketDb);
+          }
+        },
+      });
       for (const version of applied) {
         console.log(`Applied migration ${version}`);
       }
@@ -43,6 +45,7 @@ function main(): void {
     }
   } finally {
     db.close();
+    ticketDb.close();
   }
 }
 

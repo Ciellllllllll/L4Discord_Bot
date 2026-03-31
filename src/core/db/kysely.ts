@@ -1,9 +1,17 @@
 import type DatabaseLib from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
-import type { Database } from "./types.js";
+import type { Database, TicketDatabase } from "./types.js";
 
 export function createKysely(sqlite: DatabaseLib.Database): Kysely<Database> {
   return new Kysely<Database>({
+    dialect: new SqliteDialect({
+      database: sqlite,
+    }),
+  });
+}
+
+export function createTicketKysely(sqlite: DatabaseLib.Database): Kysely<TicketDatabase> {
+  return new Kysely<TicketDatabase>({
     dialect: new SqliteDialect({
       database: sqlite,
     }),

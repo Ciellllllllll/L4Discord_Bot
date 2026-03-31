@@ -16,7 +16,7 @@ import { handleSlashCommand } from "./commands/slashHandlers.js";
 import { loadConfig } from "./core/config.js";
 import { getReleaseBundleForLog } from "./core/releaseVersions.js";
 import { getGuildSettingsData } from "./core/guildSettings.js";
-import { createKysely } from "./core/db/kysely.js";
+import { createKysely, createTicketKysely } from "./core/db/kysely.js";
 import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
 import { createSqliteDatabase } from "./core/db/sqlite.js";
 import { createLogger } from "./core/logger.js";
@@ -53,6 +53,8 @@ import {
   sendOrReconnectAiHistoryAdminPanel,
 } from "./features/ai/aiHistoryAdminPanel.js";
 import { handleAiChatMonitorMessage } from "./features/ai/aiQueryService.js";
+import { copyTicketDataFromMainToTicketDb } from "./features/tickets/copyTicketDataFromMain.js";
+import { ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js";
 import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
@@ -75,6 +77,7 @@ async function main(): Promise<void> {
       guildId: config.GUILD_ID,
       databasePath: config.DATABASE_PATH,
       messageLogDbPath: config.MESSAGE_LOG_DB_PATH,
+      ticketDbPath: config.TICKET_DATABASE_PATH,
       vcTimeDbPath: config.VC_TIME_DATABASE_PATH,
       release: getReleaseBundleForLog(),
     },
@@ -82,19 +85,24 @@ async function main(): Promise<void> {
   );
 
   const sqlite = createSqliteDatabase(config.DATABASE_PATH);
+  const ticketSqlite = createSqliteDatabase(config.TICKET_DATABASE_PATH);
   const messageLogSqlite = createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
   const vcTimeSqlite = createSqliteDatabase(config.VC_TIME_DATABASE_PATH);
+  ensureTicketDatabaseSchema(ticketSqlite);
   ensureVcTimeSchema(vcTimeSqlite);
   prepareMessageLogsDatabase(messageLogSqlite);
   const db = createKysely(sqlite);
+  const ticketDb = createTicketKysely(ticketSqlite);
 
   try {
     sqlite.prepare("SELECT 1").get();
+    ticketSqlite.prepare("SELECT 1").get();
     messageLogSqlite.prepare("SELECT 1").get();
     vcTimeSqlite.prepare("SELECT 1").get();
     log.info(
       {
         main: config.DATABASE_PATH,
+        ticket: config.TICKET_DATABASE_PATH,
         messageLog: config.MESSAGE_LOG_DB_PATH,
         vcTime: config.VC_TIME_DATABASE_PATH,
       },
@@ -107,7 +115,13 @@ async function main(): Promise<void> {
 
   try {
     const beforeV = getSqliteUserVersion(sqlite);
-    const applied = applyPendingSqliteMigrations(sqlite);
+    const applied = applyPendingSqliteMigrations(sqlite, {
+      beforeApplyVersion(version, mainDb) {
+        if (version === 10) {
+          copyTicketDataFromMainToTicketDb(mainDb, ticketSqlite);
+        }
+      },
+    });
     const afterV = getSqliteUserVersion(sqlite);
     if (applied.length > 0) {
       log.info({ applied, userVersion: afterV, previousVersion: beforeV }, "sqlite migrations applied");
@@ -139,6 +153,8 @@ async function main(): Promise<void> {
     config,
     db,
     sqlite,
+    ticketDb,
+    ticketSqlite,
     messageLogSqlite,
     vcTimeSqlite,
     log,
@@ -146,7 +162,7 @@ async function main(): Promise<void> {
     vcRanking: new SqliteVcRankingRepository(vcTimeSqlite),
     vcTemp,
   };
-  log.info("repositories: message log (message.db), VC ranking (vc_time.db)");
+  log.info("repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db)");
 
   const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
   let presenceTimer: NodeJS.Timeout | undefined;

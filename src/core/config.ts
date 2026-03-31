@@ -20,6 +20,8 @@ const envSchema = z.object({
   DATABASE_PATH: z.string().min(1),
   /** メッセージログ専用 DB（既定: data/message.db）。環境変数 LOG_DB_PATH でも上書き可（DiscordBOTv2 互換） */
   MESSAGE_LOG_DB_PATH: z.string().min(1).default("data/message.db"),
+  /** Modmail / 異議申し立て / 汎用 tickets 専用 DB（既定: data/ticket.db） */
+  TICKET_DATABASE_PATH: z.string().min(1).default("data/ticket.db"),
   OWNER_ID: z.string().min(1),
   ADMIN_ROLE_ID: z.string().min(1),
   /** 未設定時は releaseVersions の BOT_SEMVER（.env は任意上書き） */

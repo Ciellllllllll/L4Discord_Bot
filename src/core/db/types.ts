@@ -278,17 +278,21 @@ export interface PollsRow {
   updated_at: Date;
 }
 
-export interface Database {
-  guild_settings: GuildSettingsRow;
-  interaction_sessions: InteractionSessionsRow;
-  detecter_incidents: DetecterIncidentsRow;
-  audit_log_cursors: AuditLogCursorsRow;
+/** Modmail / appeals / 汎用 tickets（data/ticket.db） */
+export interface TicketDatabase {
   tickets: TicketsRow;
   appeals: AppealsRow;
   modmail_threads: ModmailThreadsRow;
   modmail_intakes: ModmailIntakesRow;
   modmail_replies: ModmailRepliesRow;
   modmail_events: ModmailEventsRow;
+}
+
+export interface Database {
+  guild_settings: GuildSettingsRow;
+  interaction_sessions: InteractionSessionsRow;
+  detecter_incidents: DetecterIncidentsRow;
+  audit_log_cursors: AuditLogCursorsRow;
   werewolf_games: WerewolfGamesRow;
   economy_accounts: EconomyAccountsRow;
   economy_ledger: EconomyLedgerRow;

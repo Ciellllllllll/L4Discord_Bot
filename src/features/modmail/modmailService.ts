@@ -143,7 +143,7 @@ function buildParentTicketEmbed(row: ModmailThreadRow, data: Record<string, unkn
 
 export async function upsertModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
   const ts = sqliteTimestamp();
-  await ctx.db
+  await ctx.ticketDb
     .insertInto("modmail_intakes")
     .values({
       guild_id: guildId,
@@ -166,7 +166,7 @@ export async function upsertModmailIntake(ctx: BotContext, guildId: string, user
 
 export async function consumeModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
   const ts = sqliteTimestamp();
-  await ctx.db
+  await ctx.ticketDb
     .updateTable("modmail_intakes")
     .set({
       status: INTAKE_CONSUMED,
@@ -182,7 +182,7 @@ export async function activeIntakeByGuildUser(
   guildId: string,
   userId: string,
 ): Promise<boolean> {
-  const row = await ctx.db
+  const row = await ctx.ticketDb
     .selectFrom("modmail_intakes")
     .select(["guild_id"])
     .where("guild_id", "=", guildId)
@@ -193,7 +193,7 @@ export async function activeIntakeByGuildUser(
 }
 
 export async function activeIntakeByUser(ctx: BotContext, userId: string): Promise<{ guild_id: string } | null> {
-  const row = await ctx.db
+  const row = await ctx.ticketDb
     .selectFrom("modmail_intakes")
     .select(["guild_id"])
     .where("user_id", "=", userId)
@@ -207,7 +207,7 @@ export async function getOpenModmailByThreadId(
   ctx: BotContext,
   threadId: string,
 ): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.db
+  const row = await ctx.ticketDb
     .selectFrom("modmail_threads")
     .selectAll()
     .where("thread_id", "=", threadId)
@@ -222,7 +222,7 @@ export async function openModmailByGuildUser(
   guildId: string,
   userId: string,
 ): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.db
+  const row = await ctx.ticketDb
     .selectFrom("modmail_threads")
     .selectAll()
     .where("guild_id", "=", guildId)
@@ -237,7 +237,7 @@ export async function anyOpenModmailByUser(
   ctx: BotContext,
   userId: string,
 ): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.db
+  const row = await ctx.ticketDb
     .selectFrom("modmail_threads")
     .selectAll()
     .where("user_id", "=", userId)
@@ -264,7 +264,7 @@ async function createModmailSkeleton(
     source,
     first_user_dm_message_id: firstDmMessageId,
   };
-  await ctx.db
+  await ctx.ticketDb
     .insertInto("modmail_threads")
     .values({
       id,
@@ -281,7 +281,7 @@ async function createModmailSkeleton(
 }
 
 async function deleteModmailById(ctx: BotContext, id: string): Promise<void> {
-  await ctx.db.deleteFrom("modmail_threads").where("id", "=", id).execute();
+  await ctx.ticketDb.deleteFrom("modmail_threads").where("id", "=", id).execute();
 }
 
 async function updateModmailThreadMeta(
@@ -291,10 +291,10 @@ async function updateModmailThreadMeta(
   threadId: string,
   dataPatch: Record<string, unknown>,
 ): Promise<void> {
-  const row = await ctx.db.selectFrom("modmail_threads").selectAll().where("id", "=", id).executeTakeFirst();
+  const row = await ctx.ticketDb.selectFrom("modmail_threads").selectAll().where("id", "=", id).executeTakeFirst();
   if (!row) return;
   const merged = { ...parseModmailRowData(row.data), ...dataPatch };
-  await ctx.db
+  await ctx.ticketDb
     .updateTable("modmail_threads")
     .set({
       channel_id: parentChannelId,
@@ -306,7 +306,7 @@ async function updateModmailThreadMeta(
 }
 
 export async function getModmailTicketRow(ctx: BotContext, id: string): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.db.selectFrom("modmail_threads").selectAll().where("id", "=", id).executeTakeFirst();
+  const row = await ctx.ticketDb.selectFrom("modmail_threads").selectAll().where("id", "=", id).executeTakeFirst();
   return row as ModmailThreadRow | undefined;
 }
 
@@ -328,7 +328,7 @@ export async function closeModmailTicketInDb(
     close_reason: reason,
     closer_staff_id: closerId,
   };
-  const result = await ctx.db
+  const result = await ctx.ticketDb
     .updateTable("modmail_threads")
     .set({
       status: MM_CLOSED,
