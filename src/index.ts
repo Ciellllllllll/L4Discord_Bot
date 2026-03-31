@@ -7,7 +7,7 @@ import { handleSlashCommand } from "./commands/slashHandlers.js";
 import { loadConfig } from "./core/config.js";
 import { getGuildSettingsData } from "./core/guildSettings.js";
 import { createKysely } from "./core/db/kysely.js";
-import { createPool } from "./core/db/pool.js";
+import { createSqliteDatabase } from "./core/db/sqlite.js";
 import { createLogger } from "./core/logger.js";
 import { handleAuditLogEntry } from "./features/detecter/auditHandler.js";
 import { handleEmojiGuardMessage, handleEmojiGuardReaction } from "./features/moderation/emojiGuard.js";
@@ -22,11 +22,11 @@ import { handlePrefixMessage } from "./message/prefixHandlers.js";
 async function main(): Promise<void> {
   const log = createLogger();
   const config = loadConfig();
-  const pool = createPool(config.DATABASE_URL);
-  const db = createKysely(pool);
+  const sqlite = createSqliteDatabase(config.DATABASE_PATH);
+  const db = createKysely(sqlite);
 
   try {
-    await pool.query("SELECT 1");
+    sqlite.prepare("SELECT 1").get();
   } catch (e) {
     log.error({ err: e }, "database ping failed");
     process.exit(1);
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
     if (presenceTimer) clearInterval(presenceTimer);
     client.destroy();
     await db.destroy();
-    await pool.end();
+    sqlite.close();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());

@@ -4,7 +4,7 @@ const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
   GUILD_ID: z.string().min(1),
-  DATABASE_URL: z.string().min(1),
+  DATABASE_PATH: z.string().min(1),
   OWNER_ID: z.string().min(1),
   ADMIN_ROLE_ID: z.string().min(1),
   BOT_VERSION: z.string().min(1),

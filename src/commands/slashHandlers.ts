@@ -228,7 +228,7 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
   const guildId = interaction.guildId!;
   const rows = await ctx.db
     .selectFrom("stamp_usage")
-    .select(["user_id", sql<string>`sum(count)::text`.as("total")])
+    .select(["user_id", sql<string>`cast(sum(count) as text)`.as("total")])
     .where("guild_id", "=", guildId)
     .groupBy("user_id")
     .orderBy(sql`sum(count)`, "desc")

@@ -1,9 +1,11 @@
-import { Kysely, PostgresDialect } from "kysely";
-import type pg from "pg";
+import type DatabaseLib from "better-sqlite3";
+import { Kysely, SqliteDialect } from "kysely";
 import type { Database } from "./types.js";
 
-export function createKysely(pool: pg.Pool): Kysely<Database> {
+export function createKysely(sqlite: DatabaseLib.Database): Kysely<Database> {
   return new Kysely<Database>({
-    dialect: new PostgresDialect({ pool }),
+    dialect: new SqliteDialect({
+      database: sqlite,
+    }),
   });
 }

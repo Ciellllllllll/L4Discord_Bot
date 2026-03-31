@@ -24,7 +24,7 @@ export async function createSession(
       guild_id: input.guildId,
       domain: input.domain,
       action: input.action,
-      payload: input.payload,
+      payload: JSON.stringify(input.payload) as unknown as Record<string, unknown>,
       executor_user_id: input.executorUserId ?? null,
       expires_at: expiresAt,
       created_at: new Date(),
@@ -49,8 +49,10 @@ export async function getSession(
     .where("expires_at", ">", new Date())
     .executeTakeFirst();
   if (!row) return null;
+  const p = row.payload;
+  const payload = typeof p === "string" ? (JSON.parse(p) as Record<string, unknown>) : (p as Record<string, unknown>);
   return {
-    payload: row.payload as Record<string, unknown>,
+    payload,
     guild_id: row.guild_id,
     domain: row.domain,
     action: row.action,

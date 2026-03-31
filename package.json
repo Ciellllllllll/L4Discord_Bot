@@ -7,28 +7,27 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "migrate": "node --import dotenv/config node_modules/node-pg-migrate/bin/node-pg-migrate.js -f .pgmigraterc.cjs -m migrations up",
-    "migrate:down": "node --import dotenv/config node_modules/node-pg-migrate/bin/node-pg-migrate.js -f .pgmigraterc.cjs -m migrations down",
+    "migrate": "tsx src/scripts/migrateSqlite.ts up",
+    "migrate:down": "tsx src/scripts/migrateSqlite.ts down",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
     "kysely": "^0.27.5",
-    "pg": "^8.13.1",
     "pino": "^9.5.0",
     "semver": "^7.6.3",
     "ulid": "^2.3.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.1",
-    "@types/pg": "^8.11.10",
     "@types/semver": "^7.5.8",
-    "node-pg-migrate": "^7.8.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

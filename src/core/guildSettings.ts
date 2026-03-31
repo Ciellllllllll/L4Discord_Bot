@@ -21,7 +21,8 @@ export async function getGuildSettingsData(
     .where("guild_id", "=", guildId)
     .executeTakeFirst();
   if (!row) return {};
-  const raw = row.data as Record<string, unknown>;
+  const d = row.data;
+  const raw = typeof d === "string" ? (JSON.parse(d) as Record<string, unknown>) : (d as Record<string, unknown>);
   return raw as GuildSettingsData;
 }
 
@@ -36,12 +37,12 @@ export async function upsertGuildSettingsData(
     .insertInto("guild_settings")
     .values({
       guild_id: guildId,
-      data: next as Record<string, unknown>,
+      data: JSON.stringify(next) as unknown as Record<string, unknown>,
       updated_at: new Date(),
     })
     .onConflict((oc) =>
       oc.column("guild_id").doUpdateSet({
-        data: next as Record<string, unknown>,
+        data: JSON.stringify(next) as unknown as Record<string, unknown>,
         updated_at: new Date(),
       }),
     )

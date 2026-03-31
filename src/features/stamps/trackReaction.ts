@@ -27,7 +27,7 @@ export async function trackStampReaction(
     })
     .onConflict((oc) =>
       oc.columns(["guild_id", "user_id", "emoji_id"]).doUpdateSet({
-        count: sql`stamp_usage.count + 1`,
+        count: sql`count + 1`,
         emoji_name: emojiName.slice(0, 128),
         updated_at: new Date(),
       }),

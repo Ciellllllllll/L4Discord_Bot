@@ -37,7 +37,7 @@ export async function handleExtendedAutoReplies(message: Message, ctx: BotContex
         })
         .onConflict((oc) =>
           oc.columns(["guild_id", "user_id", "keyword_key"]).doUpdateSet({
-            count: sql`keyword_stats.count + 1`,
+            count: sql`count + 1`,
             updated_at: new Date(),
           }),
         )

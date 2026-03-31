@@ -9,6 +9,7 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
 } from "discord.js";
+import { randomUUID } from "node:crypto";
 import type { BotContext } from "../bot/context.js";
 import { getGuildSettingsData } from "../core/guildSettings.js";
 import { deleteSession, getSession } from "../core/interactionSessions.js";
@@ -113,6 +114,7 @@ export async function handleDetecterModal(
     const row = await ctx.db
       .insertInto("detecter_incidents")
       .values({
+        id: randomUUID(),
         guild_id: session.guild_id,
         audit_entry_id: String(p.auditEntryId),
         executor_id: p.executorId,
@@ -164,12 +166,13 @@ export async function handleDetecterModal(
     await ctx.db
       .insertInto("tickets")
       .values({
+        id: randomUUID(),
         guild_id: interaction.guildId ?? ctx.config.GUILD_ID,
         kind: "appeal",
         status: "open",
         opener_id: interaction.user.id,
         assignee_id: null,
-        data: { incident_id: incidentId, body: text },
+        data: JSON.stringify({ incident_id: incidentId, body: text }) as unknown as Record<string, unknown>,
         created_at: new Date(),
         updated_at: new Date(),
       })
