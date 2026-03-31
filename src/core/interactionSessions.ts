@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import { sqliteTimestamp } from "./db/sqliteTimestamp.js";
 import type { Database } from "./db/types.js";
 
 const DEFAULT_TTL_HOURS = 48;
@@ -17,6 +18,8 @@ export async function createSession(
 ): Promise<void> {
   const hours = input.ttlHours ?? DEFAULT_TTL_HOURS;
   const expiresAt = new Date(Date.now() + hours * 3600_000);
+  const expiresIso = expiresAt.toISOString();
+  const createdIso = sqliteTimestamp();
   await db
     .insertInto("interaction_sessions")
     .values({
@@ -26,8 +29,8 @@ export async function createSession(
       action: input.action,
       payload: JSON.stringify(input.payload) as unknown as Record<string, unknown>,
       executor_user_id: input.executorUserId ?? null,
-      expires_at: expiresAt,
-      created_at: new Date(),
+      expires_at: expiresIso as unknown as Date,
+      created_at: createdIso as unknown as Date,
     })
     .execute();
 }
@@ -42,11 +45,12 @@ export async function getSession(
   action: string;
   executor_user_id: string | null;
 } | null> {
+  const nowIso = sqliteTimestamp();
   const row = await db
     .selectFrom("interaction_sessions")
     .selectAll()
     .where("id", "=", id)
-    .where("expires_at", ">", new Date())
+    .where("expires_at", ">", nowIso as unknown as Date)
     .executeTakeFirst();
   if (!row) return null;
   const p = row.payload;
@@ -62,4 +66,21 @@ export async function getSession(
 
 export async function deleteSession(db: Kysely<Database>, id: string): Promise<void> {
   await db.deleteFrom("interaction_sessions").where("id", "=", id).execute();
+}
+
+export async function mergeSessionPayload(
+  db: Kysely<Database>,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const cur = await getSession(db, id);
+  if (!cur) return;
+  const next = { ...cur.payload, ...patch };
+  await db
+    .updateTable("interaction_sessions")
+    .set({
+      payload: JSON.stringify(next) as unknown as Record<string, unknown>,
+    })
+    .where("id", "=", id)
+    .execute();
 }

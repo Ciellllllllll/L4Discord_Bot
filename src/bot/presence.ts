@@ -7,6 +7,7 @@ const DEFAULT_LINES = ["L4Discord", "/q で質問", "運営Bot稼働中"];
 export function startPresenceRotation(client: Client, log: pino.Logger, version: string): NodeJS.Timeout {
   let i = 0;
   const lines = [...DEFAULT_LINES, `v${version}`];
+  log.info({ intervalMs: ROTATE_MS, lines }, "presence rotation started");
   const tick = () => {
     const name = lines[i % lines.length] ?? "L4";
     i += 1;

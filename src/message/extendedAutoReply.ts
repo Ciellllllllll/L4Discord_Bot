@@ -1,7 +1,9 @@
 import { EmbedBuilder, type Message } from "discord.js";
 import type { BotContext } from "../bot/context.js";
+import { sqliteTimestamp } from "../core/db/sqliteTimestamp.js";
 import { getGuildSettingsData } from "../core/guildSettings.js";
 import { sql } from "kysely";
+import { looksLikePrefixCommandLine } from "./commandLike.js";
 
 const DISCORD_MSG =
   /https?:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/channels\/(\d+)\/(\d+)\/(\d+)/i;
@@ -20,6 +22,7 @@ function roughSenryuLines(text: string): boolean {
 export async function handleExtendedAutoReplies(message: Message, ctx: BotContext): Promise<boolean> {
   if (!message.guild || message.author.bot) return false;
   if (message.guild.id !== ctx.config.GUILD_ID) return false;
+  if (looksLikePrefixCommandLine(message.content)) return false;
   const s = await getGuildSettingsData(ctx.db, message.guild.id);
   if (s.auto_reply_excluded_channel_ids?.includes(message.channelId)) return false;
 
@@ -33,12 +36,12 @@ export async function handleExtendedAutoReplies(message: Message, ctx: BotContex
           user_id: message.author.id,
           keyword_key: "cold",
           count: BigInt(1),
-          updated_at: new Date(),
+          updated_at: sqliteTimestamp() as unknown as Date,
         })
         .onConflict((oc) =>
           oc.columns(["guild_id", "user_id", "keyword_key"]).doUpdateSet({
             count: sql`count + 1`,
-            updated_at: new Date(),
+            updated_at: sqliteTimestamp() as unknown as Date,
           }),
         )
         .execute();

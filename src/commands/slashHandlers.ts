@@ -4,8 +4,10 @@ import {
   type GuildMember,
   PermissionFlagsBits,
 } from "discord.js";
+import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { BotContext } from "../bot/context.js";
+import { sqliteTimestamp } from "../core/db/sqliteTimestamp.js";
 import { getGuildSettingsData, upsertGuildSettingsData } from "../core/guildSettings.js";
 import { isAdmin } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
@@ -35,11 +37,18 @@ export async function handleSlashCommand(
   ctx: BotContext,
 ): Promise<void> {
   if (!interaction.inGuild() || interaction.guildId !== ctx.config.GUILD_ID) {
+    ctx.log.warn(
+      { command: interaction.commandName, guildId: interaction.guildId, expectedGuildId: ctx.config.GUILD_ID },
+      "slash command rejected (wrong guild)",
+    );
     await interaction.reply({ content: "このサーバーでは利用できません。", ephemeral: true });
     return;
   }
 
-  if (!(await ensureVersion(interaction, ctx))) return;
+  if (!(await ensureVersion(interaction, ctx))) {
+    ctx.log.info({ command: interaction.commandName, userId: interaction.user.id }, "slash command blocked by version gate");
+    return;
+  }
 
   const member: GuildMember | null =
     interaction.member && "roles" in interaction.member ? (interaction.member as GuildMember) : null;
@@ -54,11 +63,12 @@ export async function handleSlashCommand(
     case "vc_rank":
       return handleVcRank(interaction, ctx);
     case "create_werewolfgame":
+      return handleWerewolfCreate(interaction, ctx, member);
     case "end_werewolfgame":
-      return handleStubMod(interaction, ctx, member);
+      return handleWerewolfEnd(interaction, ctx, member);
     case "処刑":
     case "タイムアウト延長":
-      return handleStubMod(interaction, ctx, member);
+      return handlePollSlash(interaction, ctx, member);
     case "disable_emoji":
       return handleDisableEmoji(interaction, ctx, member);
     case "enable_emoji":
@@ -68,6 +78,7 @@ export async function handleSlashCommand(
     case "stamp_ranking":
       return handleStampRanking(interaction, ctx);
     default:
+      ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, ephemeral: true });
   }
 }
@@ -91,6 +102,32 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
       controller.signal,
     );
     markAiUse(interaction.user.id);
+    const gid = interaction.guildId!;
+    const uid = interaction.user.id;
+    await ctx.db
+      .insertInto("ai_history")
+      .values({
+        id: randomUUID(),
+        guild_id: gid,
+        user_id: uid,
+        role: "user",
+        content: text.slice(0, 4000),
+        meta: JSON.stringify({ kind: "slash_q" }) as unknown as Record<string, unknown>,
+        created_at: sqliteTimestamp() as unknown as Date,
+      })
+      .execute();
+    await ctx.db
+      .insertInto("ai_history")
+      .values({
+        id: randomUUID(),
+        guild_id: gid,
+        user_id: uid,
+        role: "assistant",
+        content: content.slice(0, 4000),
+        meta: JSON.stringify({}) as unknown as Record<string, unknown>,
+        created_at: sqliteTimestamp() as unknown as Date,
+      })
+      .execute();
     await interaction.editReply(content.slice(0, 2000) || "(空の応答)");
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek q failed");
@@ -154,7 +191,7 @@ async function handleVcRank(interaction: ChatInputCommandInteraction, ctx: BotCo
   const rows = await ctx.vcRanking.getRanking(interaction.guildId!, period);
   if (rows.length === 0) {
     await interaction.reply({
-      content: "準備中: VCランキングデータに接続していません。",
+      content: "VCランキングデータがありません（まだVC接続が記録されていない可能性があります）。",
       ephemeral: true,
     });
     return;
@@ -163,7 +200,7 @@ async function handleVcRank(interaction: ChatInputCommandInteraction, ctx: BotCo
   await interaction.reply({ content: lines.join("\n").slice(0, 2000), ephemeral: true });
 }
 
-async function handleStubMod(
+async function handleWerewolfCreate(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
   member: GuildMember | null,
@@ -172,7 +209,94 @@ async function handleStubMod(
     await interaction.reply({ content: "権限がありません。", ephemeral: true });
     return;
   }
-  await interaction.reply({ content: STUB, ephemeral: true });
+  const guildId = interaction.guildId!;
+  const channelId = interaction.channelId;
+  if (!channelId) {
+    await interaction.reply({ content: "チャンネルが不明です。", ephemeral: true });
+    return;
+  }
+  const id = randomUUID();
+  await ctx.db
+    .insertInto("werewolf_games")
+    .values({
+      id,
+      guild_id: guildId,
+      channel_id: channelId,
+      host_id: interaction.user.id,
+      phase: "lobby",
+      state: JSON.stringify({ participants: [] }) as unknown as Record<string, unknown>,
+      created_at: sqliteTimestamp() as unknown as Date,
+      updated_at: sqliteTimestamp() as unknown as Date,
+    })
+    .execute();
+  await interaction.reply({
+    content: `人狼募集を開始しました（ロビー）。ゲームID: \`${id.slice(0, 8)}\` / <#${channelId}>`,
+    ephemeral: false,
+  });
+}
+
+async function handleWerewolfEnd(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!member || !isAdmin(member, ctx.config)) {
+    await interaction.reply({ content: "権限がありません。", ephemeral: true });
+    return;
+  }
+  const guildId = interaction.guildId!;
+  const channelId = interaction.channelId;
+  const r = await ctx.db
+    .updateTable("werewolf_games")
+    .set({ phase: "ended", updated_at: sqliteTimestamp() as unknown as Date })
+    .where("guild_id", "=", guildId)
+    .where("channel_id", "=", channelId ?? "")
+    .where("phase", "!=", "ended")
+    .executeTakeFirst();
+  const n = Number(r.numUpdatedRows ?? 0);
+  await interaction.reply({
+    content: n > 0 ? "このチャンネルの人狼募集を終了しました。" : "終了対象のゲームがありません。",
+    ephemeral: true,
+  });
+}
+
+async function handlePollSlash(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!member || !isAdmin(member, ctx.config)) {
+    await interaction.reply({ content: "権限がありません。", ephemeral: true });
+    return;
+  }
+  const guildId = interaction.guildId!;
+  const channelId = interaction.channelId!;
+  const kind = interaction.commandName === "処刑" ? "execution" : "timeout_extend";
+  let state: Record<string, unknown> = { created_by: interaction.user.id };
+  if (kind === "execution") {
+    const target = interaction.options.getUser("target", true);
+    state = { ...state, target_id: target.id };
+  }
+  const id = randomUUID();
+  await ctx.db
+    .insertInto("polls")
+    .values({
+      id,
+      guild_id: guildId,
+      channel_id: channelId,
+      message_id: null,
+      kind,
+      status: "open",
+      state: JSON.stringify(state) as unknown as Record<string, unknown>,
+      ends_at: null,
+      created_at: sqliteTimestamp() as unknown as Date,
+      updated_at: sqliteTimestamp() as unknown as Date,
+    })
+    .execute();
+  await interaction.reply({
+    content: `投票レコードを作成しました（\`${kind}\` / id: \`${id.slice(0, 8)}\`）。`,
+    ephemeral: true,
+  });
 }
 
 async function handleDisableEmoji(

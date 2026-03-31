@@ -1,6 +1,7 @@
 import type { Message } from "discord.js";
 import type { BotContext } from "../bot/context.js";
 import { getGuildSettingsData } from "../core/guildSettings.js";
+import { looksLikePrefixCommandLine } from "./commandLike.js";
 
 const TWITTER_HOST = /https?:\/\/(www\.)?(twitter\.com|x\.com)\//i;
 
@@ -24,6 +25,7 @@ function toVxTwitter(url: string): string {
 export async function handleAutoReply(message: Message, ctx: BotContext): Promise<boolean> {
   if (!message.guild || message.author.bot) return false;
   if (message.guild.id !== ctx.config.GUILD_ID) return false;
+  if (looksLikePrefixCommandLine(message.content)) return false;
   const settings = await getGuildSettingsData(ctx.db, message.guild.id);
   if (settings.auto_reply_excluded_channel_ids?.includes(message.channelId)) return false;
 

@@ -1,13 +1,19 @@
 import type { Kysely } from "kysely";
+import { sqliteTimestamp } from "./db/sqliteTimestamp.js";
 import type { Database } from "./db/types.js";
 
 export type GuildSettingsData = {
   emoji_restricted_user_ids?: string[];
   appeal_instructions_url?: string;
   auto_reply_excluded_channel_ids?: string[];
+  message_log_excluded_channel_ids?: string[];
   member_leave_channel_id?: string;
   cold_keywords?: string[];
   keyword_replies?: Record<string, string>;
+  panel_channels?: {
+    admin_channel_id?: string;
+    user_channel_id?: string;
+  };
   [key: string]: unknown;
 };
 
@@ -38,12 +44,12 @@ export async function upsertGuildSettingsData(
     .values({
       guild_id: guildId,
       data: JSON.stringify(next) as unknown as Record<string, unknown>,
-      updated_at: new Date(),
+      updated_at: sqliteTimestamp() as unknown as Date,
     })
     .onConflict((oc) =>
       oc.column("guild_id").doUpdateSet({
         data: JSON.stringify(next) as unknown as Record<string, unknown>,
-        updated_at: new Date(),
+        updated_at: sqliteTimestamp() as unknown as Date,
       }),
     )
     .execute();

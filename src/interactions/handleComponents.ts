@@ -7,19 +7,28 @@ import {
   TextInputBuilder,
   TextInputStyle,
   type ButtonInteraction,
+  type ChannelSelectMenuInteraction,
   type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../bot/context.js";
+import { sqliteTimestamp } from "../core/db/sqliteTimestamp.js";
 import { getGuildSettingsData } from "../core/guildSettings.js";
 import { deleteSession, getSession } from "../core/interactionSessions.js";
+import {
+  handleAdminHubButton,
+  handleAdminHubSelect,
+  handlePanelModal,
+  handleUserHubSelect,
+} from "../features/panels/hubHandlers.js";
+import { handleSetupChannelSelect, handleSetupHubButton } from "../features/panels/setupWizard.js";
 import { parseCustomId } from "./parseCustomId.js";
 
-export async function handlePanelButton(interaction: ButtonInteraction, _ctx: BotContext): Promise<boolean> {
-  const parsed = parseCustomId(interaction.customId);
-  if (!parsed || parsed.domain !== "panels") return false;
-  await interaction.reply({ content: "セットアップパネルは準備中です。", ephemeral: true });
-  return true;
+export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+  if (await handleSetupHubButton(interaction, ctx)) return true;
+  if (await handleAdminHubButton(interaction, ctx)) return true;
+  return false;
 }
 
 const REASON_INPUT_ID = "detecter_reason_text";
@@ -122,7 +131,7 @@ export async function handleDetecterModal(
         action_type: p.actionType,
         reason,
         appeal_ticket_id: null,
-        created_at: new Date(),
+        created_at: sqliteTimestamp() as unknown as Date,
       })
       .returning("id")
       .executeTakeFirst();
@@ -173,8 +182,8 @@ export async function handleDetecterModal(
         opener_id: interaction.user.id,
         assignee_id: null,
         data: JSON.stringify({ incident_id: incidentId, body: text }) as unknown as Record<string, unknown>,
-        created_at: new Date(),
-        updated_at: new Date(),
+        created_at: sqliteTimestamp() as unknown as Date,
+        updated_at: sqliteTimestamp() as unknown as Date,
       })
       .execute();
     await interaction.reply({ content: "解除申請を受け付けました。", ephemeral: true });
@@ -186,4 +195,20 @@ export async function handleDetecterModal(
 
 export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<void> {
   if (await handleDetecterModal(interaction, ctx)) return;
+  if (await handlePanelModal(interaction, ctx)) return;
+}
+
+export async function routeStringSelectMenu(
+  interaction: StringSelectMenuInteraction,
+  ctx: BotContext,
+): Promise<void> {
+  if (await handleAdminHubSelect(interaction, ctx)) return;
+  if (await handleUserHubSelect(interaction, ctx)) return;
+}
+
+export async function routeChannelSelectMenu(
+  interaction: ChannelSelectMenuInteraction,
+  ctx: BotContext,
+): Promise<void> {
+  if (await handleSetupChannelSelect(interaction, ctx)) return;
 }

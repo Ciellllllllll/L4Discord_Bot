@@ -1,6 +1,7 @@
 import type { MessageReaction, PartialMessageReaction, User } from "discord.js";
 import { sql } from "kysely";
 import type { BotContext } from "../../bot/context.js";
+import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 
 export async function trackStampReaction(
   reaction: MessageReaction | PartialMessageReaction,
@@ -23,13 +24,13 @@ export async function trackStampReaction(
       emoji_id: emojiId,
       emoji_name: emojiName.slice(0, 128),
       count: BigInt(1),
-      updated_at: new Date(),
+      updated_at: sqliteTimestamp() as unknown as Date,
     })
     .onConflict((oc) =>
       oc.columns(["guild_id", "user_id", "emoji_id"]).doUpdateSet({
         count: sql`count + 1`,
         emoji_name: emojiName.slice(0, 128),
-        updated_at: new Date(),
+        updated_at: sqliteTimestamp() as unknown as Date,
       }),
     )
     .execute();
