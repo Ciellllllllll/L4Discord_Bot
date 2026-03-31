@@ -13,6 +13,7 @@ import { isAdmin } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { SLASH_META } from "./slashMeta.js";
 import { deepseekChat } from "../features/ai/deepseek.js";
+import { AiQueryService, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 
 const Q_COOLDOWN_MS = 15_000;
@@ -84,75 +85,38 @@ export async function handleSlashCommand(
 }
 
 async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
-  const text = interaction.options.getString("text", true);
+  const raw = interaction.options.getString("text", true).trim();
+  if (!raw) {
+    await interaction.reply({ content: "質問内容が空です。", ephemeral: true });
+    return;
+  }
   if (!canUseAi(interaction.user.id, Q_COOLDOWN_MS)) {
     await interaction.reply({ content: "少し待ってから再度お試しください。", ephemeral: true });
     return;
   }
   await interaction.deferReply();
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 45_000);
   try {
-    const { content } = await deepseekChat(
-      ctx.config,
-      [
-        { role: "system", content: "簡潔に日本語で答えてください。" },
-        { role: "user", content: text },
-      ],
-      controller.signal,
-    );
+    const svc = new AiQueryService(ctx);
+    await svc.routeSlashInteraction(interaction);
     markAiUse(interaction.user.id);
-    const gid = interaction.guildId!;
-    const uid = interaction.user.id;
-    await ctx.db
-      .insertInto("ai_history")
-      .values({
-        id: randomUUID(),
-        guild_id: gid,
-        user_id: uid,
-        role: "user",
-        content: text.slice(0, 4000),
-        meta: JSON.stringify({ kind: "slash_q" }) as unknown as Record<string, unknown>,
-        created_at: sqliteTimestamp() as unknown as Date,
-      })
-      .execute();
-    await ctx.db
-      .insertInto("ai_history")
-      .values({
-        id: randomUUID(),
-        guild_id: gid,
-        user_id: uid,
-        role: "assistant",
-        content: content.slice(0, 4000),
-        meta: JSON.stringify({}) as unknown as Record<string, unknown>,
-        created_at: sqliteTimestamp() as unknown as Date,
-      })
-      .execute();
-    await interaction.editReply(content.slice(0, 2000) || "(空の応答)");
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek q failed");
-    await interaction.editReply("応答に失敗しました。");
-  } finally {
-    clearTimeout(t);
+    await interaction.editReply({ content: `エラー: ${String(e)}`, embeds: [], components: [] });
   }
 }
 
 async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
-  await interaction.deferReply();
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 45_000);
+  await interaction.deferReply({ ephemeral: true });
   try {
-    const { ms } = await deepseekChat(
-      ctx.config,
-      [{ role: "user", content: 'Reply with exactly the word "pong".' }],
-      controller.signal,
-    );
-    await interaction.editReply(`DeepSeek往復: **${ms}** ms`);
+    const { resolved } = readAiBasePromptFiles(ctx.config);
+    const { ms } = await deepseekChat(ctx.config, [
+      { role: "system", content: resolved },
+      { role: "user", content: "ping" },
+    ]);
+    await interaction.editReply(`DeepSeek 応答時間: **${ms}** ms`);
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek ping failed");
     await interaction.editReply("計測に失敗しました。");
-  } finally {
-    clearTimeout(t);
   }
 }
 

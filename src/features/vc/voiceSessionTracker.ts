@@ -1,5 +1,5 @@
 import type DatabaseLib from "better-sqlite3";
-import type { VoiceState } from "discord.js";
+import type { Client, VoiceState } from "discord.js";
 import { snowflakeToBigInt } from "../../core/snowflake.js";
 
 function closeOpenSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint): void {
@@ -25,6 +25,62 @@ function startSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint, ch
     .run(gid, uid, cid, now);
 }
 
+/** ギルドから外れたメンバーの未終了セッションを閉じる */
+export function endOpenVcSessionForMember(
+  sqlite: DatabaseLib.Database,
+  guildId: string,
+  userId: string,
+): void {
+  const gid = snowflakeToBigInt(guildId);
+  const uid = snowflakeToBigInt(userId);
+  closeOpenSession(sqlite, gid, uid);
+}
+
+/**
+ * 起動時: 実際のボイス接続と DB の未終了行を突き合わせる（Feature_VC.js と同様）
+ */
+export function reconcileVcTimeSessionsAtReady(
+  client: Client,
+  sqlite: DatabaseLib.Database,
+  targetGuildId: string,
+): void {
+  const guild = client.guilds.cache.get(targetGuildId);
+  if (!guild) return;
+
+  const live = new Map<string, string>();
+  for (const member of guild.members.cache.values()) {
+    const chId = member.voice?.channelId;
+    if (chId) live.set(`${guild.id}:${member.id}`, chId);
+  }
+
+  const gid = snowflakeToBigInt(guild.id);
+
+  for (const [key, channelId] of live.entries()) {
+    const uidStr = key.split(":")[1];
+    if (!uidStr) continue;
+    const uid = snowflakeToBigInt(uidStr);
+    const open = sqlite
+      .prepare(
+        `SELECT id FROM sessions WHERE guild_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`,
+      )
+      .get(gid, uid) as { id: number } | undefined;
+    if (!open) startSession(sqlite, gid, uid, channelId);
+  }
+
+  const openRows = sqlite
+    .prepare(
+      `SELECT id, guild_id, user_id FROM sessions WHERE guild_id = ? AND ended_at IS NULL`,
+    )
+    .all(gid) as { id: number; guild_id: bigint | number; user_id: bigint | number }[];
+
+  for (const row of openRows) {
+    const uid =
+      typeof row.user_id === "bigint" ? row.user_id.toString() : String(Math.trunc(Number(row.user_id)));
+    const k = `${guild.id}:${uid}`;
+    if (!live.has(k)) closeOpenSession(sqlite, gid, snowflakeToBigInt(uid));
+  }
+}
+
 export function trackVoiceStateUpdate(
   sqlite: DatabaseLib.Database,
   oldS: VoiceState,
@@ -38,16 +94,8 @@ export function trackVoiceStateUpdate(
   const oldCh = oldS.channelId;
   const newCh = newS.channelId;
 
-  if (oldCh && !newCh) {
-    closeOpenSession(sqlite, gid, uid);
-    return;
-  }
-  if (oldCh && newCh && oldCh !== newCh) {
-    closeOpenSession(sqlite, gid, uid);
-    startSession(sqlite, gid, uid, newCh);
-    return;
-  }
-  if (!oldCh && newCh) {
-    startSession(sqlite, gid, uid, newCh);
-  }
+  if (oldCh && newCh && oldCh === newCh) return;
+
+  closeOpenSession(sqlite, gid, uid);
+  if (newCh) startSession(sqlite, gid, uid, newCh);
 }

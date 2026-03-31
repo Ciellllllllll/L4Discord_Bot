@@ -1,19 +1,11 @@
 import type { Message } from "discord.js";
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  type GuildMember,
-  PermissionFlagsBits,
-} from "discord.js";
 import type { BotContext } from "../bot/context.js";
+import { BOT_SEMVER, PREFIX_COMMAND_MIN_BOT_VERSION } from "../core/releaseVersions.js";
 import { isOwner } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
+import { buildSetupEntryButtonRow } from "../features/panels/setupWizard.js";
 
 const PREFIX = "!";
-const SETUP_INTRODUCED = "0.1.0";
-const WOLF_INTRODUCED = "0.1.0";
-const REPLY_INTRODUCED = "0.1.0";
 
 export async function handlePrefixMessage(message: Message, ctx: BotContext): Promise<boolean> {
   if (message.author.bot) return false;
@@ -23,9 +15,10 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   const without = raw.slice(PREFIX.length).trim();
   const [cmd, ..._rest] = without.split(/\s+/);
   const lower = cmd.toLowerCase();
+  const botVersion = ctx.config.BOT_VERSION ?? BOT_SEMVER;
 
   if (lower === "setup") {
-    if (!isVersionAllowed(ctx.config.BOT_VERSION, SETUP_INTRODUCED)) {
+    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.setup ?? "0.0.0")) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: "setup", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
@@ -35,16 +28,21 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
       ctx.log.info({ command: "setup", userId: message.author.id, outcome: "not_owner" }, "prefix command");
       return true;
     }
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("panels:setupHub:main").setLabel("Setupを開く").setStyle(ButtonStyle.Primary),
-    );
-    await message.reply({ content: "管理用セットアップ:", components: [row] });
-    ctx.log.info({ command: "setup", userId: message.author.id, outcome: "hub_sent" }, "prefix command");
+    if (!message.guildId) {
+      await message.reply("ギルド内でのみ実行できます。");
+      return true;
+    }
+    await message.reply({
+      content:
+        "**OWNER向け:** **ADMIN 用**（メッセージログ・リアクションロール管理など）と **USER 用**（VC作成・Modmail/チケットなど）の送信先チャンネルを設定するには、下のボタンから続行してください。",
+      components: [buildSetupEntryButtonRow()],
+    });
+    ctx.log.info({ command: "setup", userId: message.author.id, outcome: "setup_prompt_sent" }, "prefix command");
     return true;
   }
 
   if (["start", "kill", "guard", "see"].includes(lower)) {
-    if (!isVersionAllowed(ctx.config.BOT_VERSION, WOLF_INTRODUCED)) {
+    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION[lower] ?? "0.0.0")) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: lower, userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
@@ -55,24 +53,18 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   }
 
   if (lower === "reply") {
-    if (!isVersionAllowed(ctx.config.BOT_VERSION, REPLY_INTRODUCED)) {
+    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.reply ?? "0.0.0")) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: "reply", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
     }
-    let member = message.member as GuildMember | null;
-    if (!member && message.guildId) {
-      const g =
-        message.guild ?? (await ctx.client.guilds.fetch(message.guildId).catch(() => null));
-      member = g ? await g.members.fetch(message.author.id).catch(() => null) : null;
-    }
-    if (!member?.permissions.has(PermissionFlagsBits.ManageMessages)) {
-      await message.reply("権限がありません。");
-      ctx.log.info({ command: "reply", userId: message.author.id, outcome: "no_permission" }, "prefix command");
+    if (!message.channel?.isThread()) {
+      await message.reply("Modmail の !reply はチケットスレッド内でのみ使用できます。");
+      ctx.log.info({ command: "reply", userId: message.author.id, outcome: "not_thread" }, "prefix command");
       return true;
     }
-    await message.reply("Modmail返信予約は準備中です。");
-    ctx.log.info({ command: "reply", userId: message.author.id, outcome: "stub" }, "prefix command");
+    /** スレッド内は messageCreate で Modmail 処理済み。ここには通常届かない。 */
+    ctx.log.debug({ command: "reply", userId: message.author.id }, "prefix !reply after thread handler");
     return true;
   }
 

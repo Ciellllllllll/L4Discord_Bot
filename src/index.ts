@@ -14,12 +14,13 @@ import { startPresenceRotation } from "./bot/presence.js";
 import { syncGuildApplicationCommands } from "./bot/syncCommands.js";
 import { handleSlashCommand } from "./commands/slashHandlers.js";
 import { loadConfig } from "./core/config.js";
+import { getReleaseBundleForLog } from "./core/releaseVersions.js";
 import { getGuildSettingsData } from "./core/guildSettings.js";
 import { createKysely } from "./core/db/kysely.js";
 import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
 import { createSqliteDatabase } from "./core/db/sqlite.js";
 import { createLogger } from "./core/logger.js";
-import { handleAuditLogEntry } from "./features/detecter/auditHandler.js";
+import { getDetecterService } from "./features/detecter/detecterService.js";
 import { handleEmojiGuardMessage, handleEmojiGuardReaction } from "./features/moderation/emojiGuard.js";
 import { trackStampReaction } from "./features/stamps/trackReaction.js";
 import {
@@ -28,15 +29,33 @@ import {
   routeModal,
   routeStringSelectMenu,
 } from "./interactions/handleComponents.js";
-import { SqliteMessageLogRepository } from "./adapters/legacyDb/sqliteMessageLogRepository.js";
 import { SqliteVcRankingRepository } from "./adapters/legacyDb/sqliteVcRankingRepository.js";
-import { ingestMessageCreate, ingestMessageDelete, ingestMessageUpdate } from "./features/messageLog/ingest.js";
+import {
+  hydrateMessageIfPartial,
+  ingestMessageCreate,
+  ingestMessageDelete,
+  ingestMessageUpdate,
+  prepareMessageLogsDatabase,
+} from "./features/messageLog/index.js";
 import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
-import { handleReactionRoleAdd } from "./features/reactionRoles/reactionRoleRoute.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
-import { trackVoiceStateUpdate } from "./features/vc/voiceSessionTracker.js";
+import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
+import { ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
+import {
+  endOpenVcSessionForMember,
+  reconcileVcTimeSessionsAtReady,
+  trackVoiceStateUpdate,
+} from "./features/vc/voiceSessionTracker.js";
 import { handleAutoReply } from "./message/autoReply.js";
 import { handleExtendedAutoReplies } from "./message/extendedAutoReply.js";
+import {
+  resolveAiHistoryAdminChannelId,
+  sendOrReconnectAiHistoryAdminPanel,
+} from "./features/ai/aiHistoryAdminPanel.js";
+import { handleAiChatMonitorMessage } from "./features/ai/aiQueryService.js";
+import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
+import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
+import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
 import { handlePrefixMessage } from "./message/prefixHandlers.js";
 
 let mainStarted = false;
@@ -51,16 +70,36 @@ async function main(): Promise<void> {
   const log = createLogger();
   const config = loadConfig();
   log.info(
-    { botVersion: config.BOT_VERSION, guildId: config.GUILD_ID, databasePath: config.DATABASE_PATH },
-    "config loaded",
+    {
+      effectiveBotVersion: config.BOT_VERSION,
+      guildId: config.GUILD_ID,
+      databasePath: config.DATABASE_PATH,
+      messageLogDbPath: config.MESSAGE_LOG_DB_PATH,
+      vcTimeDbPath: config.VC_TIME_DATABASE_PATH,
+      release: getReleaseBundleForLog(),
+    },
+    "config loaded (BOT_VERSION = code default or env override; release bundle from TypeScript)",
   );
 
   const sqlite = createSqliteDatabase(config.DATABASE_PATH);
+  const messageLogSqlite = createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
+  const vcTimeSqlite = createSqliteDatabase(config.VC_TIME_DATABASE_PATH);
+  ensureVcTimeSchema(vcTimeSqlite);
+  prepareMessageLogsDatabase(messageLogSqlite);
   const db = createKysely(sqlite);
 
   try {
     sqlite.prepare("SELECT 1").get();
-    log.info({ path: config.DATABASE_PATH }, "sqlite connection ok");
+    messageLogSqlite.prepare("SELECT 1").get();
+    vcTimeSqlite.prepare("SELECT 1").get();
+    log.info(
+      {
+        main: config.DATABASE_PATH,
+        messageLog: config.MESSAGE_LOG_DB_PATH,
+        vcTime: config.VC_TIME_DATABASE_PATH,
+      },
+      "sqlite connection ok",
+    );
   } catch (e) {
     log.error({ err: e }, "database ping failed");
     process.exit(1);
@@ -90,20 +129,24 @@ async function main(): Promise<void> {
         "GuildMembers",
         "GuildModeration",
         "GuildVoiceStates",
+        "DirectMessages",
       ],
     },
     "discord client created",
   );
+  const vcTemp = new VcTemporaryChannelManager(db, log, client, config);
   const ctx: BotContext = {
     config,
     db,
     sqlite,
+    messageLogSqlite,
+    vcTimeSqlite,
     log,
     client,
-    messageLog: new SqliteMessageLogRepository(sqlite),
-    vcRanking: new SqliteVcRankingRepository(sqlite),
+    vcRanking: new SqliteVcRankingRepository(vcTimeSqlite),
+    vcTemp,
   };
-  log.info("repositories: message log (sqlite), VC ranking (sqlite)");
+  log.info("repositories: message log (message.db), VC ranking (vc_time.db)");
 
   const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
   let presenceTimer: NodeJS.Timeout | undefined;
@@ -135,6 +178,27 @@ async function main(): Promise<void> {
       } catch (err) {
         log.error({ err, guildId: g.id }, "panel reconcile on startup failed");
       }
+      try {
+        await restoreModmailUiState(ctx);
+        log.info({ guildId: g.id }, "modmail UI restore on startup completed");
+      } catch (err) {
+        log.warn({ err, guildId: g.id }, "modmail UI restore on startup failed");
+      }
+      if (resolveAiHistoryAdminChannelId(config)) {
+        try {
+          await sendOrReconnectAiHistoryAdminPanel(ctx);
+          log.info({ guildId: g.id }, "ai query history admin panel reconciled");
+        } catch (err) {
+          log.warn({ err, guildId: g.id }, "ai query history admin panel failed");
+        }
+      }
+      try {
+        reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);
+        log.info({ guildId: g.id }, "vc_time sessions reconciled at startup");
+      } catch (err) {
+        log.error({ err, guildId: g.id }, "vc_time reconcile at startup failed");
+      }
+      vcTemp.startSweep();
     }
     const runSync = () => {
       void syncGuildApplicationCommands(config, log);
@@ -214,14 +278,23 @@ async function main(): Promise<void> {
 
   client.on("messageCreate", async (message) => {
     try {
+      if (!message.guild && !message.author.bot) {
+        if (await handleModmailDmMessage(ctx, message)) return;
+      }
       if (message.guildId === config.GUILD_ID && !message.author.bot) {
         const s = await getGuildSettingsData(db, message.guildId);
         const ex = s.message_log_excluded_channel_ids ?? [];
-        ingestMessageCreate(sqlite, message, config.GUILD_ID, ex);
+        ingestMessageCreate(messageLogSqlite, message, {
+          targetGuildId: config.GUILD_ID,
+          excludedChannelIds: ex,
+          botUserId: client.user?.id ?? "",
+        });
+        if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
       if (await handlePrefixMessage(message, ctx)) return;
       if (await handleAutoReply(message, ctx)) return;
       if (await handleExtendedAutoReplies(message, ctx)) return;
+      if (await handleAiChatMonitorMessage(message, ctx)) return;
       await handleEmojiGuardMessage(message, ctx);
     } catch (err) {
       log.error({ err }, "messageCreate");
@@ -234,7 +307,11 @@ async function main(): Promise<void> {
       if (message.guildId !== config.GUILD_ID) return;
       const s = await getGuildSettingsData(db, message.guildId);
       const ex = s.message_log_excluded_channel_ids ?? [];
-      ingestMessageUpdate(sqlite, message, config.GUILD_ID, ex);
+      ingestMessageUpdate(messageLogSqlite, message, {
+        targetGuildId: config.GUILD_ID,
+        excludedChannelIds: ex,
+        botUserId: client.user?.id ?? "",
+      });
     } catch (err) {
       log.error({ err }, "messageUpdate");
     }
@@ -245,7 +322,13 @@ async function main(): Promise<void> {
       if (!message.guildId || message.guildId !== config.GUILD_ID) return;
       const s = await getGuildSettingsData(db, message.guildId);
       const ex = s.message_log_excluded_channel_ids ?? [];
-      ingestMessageDelete(sqlite, message, config.GUILD_ID, ex);
+      const target = await hydrateMessageIfPartial(message);
+      await cancelPendingRepliesBySource(ctx, target.id);
+      ingestMessageDelete(messageLogSqlite, target, {
+        targetGuildId: config.GUILD_ID,
+        excludedChannelIds: ex,
+        botUserId: client.user?.id ?? "",
+      });
     } catch (err) {
       log.error({ err }, "messageDelete");
     }
@@ -254,7 +337,6 @@ async function main(): Promise<void> {
   client.on("messageReactionAdd", async (reaction, user) => {
     try {
       const u = user.partial ? await user.fetch() : user;
-      await handleReactionRoleAdd(reaction, u, ctx);
       await handleEmojiGuardReaction(reaction, u, ctx);
       await trackStampReaction(reaction, u, ctx);
     } catch (err) {
@@ -264,23 +346,34 @@ async function main(): Promise<void> {
 
   client.on("voiceStateUpdate", (oldS, newS) => {
     try {
-      trackVoiceStateUpdate(sqlite, oldS, newS, config.GUILD_ID);
+      trackVoiceStateUpdate(vcTimeSqlite, oldS, newS, config.GUILD_ID);
+      ctx.vcTemp.onVoiceStateUpdate(oldS, newS);
     } catch (err) {
       log.error({ err }, "voiceStateUpdate");
     }
   });
 
-  client.on("guildAuditLogEntryCreate", async (entry, guild) => {
+  client.on("guildBanAdd", async (ban) => {
     try {
-      await handleAuditLogEntry(entry, guild, client, ctx);
+      await getDetecterService(ctx).onGuildBanAdd(ban);
     } catch (err) {
-      log.error({ err }, "guildAuditLogEntryCreate");
+      log.error({ err }, "guildBanAdd");
+    }
+  });
+
+  client.on("guildMemberUpdate", async (before, after) => {
+    try {
+      await getDetecterService(ctx).onGuildMemberUpdate(before, after);
+    } catch (err) {
+      log.error({ err }, "guildMemberUpdate");
     }
   });
 
   client.on("guildMemberRemove", async (member) => {
     try {
       if (member.guild.id !== config.GUILD_ID) return;
+      await getDetecterService(ctx).onGuildMemberRemove(member);
+      endOpenVcSessionForMember(vcTimeSqlite, member.guild.id, member.id);
       const s = await getGuildSettingsData(db, member.guild.id);
       const chId = s.member_leave_channel_id as string | undefined;
       if (!chId) return;
@@ -310,7 +403,8 @@ async function main(): Promise<void> {
         "messageDelete",
         "messageReactionAdd",
         "voiceStateUpdate",
-        "guildAuditLogEntryCreate",
+        "guildBanAdd",
+        "guildMemberUpdate",
         "guildMemberRemove",
       ],
     },
@@ -325,8 +419,11 @@ async function main(): Promise<void> {
     log.info("shutting down");
     if (presenceTimer) clearInterval(presenceTimer);
     if (reminderTimer) clearInterval(reminderTimer);
+    ctx.vcTemp.stopSweep();
     client.destroy();
     await db.destroy();
+    messageLogSqlite.close();
+    vcTimeSqlite.close();
     sqlite.close();
     process.exit(0);
   };

@@ -10,6 +10,11 @@ export type GuildSettingsData = {
   member_leave_channel_id?: string;
   cold_keywords?: string[];
   keyword_replies?: Record<string, string>;
+  /**
+   * 常設パネル送信先。
+   * ADMIN: メッセージログ・リアクションロール管理など
+   * USER: VC作成・Modmail/チケットなど
+   */
   panel_channels?: {
     admin_channel_id?: string;
     user_channel_id?: string;

@@ -1,14 +1,18 @@
 import { REST, Routes } from "discord.js";
 import type { Logger } from "pino";
-import type { AppConfig } from "../core/config.js";
 import { buildSlashCommands } from "../commands/buildSlashCommands.js";
+import type { AppConfig } from "../core/config.js";
+import { getReleaseBundleForLog } from "../core/releaseVersions.js";
 
 export async function syncGuildApplicationCommands(config: AppConfig, log: Logger): Promise<void> {
   const body = buildSlashCommands();
   const names = body.map((c) => c.name);
 
   if (config.SKIP_COMMAND_SYNC) {
-    log.info({ commandCount: names.length, names, reason: "SKIP_COMMAND_SYNC" }, "guild slash command sync skipped");
+    log.info(
+      { commandCount: names.length, names, reason: "SKIP_COMMAND_SYNC", release: getReleaseBundleForLog() },
+      "guild slash command sync skipped",
+    );
     return;
   }
 
@@ -18,8 +22,13 @@ export async function syncGuildApplicationCommands(config: AppConfig, log: Logge
       body,
     });
     log.info(
-      { guildId: config.GUILD_ID, commandCount: names.length, names },
-      "guild slash commands registered successfully",
+      {
+        guildId: config.GUILD_ID,
+        commandCount: names.length,
+        names,
+        release: getReleaseBundleForLog(),
+      },
+      "guild slash commands registered successfully (release bundle synced from code)",
     );
   } catch (err) {
     log.error({ err, guildId: config.GUILD_ID, commandCount: names.length }, "guild slash command sync failed");

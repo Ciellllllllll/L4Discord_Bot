@@ -21,6 +21,36 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/003_panels_domain.up.sql"),
     down: join(repoRoot, "migrations/sqlite/003_panels_domain.down.sql"),
   },
+  {
+    version: 4,
+    up: join(repoRoot, "migrations/sqlite/004_message_logs_to_message_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/004_message_logs_to_message_db.down.sql"),
+  },
+  {
+    version: 5,
+    up: join(repoRoot, "migrations/sqlite/005_sessions_to_vc_time_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/005_sessions_to_vc_time_db.down.sql"),
+  },
+  {
+    version: 6,
+    up: join(repoRoot, "migrations/sqlite/006_reaction_role_entries.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/006_reaction_role_entries.down.sql"),
+  },
+  {
+    version: 7,
+    up: join(repoRoot, "migrations/sqlite/007_modmail_intakes.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/007_modmail_intakes.down.sql"),
+  },
+  {
+    version: 8,
+    up: join(repoRoot, "migrations/sqlite/008_appeals.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/008_appeals.down.sql"),
+  },
+  {
+    version: 9,
+    up: join(repoRoot, "migrations/sqlite/009_modmail_replies_events.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/009_modmail_replies_events.down.sql"),
+  },
 ];
 
 export function getSqliteUserVersion(db: DatabaseLib.Database): number {

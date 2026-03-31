@@ -1,163 +1,183 @@
 import { randomUUID } from "node:crypto";
-import type { Guild, MessageCreateOptions, MessageEditOptions } from "discord.js";
+import type { Guild } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { getGuildSettingsData, upsertGuildSettingsData } from "../../core/guildSettings.js";
-import { isVersionAllowed } from "../../core/semverGate.js";
-import { PANEL_KIND_ADMIN, PANEL_KIND_USER } from "./constants.js";
-import { buildAdminHubPayload, buildUserHubPayload } from "./hubUi.js";
-import { parsePanelState, serializePanelState, type PanelMessageState } from "./panelState.js";
+import { reconcileReactionRoleEntriesOnly, reconcileReactionRoleAdminPanel } from "../reactionRoles/reactionRoleService.js";
+import { buildMessageLogPanelPayload, messageLogPanelMessageMatches } from "./adminPanelsPayload.js";
+import {
+  LEGACY_PANEL_KIND_ADMIN_HUB,
+  LEGACY_PANEL_KIND_USER_HUB,
+  PANEL_KIND_MESSAGE_LOG_PANEL,
+  PANEL_KIND_REACTION_ROLE_ADMIN,
+  PANEL_KIND_USER_CONTACT_PANEL,
+  PANEL_KIND_VC_CREATOR,
+} from "./constants.js";
+import { tryDeleteBotPanelMessage } from "./panelDiscordOps.js";
+import { deletePanelMessageRow } from "./panelMessageStore.js";
+import { reconcileStaticPanelMessage } from "./panelReconcileStatic.js";
+import { reconcileVcCreatorPanel } from "../vc/vcTemporaryChannelManager.js";
+import { buildUserContactPanelPayload, userContactPanelMessageMatches } from "./userPanelsPayload.js";
+import { serializePanelState, type PanelMessageState } from "./panelState.js";
 
-async function getOrCreatePanelRow(
-  ctx: BotContext,
-  guildId: string,
-  kind: string,
-  channelId: string,
-  initial: PanelMessageState,
-): Promise<{ id: string; message_id: string; data: PanelMessageState }> {
-  const existing = await ctx.db
+const MANAGED_PANEL_KINDS = [
+  PANEL_KIND_VC_CREATOR,
+  PANEL_KIND_REACTION_ROLE_ADMIN,
+  PANEL_KIND_MESSAGE_LOG_PANEL,
+  PANEL_KIND_USER_CONTACT_PANEL,
+] as const;
+const LEGACY_HUB_KINDS = [LEGACY_PANEL_KIND_ADMIN_HUB, LEGACY_PANEL_KIND_USER_HUB] as const;
+
+type ExpectedPanel = { kind: string; channelId: string };
+
+function panelChannelIds(settings: Awaited<ReturnType<typeof getGuildSettingsData>>): {
+  admin?: string;
+  user?: string;
+} {
+  const a = settings.panel_channels?.admin_channel_id?.trim();
+  const u = settings.panel_channels?.user_channel_id?.trim();
+  return {
+    admin: a && /^\d+$/.test(a) ? a : undefined,
+    user: u && /^\d+$/.test(u) ? u : undefined,
+  };
+}
+
+async function buildExpectedPanelsAsync(ctx: BotContext, guildId: string): Promise<ExpectedPanel[]> {
+  const out: ExpectedPanel[] = [];
+  const settings = await getGuildSettingsData(ctx.db, guildId);
+  const { admin, user } = panelChannelIds(settings);
+  if (admin) {
+    out.push({ kind: PANEL_KIND_REACTION_ROLE_ADMIN, channelId: admin });
+    out.push({ kind: PANEL_KIND_MESSAGE_LOG_PANEL, channelId: admin });
+  }
+  if (user) {
+    out.push({ kind: PANEL_KIND_VC_CREATOR, channelId: user });
+    out.push({ kind: PANEL_KIND_USER_CONTACT_PANEL, channelId: user });
+  }
+  return out;
+}
+
+async function cleanupLegacyHubRows(ctx: BotContext, guild: Guild): Promise<void> {
+  const legacy = await ctx.db
     .selectFrom("panel_messages")
     .selectAll()
-    .where("guild_id", "=", guildId)
-    .where("panel_kind", "=", kind)
-    .executeTakeFirst();
-  if (existing) {
-    return {
-      id: existing.id,
-      message_id: existing.message_id,
-      data: parsePanelState(existing.data),
-    };
-  }
-  const id = randomUUID();
-  await ctx.db
-    .insertInto("panel_messages")
-    .values({
-      id,
-      guild_id: guildId,
-      panel_kind: kind,
-      channel_id: channelId,
-      message_id: "",
-      data: JSON.stringify(serializePanelState(initial)) as unknown as Record<string, unknown>,
-      created_at: sqliteTimestamp() as unknown as Date,
-    })
+    .where("guild_id", "=", guild.id)
+    .where("panel_kind", "in", [...LEGACY_HUB_KINDS])
     .execute();
-  return { id, message_id: "", data: initial };
-}
-
-async function savePanelRow(
-  ctx: BotContext,
-  rowId: string,
-  channelId: string,
-  messageId: string,
-  data: PanelMessageState,
-): Promise<void> {
-  await ctx.db
-    .updateTable("panel_messages")
-    .set({
-      channel_id: channelId,
-      message_id: messageId,
-      data: JSON.stringify(serializePanelState(data)) as unknown as Record<string, unknown>,
-    })
-    .where("id", "=", rowId)
-    .execute();
-}
-
-async function sendOrUpdateHub(
-  ctx: BotContext,
-  guild: Guild,
-  channelId: string | undefined,
-  kind: string,
-  payload: MessageCreateOptions,
-): Promise<void> {
-  if (!channelId) return;
-  const panelVer = ctx.config.BOT_VERSION;
-  const pending: PanelMessageState = { panel_version: panelVer, status: "pending" };
-  const row = await getOrCreatePanelRow(ctx, guild.id, kind, channelId, pending);
-  if (!isVersionAllowed(ctx.config.BOT_VERSION, row.data.panel_version)) {
-    await savePanelRow(ctx, row.id, channelId, row.message_id, {
-      ...row.data,
-      status: "pending",
-    });
-    return;
-  }
-  const ch = await guild.channels.fetch(channelId).catch(() => null);
-  if (!ch?.isTextBased()) {
-    await savePanelRow(ctx, row.id, channelId, row.message_id, {
-      ...row.data,
-      status: "error",
-      last_error: "channel_missing",
-    });
-    return;
-  }
-  try {
-    let messageId = row.message_id;
-    const editOpt = payload as MessageEditOptions;
-    if (messageId) {
-      const msg = await ch.messages.fetch(messageId).catch(() => null);
-      if (msg) {
-        await msg.edit(editOpt);
-      } else {
-        const m = await ch.send(payload);
-        messageId = m.id;
-      }
-    } else {
-      const m = await ch.send(payload);
-      messageId = m.id;
+  for (const row of legacy) {
+    if (row.message_id) {
+      await tryDeleteBotPanelMessage(ctx, guild, row.channel_id, row.message_id);
     }
-    await savePanelRow(ctx, row.id, channelId, messageId, {
-      panel_version: panelVer,
-      status: "sent",
-      last_sent_at: new Date().toISOString(),
-    });
-  } catch (e) {
-    const err = e instanceof Error ? e.message : String(e);
-    await savePanelRow(ctx, row.id, channelId, row.message_id, {
-      ...row.data,
-      status: "error",
-      last_error: err.slice(0, 500),
-    });
-    ctx.log.error({ err: e, kind }, "panel send failed");
+    await deletePanelMessageRow(ctx, row.id);
   }
 }
 
 export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string): Promise<void> {
   const guild = await ctx.client.guilds.fetch(guildId).catch(() => null);
   if (!guild) return;
-  const s = await getGuildSettingsData(ctx.db, guildId);
-  const adminCh = s.panel_channels?.admin_channel_id;
-  const userCh = s.panel_channels?.user_channel_id;
-  await sendOrUpdateHub(ctx, guild, adminCh, PANEL_KIND_ADMIN, buildAdminHubPayload());
-  await sendOrUpdateHub(ctx, guild, userCh, PANEL_KIND_USER, buildUserHubPayload());
+
+  await cleanupLegacyHubRows(ctx, guild);
+
+  const expected = await buildExpectedPanelsAsync(ctx, guildId);
+  const expectedKinds = new Set(expected.map((e) => e.kind));
+
+  const tracked = await ctx.db
+    .selectFrom("panel_messages")
+    .selectAll()
+    .where("guild_id", "=", guildId)
+    .where("panel_kind", "in", [...MANAGED_PANEL_KINDS])
+    .execute();
+
+  for (const row of tracked) {
+    if (expectedKinds.has(row.panel_kind)) continue;
+    if (row.message_id) {
+      await tryDeleteBotPanelMessage(ctx, guild, row.channel_id, row.message_id);
+    }
+    await deletePanelMessageRow(ctx, row.id);
+  }
+
+  for (const exp of expected) {
+    if (exp.kind === PANEL_KIND_VC_CREATOR) {
+      await reconcileVcCreatorPanel(ctx, guild, exp.channelId);
+    } else if (exp.kind === PANEL_KIND_REACTION_ROLE_ADMIN) {
+      await reconcileReactionRoleAdminPanel(ctx, guild, exp.channelId);
+    } else if (exp.kind === PANEL_KIND_MESSAGE_LOG_PANEL) {
+      await reconcileStaticPanelMessage(
+        ctx,
+        guild,
+        exp.channelId,
+        exp.kind,
+        messageLogPanelMessageMatches,
+        buildMessageLogPanelPayload,
+        "message_log_panel",
+      );
+    } else if (exp.kind === PANEL_KIND_USER_CONTACT_PANEL) {
+      await reconcileStaticPanelMessage(
+        ctx,
+        guild,
+        exp.channelId,
+        exp.kind,
+        userContactPanelMessageMatches,
+        buildUserContactPanelPayload,
+        "user_contact_panel",
+      );
+    }
+  }
+
+  await reconcileReactionRoleEntriesOnly(ctx, guild);
 }
 
-export async function savePanelChannelTargets(
+/** !Setup 完了時: ADMIN/USER チャンネルを保存し、常設 UI を同期 */
+export async function savePanelChannelsAndReconcile(
   ctx: BotContext,
   guildId: string,
   adminChannelId: string,
   userChannelId: string,
 ): Promise<void> {
   const cur = await getGuildSettingsData(ctx.db, guildId);
+  const { ui_destinations: _legacyUi, ...rest } = cur as typeof cur & { ui_destinations?: unknown };
+  void _legacyUi;
   await upsertGuildSettingsData(ctx.db, guildId, {
-    ...cur,
+    ...rest,
     panel_channels: { admin_channel_id: adminChannelId, user_channel_id: userChannelId },
   });
-  const panelVer = ctx.config.BOT_VERSION;
-  for (const kind of [PANEL_KIND_ADMIN, PANEL_KIND_USER]) {
-    const ch = kind === PANEL_KIND_ADMIN ? adminChannelId : userChannelId;
+
+  const guild = await ctx.client.guilds.fetch(guildId).catch(() => null);
+  if (guild) {
+    for (const kind of [...MANAGED_PANEL_KINDS]) {
+      const existing = await ctx.db
+        .selectFrom("panel_messages")
+        .selectAll()
+        .where("guild_id", "=", guildId)
+        .where("panel_kind", "=", kind)
+        .executeTakeFirst();
+      if (existing?.message_id) {
+        await tryDeleteBotPanelMessage(ctx, guild, existing.channel_id, existing.message_id);
+      }
+    }
+  }
+
+  const pending: PanelMessageState = { ui_version: "0.0.0", status: "pending" };
+  const pendingJson = JSON.stringify(serializePanelState(pending)) as unknown as Record<string, unknown>;
+  for (const [kind, ch] of [
+    [PANEL_KIND_REACTION_ROLE_ADMIN, adminChannelId],
+    [PANEL_KIND_MESSAGE_LOG_PANEL, adminChannelId],
+    [PANEL_KIND_VC_CREATOR, userChannelId],
+    [PANEL_KIND_USER_CONTACT_PANEL, userChannelId],
+  ] as const) {
     const existing = await ctx.db
       .selectFrom("panel_messages")
       .selectAll()
       .where("guild_id", "=", guildId)
       .where("panel_kind", "=", kind)
       .executeTakeFirst();
-    const st: PanelMessageState = { panel_version: panelVer, status: "pending" };
     if (existing) {
       await ctx.db
         .updateTable("panel_messages")
         .set({
           channel_id: ch,
           message_id: "",
-          data: JSON.stringify(serializePanelState(st)) as unknown as Record<string, unknown>,
+          data: pendingJson,
         })
         .where("id", "=", existing.id)
         .execute();
@@ -170,11 +190,12 @@ export async function savePanelChannelTargets(
           panel_kind: kind,
           channel_id: ch,
           message_id: "",
-          data: JSON.stringify(serializePanelState(st)) as unknown as Record<string, unknown>,
+          data: pendingJson,
           created_at: sqliteTimestamp() as unknown as Date,
         })
         .execute();
     }
   }
+
   await reconcilePanelsForGuild(ctx, guildId);
 }
