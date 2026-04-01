@@ -278,6 +278,27 @@ export interface PollsRow {
   updated_at: Date;
 }
 
+/** /q 会話履歴（data/AI_History.db） */
+export interface AiHistoryDatabase {
+  ai_history: AiHistoryRow;
+}
+
+/** 自動モデレーション設定（data/Automoderation.db） */
+export interface AutomodGuildSettingsRow {
+  guild_id: string;
+  data: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  updated_at: Date;
+}
+
+export interface AutomoderationDatabase {
+  automod_guild_settings: AutomodGuildSettingsRow;
+}
+
+/** リマインダーハブ専用（既定: data/reminder.db） */
+export interface ReminderDatabase {
+  reminders: RemindersRow;
+}
+
 /** Modmail / appeals / 汎用 tickets（data/ticket.db） */
 export interface TicketDatabase {
   tickets: TicketsRow;
@@ -301,10 +322,8 @@ export interface Database {
   reaction_role_entries: ReactionRoleEntriesRow;
   panel_messages: PanelMessagesRow;
   stamp_usage: StampUsageRow;
-  reminders: RemindersRow;
   todos: TodosRow;
   announcements: AnnouncementsRow;
   vc_panel_configs: VcPanelConfigsRow;
-  ai_history: AiHistoryRow;
   polls: PollsRow;
 }

@@ -14,10 +14,6 @@ import {
   handleSetupChannelSelect,
   handleSetupUiOpenButton,
 } from "../features/panels/setupWizard.js";
-import {
-  handleModmailTicketStartButton,
-  handleModmailTicketSubmitModal,
-} from "../features/modmail/modmailHandlers.js";
 import { routeModmailStaffAndUserInteractions } from "../features/modmail/modmailStaffInteractions.js";
 import { handleUserContactPanelButton } from "../features/panels/userPanelHandlers.js";
 import {
@@ -35,6 +31,16 @@ import {
   handleAiHistoryAdminStringSelect,
 } from "../features/ai/aiHistoryAdminPanel.js";
 import { handleAiHistoryClearButton } from "../features/ai/aiQueryService.js";
+import {
+  handleReminderHubButton,
+  handleReminderHubChannelSelect,
+  handleReminderHubModal,
+  handleReminderHubStringSelect,
+} from "../features/reminders/reminderHubHandlers.js";
+import {
+  handleAutoModRaidButton,
+  handleAutoModStringSelect,
+} from "../features/moderation/autoModerationHandlers.js";
 import {
   handleAppealReviewButton,
   handleAppealStartButton,
@@ -103,13 +109,14 @@ export async function handleDetecterButton(
 }
 
 export async function routeButton(interaction: ButtonInteraction, ctx: BotContext): Promise<void> {
+  if (await handleAutoModRaidButton(interaction, ctx)) return;
+  if (await handleReminderHubButton(interaction, ctx)) return;
   if (await handleAiHistoryClearButton(interaction, ctx)) return;
   if (await handleAiHistoryAdminButton(interaction, ctx)) return;
   if (await routeMessageLogButton(interaction, ctx)) return;
   if (await routeModmailStaffAndUserInteractions(interaction, ctx)) return;
   if (await handleAppealStartButton(interaction, ctx)) return;
   if (await handleAppealReviewButton(interaction, ctx)) return;
-  if (await handleModmailTicketStartButton(interaction, ctx)) return;
   if (await handleUserContactPanelButton(interaction, ctx)) return;
   if (await handleReactionRoleButton(interaction, ctx)) return;
   if (await handleDetecterButton(interaction, ctx)) return;
@@ -139,12 +146,12 @@ export async function handleDetecterModal(
 }
 
 export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<void> {
+  if (await handleReminderHubModal(interaction, ctx)) return;
   if (await routeMessageLogModal(interaction, ctx)) return;
   if (await handleReactionRoleModal(interaction, ctx)) return;
   if (await handleAppealSubmitModal(interaction, ctx)) return;
   if (await routeModmailStaffAndUserInteractions(interaction, ctx)) return;
   if (await handleDetecterModal(interaction, ctx)) return;
-  if (await handleModmailTicketSubmitModal(interaction, ctx)) return;
   if (await handleVcCreateModal(interaction, ctx)) return;
 }
 
@@ -152,6 +159,8 @@ export async function routeStringSelectMenu(
   interaction: StringSelectMenuInteraction,
   ctx: BotContext,
 ): Promise<void> {
+  if (await handleAutoModStringSelect(interaction, ctx)) return;
+  if (await handleReminderHubStringSelect(interaction, ctx)) return;
   if (await handleAiHistoryAdminStringSelect(interaction, ctx)) return;
   if (await handleReactionRoleStringSelect(interaction, ctx)) return;
   if (await handleVcGenreSelect(interaction, ctx)) return;
@@ -162,4 +171,5 @@ export async function routeChannelSelectMenu(
   ctx: BotContext,
 ): Promise<void> {
   if (await handleSetupChannelSelect(interaction, ctx)) return;
+  if (await handleReminderHubChannelSelect(interaction, ctx)) return;
 }

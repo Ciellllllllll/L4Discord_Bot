@@ -15,6 +15,7 @@ import { SLASH_META } from "./slashMeta.js";
 import { deepseekChat } from "../features/ai/deepseek.js";
 import { AiQueryService, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
+import { reconcilePanelsForGuild } from "../features/panels/panelService.js";
 
 const Q_COOLDOWN_MS = 15_000;
 const STUB = "この機能は準備中です。";
@@ -78,6 +79,8 @@ export async function handleSlashCommand(
       return handleStampCount(interaction, ctx);
     case "stamp_ranking":
       return handleStampRanking(interaction, ctx);
+    case "reminder_hub":
+      return handleReminderHubSlash(interaction, ctx);
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, ephemeral: true });
@@ -328,4 +331,19 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
   }
   const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> — ${r.total}`);
   await interaction.reply({ content: lines.join("\n").slice(0, 2000), ephemeral: true });
+}
+
+async function handleReminderHubSlash(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await interaction.reply({ content: "このコマンドを使うにはサーバー管理の権限が必要です。", ephemeral: true });
+    return;
+  }
+  await reconcilePanelsForGuild(ctx, interaction.guildId!);
+  await interaction.reply({
+    content: "!Setup で指定した ADMIN チャンネルにリマインダーハブを同期しました。",
+    ephemeral: true,
+  });
 }

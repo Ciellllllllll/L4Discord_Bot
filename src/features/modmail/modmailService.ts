@@ -510,127 +510,6 @@ export async function relayUserPayloadToThread(
   void logModmailEvent(ctx, "USER_REPLY_RELAY", { ticket_id: row.id, guild_id: row.guild_id, kind });
 }
 
-export async function relayModalIntakeToThread(
-  ctx: BotContext,
-  row: ModmailThreadRow,
-  user: User,
-  title: string,
-  body: string,
-): Promise<void> {
-  if (!row.thread_id) return;
-  const guild = await ctx.client.guilds.fetch(row.guild_id).catch(() => null);
-  if (!guild) return;
-  const thread = await guild.channels.fetch(row.thread_id).catch(() => null);
-  if (!thread || !thread.isTextBased()) return;
-  const relayCh = thread as RelayChannel;
-
-  const header = [
-    "フォーム受付",
-    `送信日時: ${formatDiscordTime(new Date().toISOString())}`,
-    "この送信でチケットが作成されました。",
-    `申請者: ${user.tag} (<@${user.id}>)`,
-    `タイトル: ${title || "(未設定)"}`,
-    "相談内容:",
-    body || "(本文なし)",
-  ].join("\n");
-  await sendLong(relayCh, header).catch((e) => {
-    ctx.log.warn({ err: e, modmailId: row.id }, "modmail modal relay failed");
-  });
-}
-
-export async function createTicketFromIntakeForm(ctx: BotContext, input: {
-  guildId: string;
-  user: User;
-  title: string;
-  body: string;
-}): Promise<{ ok: boolean; message: string }> {
-  const gid = input.guildId.trim();
-  const uid = input.user.id;
-  const normalizedTitle = trimMax(input.title.trim(), 120);
-  const normalizedBody = trimMax(input.body.trim(), 1000);
-  if (!gid || !normalizedTitle || !normalizedBody) {
-    return { ok: false, message: "タイトルと相談内容を入力してください。" };
-  }
-
-  const open = await openModmailByGuildUser(ctx, gid, uid);
-  if (open) {
-    return { ok: false, message: "現在対応中のチケットがあります。新規作成はできません。" };
-  }
-
-  await upsertModmailIntake(ctx, gid, uid);
-  const intakeOk = await activeIntakeByGuildUser(ctx, gid, uid);
-  if (!intakeOk) {
-    ctx.log.warn({ guildId: gid, userId: uid }, "modmail intake missing after upsert");
-    return {
-      ok: false,
-      message: "受付情報の同期に失敗しました。サーバーで Modmail を再度開いてからお試しください。",
-    };
-  }
-
-  const guild = await ctx.client.guilds.fetch(gid).catch(() => null);
-  if (!guild) {
-    return { ok: false, message: "サーバー情報の取得に失敗しました。時間をおいて再度お試しください。" };
-  }
-
-  if (!resolveModmailParentChannelId(ctx.config)) {
-    return {
-      ok: false,
-      message:
-        "Modmail 用の親チャンネル（MODMAIL_LOG_CHANNEL_ID または LOG_CHANNEL_ID）が未設定です。管理者に連絡してください。",
-    };
-  }
-
-  let mmId: string;
-  try {
-    mmId = await createModmailSkeleton(ctx, gid, uid, normalizedBody, normalizedTitle, null, "modal");
-  } catch (e) {
-    ctx.log.warn({ err: e }, "modmail skeleton insert failed");
-    return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
-  }
-
-  const row = await fetchModmailRow(ctx, mmId);
-  if (!row) {
-    return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
-  }
-
-  let created: StaffThreadResult | null;
-  try {
-    created = await createStaffThread(ctx, guild, row);
-  } catch (e) {
-    ctx.log.warn({ err: e, modmailId: mmId }, "modmail createStaffThread failed");
-    created = null;
-  }
-
-  if (!created) {
-    await deleteModmailById(ctx, mmId);
-    return {
-      ok: false,
-      message:
-        "チケット作成に失敗しました。親チャンネルがテキスト・お知らせ・フォーラムか、Bot にメッセージ送信・スレッド作成権限があるか確認してください。",
-    };
-  }
-
-  const parentId = resolveModmailParentChannelId(ctx.config)!;
-  await updateModmailThreadMeta(ctx, mmId, parentId, created.threadId, {
-    panel_message_id: created.summaryMessageId,
-    info_message_id: created.summaryMessageId,
-    subject: normalizedTitle,
-    body: normalizedBody,
-  });
-
-  const full = await fetchModmailRow(ctx, mmId);
-  if (!full?.thread_id) {
-    ctx.log.warn({ modmailId: mmId }, "modmail row missing after thread create");
-    return { ok: false, message: "チケット作成後のデータ同期に失敗しました。管理者に連絡してください。" };
-  }
-
-  await consumeModmailIntake(ctx, gid, uid);
-  await relayModalIntakeToThread(ctx, full, input.user, normalizedTitle, normalizedBody).catch(() => undefined);
-
-  const code = ticketDisplayCode(full.id);
-  return { ok: true, message: `チケットを作成しました。受付番号: ${code}` };
-}
-
 export async function createFromFirstDm(
   ctx: BotContext,
   intakeGuildId: string,
@@ -756,7 +635,7 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
         embeds: [
           new EmbedBuilder()
             .setTitle("Modmail のご案内")
-            .setDescription("サーバー内の Modmail / チケットボタンから相談を開始してください。")
+            .setDescription("サーバー内の「Modmailを始める」から相談を開始してください。")
             .setColor(0xe67e22)
             .setTimestamp(new Date()),
         ],
@@ -790,8 +669,8 @@ export async function sendModmailStartDm(user: User, rows: unknown[]): Promise<v
         .setDescription(
           [
             "Modmail 受付です。",
-            "下の「チケットを作成」ボタンを押して、タイトルと相談内容を入力してください。",
-            "送信するとスタッフ側にチケットが作成されます。",
+            "この Bot 宛の DM に、相談内容を送ってください（最初のメッセージでチケットが作成されます）。",
+            "添付が必要な場合は「添付ファイルを送信」ボタンから送ってください。",
           ].join("\n"),
         )
         .setColor(0x3498db)

@@ -4,16 +4,16 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  type CategoryChannel,
   type Client,
   type Guild,
   type Message,
   type VoiceBasedChannel,
+  type VoiceChannel,
   type VoiceState,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import type { Kysely } from "kysely";
 import type { AppConfig } from "../../core/config.js";
-import type { Database } from "../../core/db/types.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import type pino from "pino";
 import { PANEL_KIND_VC_CREATOR } from "../panels/constants.js";
@@ -34,34 +34,32 @@ type ActiveVcMeta = {
   userEverJoined: boolean;
 };
 
-async function resolveCategoryId(
-  db: Kysely<Database>,
-  guildId: string,
-  genre: string,
-  envFallback: { talk?: string; game?: string; work?: string },
-): Promise<string | null> {
-  const row = await db
-    .selectFrom("vc_panel_configs")
-    .select("category_id")
-    .where("guild_id", "=", guildId)
-    .where("name", "=", genre)
-    .executeTakeFirst();
-  if (row?.category_id && /^\d+$/.test(String(row.category_id).trim())) {
-    return String(row.category_id).trim();
+/** サーバー上のボイスチャンネルを表示順で列挙 */
+function getSortedVoiceChannels(guild: Guild): VoiceChannel[] {
+  return [...guild.channels.cache.values()]
+    .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice)
+    .sort((a, b) => a.rawPosition - b.rawPosition);
+}
+
+/**
+ * 既存の通常ボイスチャンネルが属するカテゴリを1つ選ぶ（先頭のカテゴリ付きVCの親）。
+ * カテゴリなしのVCのみの場合は null（作成時は親なしで同列に置く）。
+ */
+function resolveDefaultVoiceCategory(guild: Guild): CategoryChannel | null {
+  for (const vc of getSortedVoiceChannels(guild)) {
+    const pid = vc.parentId;
+    if (!pid) continue;
+    const p = guild.channels.cache.get(pid);
+    if (p?.type === ChannelType.GuildCategory) {
+      return p as CategoryChannel;
+    }
   }
-  const map: Record<string, string | undefined> = {
-    雑談: envFallback.talk,
-    ゲーム: envFallback.game,
-    作業: envFallback.work,
-  };
-  const id = map[genre]?.trim();
-  return id && /^\d+$/.test(id) ? id : null;
+  return null;
 }
 
 export const vcCreatorErrText = {
-  invalid_genre: "無効なジャンルです。",
-  category_missing:
-    "カテゴリが見つかりません。vc_panel_configs にジャンル名（雑談・ゲーム・作業）で登録するか、環境変数 VC_CATEGORY_* を設定してください。",
+  no_voice_category:
+    "サーバーにボイスチャンネルがありません。先に通常のボイスチャンネルを1つ以上作成してからお試しください。",
   invalid_name_length: "VC名は2〜30文字で入力してください。",
   api_error: "VCの作成に失敗しました。しばらくしてからもう一度お試しください。",
 } as const;
@@ -73,7 +71,6 @@ export class VcTemporaryChannelManager {
   private sweepTimer: NodeJS.Timeout | undefined;
 
   constructor(
-    private readonly db: Kysely<Database>,
     private readonly log: pino.Logger,
     private readonly client: Client,
     private readonly config: AppConfig,
@@ -168,23 +165,15 @@ export class VcTemporaryChannelManager {
 
   async createTemporaryVc(
     guild: Guild,
-    opts: { genre: string; name: string; creatorUserId: string; creatorTag: string },
+    opts: { name: string; creatorUserId: string; creatorTag: string },
   ): Promise<
     | { ok: true; channelId: string; name: string }
     | { ok: false; error: VcCreatorErrorKey }
   > {
-    const categoryId = await resolveCategoryId(this.db, guild.id, opts.genre, {
-      talk: this.config.VC_CATEGORY_TALK,
-      game: this.config.VC_CATEGORY_GAME,
-      work: this.config.VC_CATEGORY_WORK,
-    });
-    if (!categoryId) return { ok: false, error: "invalid_genre" };
+    const voices = getSortedVoiceChannels(guild);
+    if (voices.length === 0) return { ok: false, error: "no_voice_category" };
 
-    const category =
-      guild.channels.cache.get(categoryId) ?? (await guild.channels.fetch(categoryId).catch(() => null));
-    if (!category || category.type !== ChannelType.GuildCategory) {
-      return { ok: false, error: "category_missing" };
-    }
+    const category = resolveDefaultVoiceCategory(guild);
 
     const vcName = String(opts.name || "").trim();
     if (vcName.length < 2 || vcName.length > 30) return { ok: false, error: "invalid_name_length" };
@@ -193,7 +182,7 @@ export class VcTemporaryChannelManager {
       const vc = await guild.channels.create({
         name: vcName,
         type: ChannelType.GuildVoice,
-        parent: category,
+        ...(category ? { parent: category } : {}),
         reason: `一時VC 作成者: ${opts.creatorTag || opts.creatorUserId}`,
       });
 
@@ -265,7 +254,7 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
 
   const ch = await guild.channels.fetch(channelId).catch(() => null);
   if (!ch?.isTextBased()) {
-    ctx.log.warn({ channelId }, "VC_UI channel missing or not text");
+    ctx.log.warn({ channelId }, "USER panel channel missing or not text (VC creator panel)");
     await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
       ...row.data,
       status: "error",

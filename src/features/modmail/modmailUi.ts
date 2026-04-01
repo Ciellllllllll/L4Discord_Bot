@@ -7,25 +7,7 @@ import {
   TextInputStyle,
 } from "discord.js";
 import { FileUploadBuilder, LabelBuilder } from "@discordjs/builders";
-import {
-  createPendingModmailContext,
-  MODMAIL_TICKET_START_PREFIX,
-} from "./modmailConstants.js";
 import { buildThreePartId, MM_IDS } from "./modmailIds.js";
-
-export function buildModmailTicketStartRows(guildId: string, userId: string): {
-  ctxId: string;
-  rows: ActionRowBuilder<ButtonBuilder>[];
-} {
-  const ctxId = createPendingModmailContext(guildId, userId);
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`${MODMAIL_TICKET_START_PREFIX}${ctxId}`)
-      .setLabel("チケットを作成")
-      .setStyle(ButtonStyle.Primary),
-  );
-  return { ctxId, rows: [row] };
-}
 
 /** DM 開始時: 添付用（guildId.userId.nonce） */
 export function buildModmailStartAttachmentRow(guildId: string, userId: string): ActionRowBuilder<ButtonBuilder> {

@@ -50,10 +50,8 @@ export async function handleVcCreateModal(
     return true;
   }
 
-  const genre = interaction.customId.slice(VC_NAME_MODAL_PREFIX.length) || "";
   const vcName = interaction.fields.getTextInputValue("vc_name_input").trim();
   const result = await ctx.vcTemp.createTemporaryVc(guild, {
-    genre,
     name: vcName,
     creatorUserId: interaction.user.id,
     creatorTag: interaction.user.tag,

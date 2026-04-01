@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEPLOY_GUILD_ID, DEPLOY_OWNER_ID } from "./deployConstants.js";
 import { BOT_SEMVER } from "./releaseVersions.js";
 
 /** 未設定・空は true（DiscordBOTv2 / AI_Query 互換） */
@@ -16,13 +17,11 @@ function envFlagFalseByDefault(v: unknown): boolean {
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
-  GUILD_ID: z.string().min(1),
-  DATABASE_PATH: z.string().min(1),
+  DATABASE_PATH: z.string().min(1).default("data/l4discord.sqlite"),
   /** メッセージログ専用 DB（既定: data/message.db）。環境変数 LOG_DB_PATH でも上書き可（DiscordBOTv2 互換） */
   MESSAGE_LOG_DB_PATH: z.string().min(1).default("data/message.db"),
   /** Modmail / 異議申し立て / 汎用 tickets 専用 DB（既定: data/ticket.db） */
   TICKET_DATABASE_PATH: z.string().min(1).default("data/ticket.db"),
-  OWNER_ID: z.string().min(1),
   ADMIN_ROLE_ID: z.string().min(1),
   /** 未設定時は releaseVersions の BOT_SEMVER（.env は任意上書き） */
   BOT_VERSION: z.preprocess(
@@ -46,10 +45,6 @@ const envSchema = z.object({
   PROMPT_OPTIMIZER_MIN_MESSAGES: z.coerce.number().int().min(2).default(6),
   PROMPT_OPTIMIZER_INTERVAL_MESSAGES: z.coerce.number().int().min(1).default(4),
   PROMPT_OPTIMIZER_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.2),
-  /**
-   * /q 履歴管理パネルを置くテキストチャンネル。未設定時は LOG_CHANNEL_ID → LOGGER_CHANNEL_ID → DETECTER_FALLBACK_CHANNEL_ID
-   */
-  AI_QUERY_HISTORY_UI_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   AI_JUDGE_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
   AI_JUDGE_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.15),
   AI_COMMAND_EXECUTION_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
@@ -96,12 +91,12 @@ const envSchema = z.object({
   GUILD_MISMATCH_POLICY: z.enum(["warn"]).optional(),
   /** VC 滞在ログ専用 DB（既定: data/vc_time.db） */
   VC_TIME_DATABASE_PATH: z.string().min(1).default("data/vc_time.db"),
-  /** 一時VC: ジャンル別カテゴリ（vc_panel_configs の name と併用可） */
-  VC_CATEGORY_TALK: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
-  VC_CATEGORY_GAME: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
-  VC_CATEGORY_WORK: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
-  /** 設定時、VC 作成パネルを恒久投稿・再接続するテキストチャンネル ID */
-  VC_UI_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  /** /q 会話履歴専用 DB（既定: data/AI_History.db） */
+  AI_HISTORY_DATABASE_PATH: z.string().min(1).default("data/AI_History.db"),
+  /** 自動モデレーション設定専用 DB（既定: data/Automoderation.db） */
+  AUTOMODERATION_DATABASE_PATH: z.string().min(1).default("data/Automoderation.db"),
+  /** リマインダーハブ専用 DB（既定: data/reminder.db）。REMINDER_DB_PATH でも上書き可（DiscordBOTv2 互換） */
+  REMINDER_DATABASE_PATH: z.string().min(1).default("data/reminder.db"),
   /**
    * リアクションロール管理パネル（作成/編集/削除）を置くテキストチャンネル ID。
    * REACTION_ROLE_OUTPUT_CHANNEL_ID（DiscordBOTv2 互換）でも指定可。
@@ -110,7 +105,8 @@ const envSchema = z.object({
   REACTION_ROLE_OUTPUT_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
 });
 
-export type AppConfig = z.infer<typeof envSchema>;
+type ParsedEnvConfig = z.infer<typeof envSchema>;
+export type AppConfig = ParsedEnvConfig & { GUILD_ID: string; OWNER_ID: string };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const envWithLogDefaults = {
@@ -119,11 +115,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.MESSAGE_LOG_DB_PATH ||
       env.LOG_DB_PATH ||
       "data/message.db",
+    REMINDER_DATABASE_PATH:
+      env.REMINDER_DATABASE_PATH || env.REMINDER_DB_PATH || "data/reminder.db",
   };
   const parsed = envSchema.safeParse(envWithLogDefaults);
   if (!parsed.success) {
     const msg = parsed.error.flatten().fieldErrors;
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
-  return parsed.data;
+  const guildId = DEPLOY_GUILD_ID.trim();
+  const ownerId = DEPLOY_OWNER_ID.trim();
+  if (!guildId) {
+    throw new Error("src/core/deployConstants.ts の DEPLOY_GUILD_ID を設定してください");
+  }
+  if (!ownerId) {
+    throw new Error("src/core/deployConstants.ts の DEPLOY_OWNER_ID を設定してください");
+  }
+  return { ...parsed.data, GUILD_ID: guildId, OWNER_ID: ownerId };
 }

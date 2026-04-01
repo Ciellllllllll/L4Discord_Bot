@@ -56,6 +56,16 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/010_ticket_tables_to_ticket_db.up.sql"),
     down: join(repoRoot, "migrations/sqlite/010_ticket_tables_to_ticket_db.down.sql"),
   },
+  {
+    version: 11,
+    up: join(repoRoot, "migrations/sqlite/011_ai_history_to_own_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/011_ai_history_to_own_db.down.sql"),
+  },
+  {
+    version: 12,
+    up: join(repoRoot, "migrations/sqlite/012_reminder_to_own_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/012_reminder_to_own_db.down.sql"),
+  },
 ];
 
 export function getSqliteUserVersion(db: DatabaseLib.Database): number {

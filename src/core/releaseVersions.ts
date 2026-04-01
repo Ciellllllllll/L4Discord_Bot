@@ -18,6 +18,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   enable_emoji: "0.1.0",
   stamp_count: "0.1.0",
   stamp_ranking: "0.1.0",
+  reminder_hub: "0.1.0",
 };
 
 /** プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER */
@@ -41,6 +42,8 @@ export const PERMANENT_UI_VERSION: Record<string, string> = {
   message_log_panel: "1.0.0",
   user_contact_panel: "1.0.0",
   ai_query_history_admin: "1.0.0",
+  reminder_hub: "1.0.0",
+  automod_panel: "1.0.0",
 };
 
 export function getPermanentUiVersion(panelKind: string): string {

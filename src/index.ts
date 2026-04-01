@@ -16,11 +16,17 @@ import { handleSlashCommand } from "./commands/slashHandlers.js";
 import { loadConfig } from "./core/config.js";
 import { getReleaseBundleForLog } from "./core/releaseVersions.js";
 import { getGuildSettingsData } from "./core/guildSettings.js";
-import { createKysely, createTicketKysely } from "./core/db/kysely.js";
+import {
+  createAiHistoryKysely,
+  createAutomoderationKysely,
+  createKysely,
+  createTicketKysely,
+} from "./core/db/kysely.js";
 import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
 import { createSqliteDatabase } from "./core/db/sqlite.js";
 import { createLogger } from "./core/logger.js";
 import { getDetecterService } from "./features/detecter/detecterService.js";
+import { handleAutoModerationMessage } from "./features/moderation/autoModerationMessage.js";
 import { handleEmojiGuardMessage, handleEmojiGuardReaction } from "./features/moderation/emojiGuard.js";
 import { trackStampReaction } from "./features/stamps/trackReaction.js";
 import {
@@ -48,11 +54,12 @@ import {
 } from "./features/vc/voiceSessionTracker.js";
 import { handleAutoReply } from "./message/autoReply.js";
 import { handleExtendedAutoReplies } from "./message/extendedAutoReply.js";
-import {
-  resolveAiHistoryAdminChannelId,
-  sendOrReconnectAiHistoryAdminPanel,
-} from "./features/ai/aiHistoryAdminPanel.js";
 import { handleAiChatMonitorMessage } from "./features/ai/aiQueryService.js";
+import { copyAiHistoryFromMainToDedicatedDb } from "./features/ai/copyAiHistoryFromMain.js";
+import { copyRemindersFromMainToReminderDb } from "./features/reminders/copyRemindersFromMain.js";
+import { ensureAiHistorySchema } from "./features/ai/aiHistorySchema.js";
+import { copyAutomodFromGuildSettingsIfMissing } from "./features/moderation/copyAutomodFromGuildSettings.js";
+import { ensureAutomoderationSchema } from "./features/moderation/automodSchema.js";
 import { copyTicketDataFromMainToTicketDb } from "./features/tickets/copyTicketDataFromMain.js";
 import { ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js";
 import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
@@ -79,6 +86,9 @@ async function main(): Promise<void> {
       messageLogDbPath: config.MESSAGE_LOG_DB_PATH,
       ticketDbPath: config.TICKET_DATABASE_PATH,
       vcTimeDbPath: config.VC_TIME_DATABASE_PATH,
+      aiHistoryDbPath: config.AI_HISTORY_DATABASE_PATH,
+      automoderationDbPath: config.AUTOMODERATION_DATABASE_PATH,
+      reminderDbPath: config.REMINDER_DATABASE_PATH,
       release: getReleaseBundleForLog(),
     },
     "config loaded (BOT_VERSION = code default or env override; release bundle from TypeScript)",
@@ -88,23 +98,34 @@ async function main(): Promise<void> {
   const ticketSqlite = createSqliteDatabase(config.TICKET_DATABASE_PATH);
   const messageLogSqlite = createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
   const vcTimeSqlite = createSqliteDatabase(config.VC_TIME_DATABASE_PATH);
+  const aiHistorySqlite = createSqliteDatabase(config.AI_HISTORY_DATABASE_PATH);
+  const automodSqlite = createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
   ensureTicketDatabaseSchema(ticketSqlite);
   ensureVcTimeSchema(vcTimeSqlite);
+  ensureAiHistorySchema(aiHistorySqlite);
+  ensureAutomoderationSchema(automodSqlite);
   prepareMessageLogsDatabase(messageLogSqlite);
   const db = createKysely(sqlite);
   const ticketDb = createTicketKysely(ticketSqlite);
+  const aiHistoryDb = createAiHistoryKysely(aiHistorySqlite);
+  const automodDb = createAutomoderationKysely(automodSqlite);
 
   try {
     sqlite.prepare("SELECT 1").get();
     ticketSqlite.prepare("SELECT 1").get();
     messageLogSqlite.prepare("SELECT 1").get();
     vcTimeSqlite.prepare("SELECT 1").get();
+    aiHistorySqlite.prepare("SELECT 1").get();
+    automodSqlite.prepare("SELECT 1").get();
     log.info(
       {
         main: config.DATABASE_PATH,
         ticket: config.TICKET_DATABASE_PATH,
         messageLog: config.MESSAGE_LOG_DB_PATH,
         vcTime: config.VC_TIME_DATABASE_PATH,
+        aiHistory: config.AI_HISTORY_DATABASE_PATH,
+        automoderation: config.AUTOMODERATION_DATABASE_PATH,
+        reminderLazy: config.REMINDER_DATABASE_PATH,
       },
       "sqlite connection ok",
     );
@@ -119,6 +140,17 @@ async function main(): Promise<void> {
       beforeApplyVersion(version, mainDb) {
         if (version === 10) {
           copyTicketDataFromMainToTicketDb(mainDb, ticketSqlite);
+        }
+        if (version === 11) {
+          copyAiHistoryFromMainToDedicatedDb(mainDb, aiHistorySqlite);
+        }
+        if (version === 12) {
+          const rs = createSqliteDatabase(config.REMINDER_DATABASE_PATH);
+          try {
+            copyRemindersFromMainToReminderDb(mainDb, rs);
+          } finally {
+            rs.close();
+          }
         }
       },
     });
@@ -148,7 +180,7 @@ async function main(): Promise<void> {
     },
     "discord client created",
   );
-  const vcTemp = new VcTemporaryChannelManager(db, log, client, config);
+  const vcTemp = new VcTemporaryChannelManager(log, client, config);
   const ctx: BotContext = {
     config,
     db,
@@ -157,12 +189,24 @@ async function main(): Promise<void> {
     ticketSqlite,
     messageLogSqlite,
     vcTimeSqlite,
+    aiHistoryDb,
+    aiHistorySqlite,
+    automodDb,
+    automodSqlite,
     log,
     client,
     vcRanking: new SqliteVcRankingRepository(vcTimeSqlite),
     vcTemp,
   };
-  log.info("repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db)");
+  log.info(
+    "repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db), AI history (AI_History.db), automoderation (Automoderation.db), reminders (reminder.db, on first use)",
+  );
+
+  try {
+    await copyAutomodFromGuildSettingsIfMissing(ctx, config.GUILD_ID);
+  } catch (e) {
+    log.warn({ err: e }, "automod migration from guild_settings skipped or failed");
+  }
 
   const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
   let presenceTimer: NodeJS.Timeout | undefined;
@@ -199,14 +243,6 @@ async function main(): Promise<void> {
         log.info({ guildId: g.id }, "modmail UI restore on startup completed");
       } catch (err) {
         log.warn({ err, guildId: g.id }, "modmail UI restore on startup failed");
-      }
-      if (resolveAiHistoryAdminChannelId(config)) {
-        try {
-          await sendOrReconnectAiHistoryAdminPanel(ctx);
-          log.info({ guildId: g.id }, "ai query history admin panel reconciled");
-        } catch (err) {
-          log.warn({ err, guildId: g.id }, "ai query history admin panel failed");
-        }
       }
       try {
         reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);
@@ -311,6 +347,7 @@ async function main(): Promise<void> {
       if (await handleAutoReply(message, ctx)) return;
       if (await handleExtendedAutoReplies(message, ctx)) return;
       if (await handleAiChatMonitorMessage(message, ctx)) return;
+      await handleAutoModerationMessage(message, ctx);
       await handleEmojiGuardMessage(message, ctx);
     } catch (err) {
       log.error({ err }, "messageCreate");
@@ -438,8 +475,12 @@ async function main(): Promise<void> {
     ctx.vcTemp.stopSweep();
     client.destroy();
     await db.destroy();
+    await ticketDb.destroy();
+    await aiHistoryDb.destroy();
     messageLogSqlite.close();
     vcTimeSqlite.close();
+    ticketSqlite.close();
+    aiHistorySqlite.close();
     sqlite.close();
     process.exit(0);
   };

@@ -5,17 +5,17 @@ import {
   EmbedBuilder,
   StringSelectMenuBuilder,
   type ButtonInteraction,
+  type Guild,
   type Message,
   type StringSelectMenuInteraction,
 } from "discord.js";
 import { sql } from "kysely";
-import type { AppConfig } from "../../core/config.js";
 import type { BotContext } from "../../bot/context.js";
+import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
+import { PANEL_KIND_AI_QUERY_HISTORY } from "../panels/constants.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessageStore.js";
 import { parsePanelState } from "../panels/panelState.js";
-
-export const PANEL_KIND_AI_QUERY_HISTORY = "ai_query_history_admin";
 
 /** DiscordBOTv2 AI_Query.js と同一の customId */
 export const HISTORY_ADMIN_USER_SELECT_ID = "chatgpt_history_admin_select_user";
@@ -23,19 +23,11 @@ export const HISTORY_ADMIN_CONVERSATION_SELECT_PREFIX = "chatgpt_history_admin_s
 export const HISTORY_CLEAR_ALL_ID = "chatgpt_history_clear_all";
 export const HISTORY_CLEAR_ME_ID = "chatgpt_history_clear_me";
 
-function snowflake(v: unknown): string {
-  const t = String(v ?? "").trim();
-  return /^\d+$/.test(t) ? t : "";
-}
-
-export function resolveAiHistoryAdminChannelId(config: AppConfig): string | null {
-  return (
-    snowflake(config.AI_QUERY_HISTORY_UI_CHANNEL_ID) ||
-    snowflake(config.LOG_CHANNEL_ID) ||
-    snowflake(config.LOGGER_CHANNEL_ID) ||
-    snowflake(config.DETECTER_FALLBACK_CHANNEL_ID) ||
-    null
-  );
+/** !Setup で保存した ADMIN パネルチャンネルのみ（履歴管理 UI をここに置く） */
+export async function resolveAiHistoryAdminChannelId(ctx: BotContext, guildId: string): Promise<string | null> {
+  const settings = await getGuildSettingsData(ctx.db, guildId);
+  const a = settings.panel_channels?.admin_channel_id?.trim();
+  return a && /^\d+$/.test(a) ? a : null;
 }
 
 function safeStrip(text: string): string {
@@ -94,7 +86,7 @@ function getConversationSegments(
 }
 
 async function listDistinctHistoryUserIds(ctx: BotContext, guildId: string): Promise<string[]> {
-  const rows = await ctx.db
+  const rows = await ctx.aiHistoryDb
     .selectFrom("ai_history")
     .select(["user_id", sql<string>`max(created_at)`.as("last_at")])
     .where("guild_id", "=", guildId)
@@ -109,7 +101,7 @@ async function loadUserHistoryRows(
   guildId: string,
   userId: string,
 ): Promise<{ id: string; role: string; content: string }[]> {
-  return ctx.db
+  return ctx.aiHistoryDb
     .selectFrom("ai_history")
     .select(["id", "role", "content"])
     .where("guild_id", "=", guildId)
@@ -141,17 +133,17 @@ export async function deleteAiHistoryRanges(
     return 0;
   }
   const uniqueIds = [...new Set(ids)];
-  await ctx.db.deleteFrom("ai_history").where("id", "in", uniqueIds).execute();
+  await ctx.aiHistoryDb.deleteFrom("ai_history").where("id", "in", uniqueIds).execute();
   return uniqueIds.length;
 }
 
 export async function clearAllAiHistoryInGuild(ctx: BotContext, guildId: string): Promise<number> {
-  const r = await ctx.db.deleteFrom("ai_history").where("guild_id", "=", guildId).executeTakeFirst();
+  const r = await ctx.aiHistoryDb.deleteFrom("ai_history").where("guild_id", "=", guildId).executeTakeFirst();
   return Number(r.numDeletedRows ?? 0);
 }
 
 export async function clearUserAiHistory(ctx: BotContext, guildId: string, userId: string): Promise<void> {
-  await ctx.db
+  await ctx.aiHistoryDb
     .deleteFrom("ai_history")
     .where("guild_id", "=", guildId)
     .where("user_id", "=", userId)
@@ -224,15 +216,9 @@ export async function refreshHistoryAdminPanelMessage(message: Message, ctx: Bot
   await message.edit({ embeds: [embed], components: [...rows] }).catch(() => undefined);
 }
 
-export async function sendOrReconnectAiHistoryAdminPanel(ctx: BotContext): Promise<boolean> {
+export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<boolean> {
   const guildId = ctx.config.GUILD_ID;
-  const channelId = resolveAiHistoryAdminChannelId(ctx.config);
-  if (!channelId) {
-    return false;
-  }
-
-  const guild = ctx.client.guilds.cache.get(guildId) ?? (await ctx.client.guilds.fetch(guildId).catch(() => null));
-  if (!guild) {
+  if (guild.id !== guildId) {
     return false;
   }
 
@@ -293,6 +279,21 @@ export async function sendOrReconnectAiHistoryAdminPanel(ctx: BotContext): Promi
     last_sent_at: new Date().toISOString(),
   });
   return true;
+}
+
+export async function sendOrReconnectAiHistoryAdminPanel(ctx: BotContext): Promise<boolean> {
+  const guildId = ctx.config.GUILD_ID;
+  const channelId = await resolveAiHistoryAdminChannelId(ctx, guildId);
+  if (!channelId) {
+    return false;
+  }
+
+  const guild = ctx.client.guilds.cache.get(guildId) ?? (await ctx.client.guilds.fetch(guildId).catch(() => null));
+  if (!guild) {
+    return false;
+  }
+
+  return reconcileAiHistoryAdminPanel(ctx, guild, channelId);
 }
 
 function isOwner(ctx: BotContext, userId: string): boolean {

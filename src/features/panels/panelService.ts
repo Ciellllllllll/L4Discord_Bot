@@ -8,14 +8,23 @@ import { buildMessageLogPanelPayload, messageLogPanelMessageMatches } from "./ad
 import {
   LEGACY_PANEL_KIND_ADMIN_HUB,
   LEGACY_PANEL_KIND_USER_HUB,
+  PANEL_KIND_AI_QUERY_HISTORY,
+  PANEL_KIND_AUTOMOD,
   PANEL_KIND_MESSAGE_LOG_PANEL,
   PANEL_KIND_REACTION_ROLE_ADMIN,
+  PANEL_KIND_REMINDER_HUB,
   PANEL_KIND_USER_CONTACT_PANEL,
   PANEL_KIND_VC_CREATOR,
 } from "./constants.js";
 import { tryDeleteBotPanelMessage } from "./panelDiscordOps.js";
 import { deletePanelMessageRow } from "./panelMessageStore.js";
 import { reconcileStaticPanelMessage } from "./panelReconcileStatic.js";
+import { reconcileAiHistoryAdminPanel } from "../ai/aiHistoryAdminPanel.js";
+import {
+  buildReminderHubPanelPayload,
+  reminderHubPanelMessageMatches,
+} from "../reminders/reminderHubPayload.js";
+import { reconcileAutoModPanel } from "../moderation/autoModerationPanel.js";
 import { reconcileVcCreatorPanel } from "../vc/vcTemporaryChannelManager.js";
 import { buildUserContactPanelPayload, userContactPanelMessageMatches } from "./userPanelsPayload.js";
 import { serializePanelState, type PanelMessageState } from "./panelState.js";
@@ -24,6 +33,9 @@ const MANAGED_PANEL_KINDS = [
   PANEL_KIND_VC_CREATOR,
   PANEL_KIND_REACTION_ROLE_ADMIN,
   PANEL_KIND_MESSAGE_LOG_PANEL,
+  PANEL_KIND_AI_QUERY_HISTORY,
+  PANEL_KIND_REMINDER_HUB,
+  PANEL_KIND_AUTOMOD,
   PANEL_KIND_USER_CONTACT_PANEL,
 ] as const;
 const LEGACY_HUB_KINDS = [LEGACY_PANEL_KIND_ADMIN_HUB, LEGACY_PANEL_KIND_USER_HUB] as const;
@@ -49,6 +61,9 @@ async function buildExpectedPanelsAsync(ctx: BotContext, guildId: string): Promi
   if (admin) {
     out.push({ kind: PANEL_KIND_REACTION_ROLE_ADMIN, channelId: admin });
     out.push({ kind: PANEL_KIND_MESSAGE_LOG_PANEL, channelId: admin });
+    out.push({ kind: PANEL_KIND_AI_QUERY_HISTORY, channelId: admin });
+    out.push({ kind: PANEL_KIND_REMINDER_HUB, channelId: admin });
+    out.push({ kind: PANEL_KIND_AUTOMOD, channelId: admin });
   }
   if (user) {
     out.push({ kind: PANEL_KIND_VC_CREATOR, channelId: user });
@@ -111,6 +126,20 @@ export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string):
         buildMessageLogPanelPayload,
         "message_log_panel",
       );
+    } else if (exp.kind === PANEL_KIND_AI_QUERY_HISTORY) {
+      await reconcileAiHistoryAdminPanel(ctx, guild, exp.channelId);
+    } else if (exp.kind === PANEL_KIND_REMINDER_HUB) {
+      await reconcileStaticPanelMessage(
+        ctx,
+        guild,
+        exp.channelId,
+        exp.kind,
+        reminderHubPanelMessageMatches,
+        buildReminderHubPanelPayload,
+        "reminder_hub",
+      );
+    } else if (exp.kind === PANEL_KIND_AUTOMOD) {
+      await reconcileAutoModPanel(ctx, guild, exp.channelId);
     } else if (exp.kind === PANEL_KIND_USER_CONTACT_PANEL) {
       await reconcileStaticPanelMessage(
         ctx,
@@ -162,6 +191,9 @@ export async function savePanelChannelsAndReconcile(
   for (const [kind, ch] of [
     [PANEL_KIND_REACTION_ROLE_ADMIN, adminChannelId],
     [PANEL_KIND_MESSAGE_LOG_PANEL, adminChannelId],
+    [PANEL_KIND_AI_QUERY_HISTORY, adminChannelId],
+    [PANEL_KIND_REMINDER_HUB, adminChannelId],
+    [PANEL_KIND_AUTOMOD, adminChannelId],
     [PANEL_KIND_VC_CREATOR, userChannelId],
     [PANEL_KIND_USER_CONTACT_PANEL, userChannelId],
   ] as const) {

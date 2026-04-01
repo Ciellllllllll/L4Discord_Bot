@@ -18,10 +18,7 @@ import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { deepseekChat, type ChatMessage } from "./deepseek.js";
 import { classifyUserIntent } from "./queryJudge.js";
 import { runAiSlashCommand } from "./aiCommandExecution.js";
-import {
-  resolveAiHistoryAdminChannelId,
-  sendOrReconnectAiHistoryAdminPanel,
-} from "./aiHistoryAdminPanel.js";
+import { sendOrReconnectAiHistoryAdminPanel } from "./aiHistoryAdminPanel.js";
 
 /** DiscordBOTv2 AI_Query.js と同じ customId 接頭辞 */
 export const HISTORY_CLEAR_Q_PREFIX = "chatgpt_history_clear_q:";
@@ -136,7 +133,7 @@ export class AiQueryService {
   }
 
   private async countHistoryRows(guildId: string, userId: string): Promise<number> {
-    const r = await this.ctx.db
+    const r = await this.ctx.aiHistoryDb
       .selectFrom("ai_history")
       .select((eb) => eb.fn.count<number>("id").as("c"))
       .where("guild_id", "=", guildId)
@@ -161,7 +158,7 @@ export class AiQueryService {
     userId: string,
   ): Promise<{ role: string; content: string }[]> {
     const maxRows = this.ctx.config.PROMPT_OPTIMIZER_MAX_HISTORY;
-    const rows = await this.ctx.db
+    const rows = await this.ctx.aiHistoryDb
       .selectFrom("ai_history")
       .select(["role", "content"])
       .where("guild_id", "=", guildId)
@@ -238,14 +235,12 @@ export class AiQueryService {
   }
 
   private touchHistoryAdminPanel(): void {
-    if (resolveAiHistoryAdminChannelId(this.ctx.config)) {
-      void sendOrReconnectAiHistoryAdminPanel(this.ctx);
-    }
+    void sendOrReconnectAiHistoryAdminPanel(this.ctx);
   }
 
   private async loadHistoryMessages(guildId: string, userId: string): Promise<ChatMessage[]> {
     const max = this.ctx.config.AI_HISTORY_MAX_MESSAGES;
-    const rows = await this.ctx.db
+    const rows = await this.ctx.aiHistoryDb
       .selectFrom("ai_history")
       .select(["role", "content"])
       .where("guild_id", "=", guildId)
@@ -265,7 +260,7 @@ export class AiQueryService {
   private async appendHistoryPair(guildId: string, userId: string, userContent: string, assistantContent: string): Promise<void> {
     const now = sqliteTimestamp() as unknown as Date;
     const meta = JSON.stringify({}) as unknown as Record<string, unknown>;
-    await this.ctx.db
+    await this.ctx.aiHistoryDb
       .insertInto("ai_history")
       .values({
         id: randomUUID(),
@@ -277,7 +272,7 @@ export class AiQueryService {
         created_at: now,
       })
       .execute();
-    await this.ctx.db
+    await this.ctx.aiHistoryDb
       .insertInto("ai_history")
       .values({
         id: randomUUID(),
@@ -292,7 +287,7 @@ export class AiQueryService {
   }
 
   async clearHistory(guildId: string, userId: string): Promise<void> {
-    await this.ctx.db
+    await this.ctx.aiHistoryDb
       .deleteFrom("ai_history")
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)

@@ -127,7 +127,6 @@ export async function runAiSlashCommand(ctx: BotContext, params: {
   try {
     if (action === "create_vc" && createNorm) {
       const out = await ctx.vcTemp.createTemporaryVc(guild, {
-        genre: createNorm.genre,
         name: createNorm.name,
         creatorUserId: userId,
         creatorTag: userTag,
