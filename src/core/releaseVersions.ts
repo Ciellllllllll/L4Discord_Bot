@@ -30,6 +30,7 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   guard: "0.1.0",
   see: "0.1.0",
   reply: "0.1.0",
+  nolog: "0.1.0",
 };
 
 /**

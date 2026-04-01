@@ -1,6 +1,7 @@
 import type DatabaseLib from "better-sqlite3";
 
 /** message.db: Downloads の message.db / 002 の INTEGER スノーフレーク + FTS に、DiscordBOTv2 相当の拡張カラムを足す */
+/** Python ensure_message_logs_table の CREATE と同一（attachments は後から ADD） */
 const BASE_CREATE = `
 CREATE TABLE IF NOT EXISTS message_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -12,11 +13,11 @@ CREATE TABLE IF NOT EXISTS message_logs (
   content TEXT,
   edited_at TEXT,
   deleted_at TEXT,
-  time TEXT,
-  attachments TEXT DEFAULT ''
+  time TEXT
 )`;
 
 const EXTRA_COLUMNS: [string, string][] = [
+  ["attachments", "TEXT DEFAULT ''"],
   ["message_id", "INTEGER"],
   ["author_id", "INTEGER"],
   ["author_tag", "TEXT"],

@@ -1,6 +1,6 @@
 import type DatabaseLib from "better-sqlite3";
 
-/** Downloads の vc_time.db / Feature_VC.js と同一の sessions 定義 */
+/** vc_time.db: ensure_tables_and_indexes（Python）と同一の sessions + 索引 */
 export function ensureVcTimeSchema(db: DatabaseLib.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -13,10 +13,10 @@ export function ensureVcTimeSchema(db: DatabaseLib.Database): void {
       duration_sec INTEGER            -- 切断時に確定（NULL可）
     );
   `);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel_id);");
+  db.exec("DROP INDEX IF EXISTS idx_sessions_guild_user_open;");
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_sessions_guild_user_open ON sessions(guild_id, user_id, ended_at);",
+    "CREATE INDEX IF NOT EXISTS idx_sessions_open ON sessions(guild_id, user_id, ended_at);",
   );
-  db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_open ON sessions(guild_id, user_id, ended_at);");
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_time ON sessions(started_at);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel_id);");
 }

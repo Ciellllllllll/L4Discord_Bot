@@ -20,6 +20,12 @@ const envSchema = z.object({
   DATABASE_PATH: z.string().min(1).default("data/l4discord.sqlite"),
   /** メッセージログ専用 DB（既定: data/message.db）。環境変数 LOG_DB_PATH でも上書き可（DiscordBOTv2 互換） */
   MESSAGE_LOG_DB_PATH: z.string().min(1).default("data/message.db"),
+  /** 添付ファイルのローカル複製メタ用 DB（message.db のスキーマは変更しない）。既定: data/message_attachment_store.db */
+  MESSAGE_ATTACHMENT_STORE_DB_PATH: z.string().min(1).default("data/message_attachment_store.db"),
+  /** 上記の実体ファイル保存先（相対は cwd 基準）。既定: data/message_log_attachments */
+  MESSAGE_ATTACHMENT_FILES_DIR: z.string().min(1).default("data/message_log_attachments"),
+  /** メッセージログ取り込み時に Discord CDN から添付をダウンロードして保存する（既定: オン） */
+  MESSAGE_ATTACHMENT_ARCHIVE_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
   /** Modmail / 異議申し立て / 汎用 tickets 専用 DB（既定: data/ticket.db） */
   TICKET_DATABASE_PATH: z.string().min(1).default("data/ticket.db"),
   ADMIN_ROLE_ID: z.string().min(1),
@@ -61,15 +67,15 @@ const envSchema = z.object({
    */
   CHAT_MONITOR_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
   /**
-   * Detecter モデレーター向け「理由入力」プロンプトの投稿先（最優先）。
-   * 未設定時は LOGGER_CHANNEL_ID → LOG_CHANNEL_ID → DETECTER_FALLBACK_CHANNEL_ID。
+   * モデレ用ログの中心チャンネル: Detecter「理由入力」、Modmail スタッフスレッドの親、退出通知（leaveNotifier）。
+   * Detecter で未設定時のフォールバックは LOGGER_CHANNEL_ID → LOG_CHANNEL_ID → DETECTER_FALLBACK_CHANNEL_ID。
    */
   MOD_LOG_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   /** Detecter 理由プロンプト投稿先（DiscordBOTv2 の LOGGER_CHANNEL_ID / LOG_CHANNEL_ID 互換） */
   LOGGER_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   LOG_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   /**
-   * Modmail スタッフ用スレッドの親チャンネル（テキスト / お知らせ / フォーラム）。
+   * Modmail 専用の親チャンネル上書き（MOD_LOG_CHANNEL_ID 未設定時のみ有効）。
    * 未設定時は LOG_CHANNEL_ID → LOGGER_CHANNEL_ID の順でフォールバック（DiscordBOTv2 互換）。
    */
   MODMAIL_LOG_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),

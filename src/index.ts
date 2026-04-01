@@ -43,6 +43,10 @@ import {
   ingestMessageUpdate,
   prepareMessageLogsDatabase,
 } from "./features/messageLog/index.js";
+import {
+  prepareMessageAttachmentStore,
+  scheduleArchiveMessageAttachments,
+} from "./features/messageLog/messageAttachmentArchive.js";
 import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
@@ -87,6 +91,9 @@ async function main(): Promise<void> {
       guildId: config.GUILD_ID,
       databasePath: config.DATABASE_PATH,
       messageLogDbPath: config.MESSAGE_LOG_DB_PATH,
+      messageAttachmentStoreDbPath: config.MESSAGE_ATTACHMENT_STORE_DB_PATH,
+      messageAttachmentFilesDir: config.MESSAGE_ATTACHMENT_FILES_DIR,
+      messageAttachmentArchiveEnabled: config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED,
       ticketDbPath: config.TICKET_DATABASE_PATH,
       vcTimeDbPath: config.VC_TIME_DATABASE_PATH,
       aiHistoryDbPath: config.AI_HISTORY_DATABASE_PATH,
@@ -100,6 +107,9 @@ async function main(): Promise<void> {
   const sqlite = createSqliteDatabase(config.DATABASE_PATH);
   const ticketSqlite = createSqliteDatabase(config.TICKET_DATABASE_PATH);
   const messageLogSqlite = createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
+  /** 19桁スノーフレークを Number で読むと精度が落ち、添付ストア検索が一致しない */
+  messageLogSqlite.defaultSafeIntegers(true);
+  const messageAttachmentStoreSqlite = createSqliteDatabase(config.MESSAGE_ATTACHMENT_STORE_DB_PATH);
   const vcTimeSqlite = createSqliteDatabase(config.VC_TIME_DATABASE_PATH);
   const aiHistorySqlite = createSqliteDatabase(config.AI_HISTORY_DATABASE_PATH);
   const automodSqlite = createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
@@ -108,6 +118,7 @@ async function main(): Promise<void> {
   ensureAiHistorySchema(aiHistorySqlite);
   ensureAutomoderationSchema(automodSqlite);
   prepareMessageLogsDatabase(messageLogSqlite);
+  prepareMessageAttachmentStore(messageAttachmentStoreSqlite);
   const db = createKysely(sqlite);
   const ticketDb = createTicketKysely(ticketSqlite);
   const aiHistoryDb = createAiHistoryKysely(aiHistorySqlite);
@@ -117,6 +128,7 @@ async function main(): Promise<void> {
     sqlite.prepare("SELECT 1").get();
     ticketSqlite.prepare("SELECT 1").get();
     messageLogSqlite.prepare("SELECT 1").get();
+    messageAttachmentStoreSqlite.prepare("SELECT 1").get();
     vcTimeSqlite.prepare("SELECT 1").get();
     aiHistorySqlite.prepare("SELECT 1").get();
     automodSqlite.prepare("SELECT 1").get();
@@ -125,6 +137,7 @@ async function main(): Promise<void> {
         main: config.DATABASE_PATH,
         ticket: config.TICKET_DATABASE_PATH,
         messageLog: config.MESSAGE_LOG_DB_PATH,
+        messageAttachmentStore: config.MESSAGE_ATTACHMENT_STORE_DB_PATH,
         vcTime: config.VC_TIME_DATABASE_PATH,
         aiHistory: config.AI_HISTORY_DATABASE_PATH,
         automoderation: config.AUTOMODERATION_DATABASE_PATH,
@@ -193,6 +206,7 @@ async function main(): Promise<void> {
     ticketDb,
     ticketSqlite,
     messageLogSqlite,
+    messageAttachmentStoreSqlite,
     vcTimeSqlite,
     aiHistoryDb,
     aiHistorySqlite,
@@ -347,6 +361,14 @@ async function main(): Promise<void> {
           excludedChannelIds: ex,
           botUserId: client.user?.id ?? "",
         });
+        if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
+          scheduleArchiveMessageAttachments(
+            messageAttachmentStoreSqlite,
+            config.MESSAGE_ATTACHMENT_FILES_DIR,
+            message,
+            log,
+          );
+        }
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
       if (await handlePrefixMessage(message, ctx)) return;
@@ -372,6 +394,14 @@ async function main(): Promise<void> {
         excludedChannelIds: ex,
         botUserId: client.user?.id ?? "",
       });
+      if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
+        scheduleArchiveMessageAttachments(
+          messageAttachmentStoreSqlite,
+          config.MESSAGE_ATTACHMENT_FILES_DIR,
+          message,
+          log,
+        );
+      }
     } catch (err) {
       log.error({ err }, "messageUpdate");
     }
@@ -389,6 +419,14 @@ async function main(): Promise<void> {
         excludedChannelIds: ex,
         botUserId: client.user?.id ?? "",
       });
+      if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
+        scheduleArchiveMessageAttachments(
+          messageAttachmentStoreSqlite,
+          config.MESSAGE_ATTACHMENT_FILES_DIR,
+          target,
+          log,
+        );
+      }
     } catch (err) {
       log.error({ err }, "messageDelete");
     }
@@ -475,6 +513,7 @@ async function main(): Promise<void> {
     await ticketDb.destroy();
     await aiHistoryDb.destroy();
     messageLogSqlite.close();
+    messageAttachmentStoreSqlite.close();
     vcTimeSqlite.close();
     ticketSqlite.close();
     aiHistorySqlite.close();

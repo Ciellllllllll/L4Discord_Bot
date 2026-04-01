@@ -11,7 +11,7 @@ function normalizeSnowflake(value: unknown): string {
 
 /**
  * Detecter がモデレーターへ「理由入力」ボタン付きメッセージを送るチャンネル（新規メッセージ＝ログ末尾に相当）。
- * MOD_LOG_CHANNEL_ID が最優先、未設定時は LOGGER → LOG → DETECTER_FALLBACK。
+ * MOD_LOG_CHANNEL_ID が最優先（Modmail 親・leaveNotifier と揃える）。未設定時は LOGGER → LOG → DETECTER_FALLBACK。
  */
 export function resolveModLogChannelId(config: AppConfig): string {
   return (

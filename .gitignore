@@ -4,5 +4,6 @@ dist/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
+data/message_log_attachments/
 *.log
 .DS_Store

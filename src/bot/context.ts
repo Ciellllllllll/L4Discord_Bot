@@ -16,6 +16,8 @@ export type BotContext = {
   ticketSqlite: DatabaseLib.Database;
   /** メッセージログ専用（message.db） */
   messageLogSqlite: DatabaseLib.Database;
+  /** 添付ローカル複製のメタ（message_attachment_store.db）。message.db とは別ファイル */
+  messageAttachmentStoreSqlite: DatabaseLib.Database;
   /** VC 滞在時間（sessions）専用（vc_time.db） */
   vcTimeSqlite: DatabaseLib.Database;
   /** /q 会話履歴（AI_History.db） */

@@ -16,6 +16,11 @@ import type DatabaseLib from "better-sqlite3";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
 import { bigIntToSnowflake, snowflakeToBigInt } from "../../core/snowflake.js";
+import {
+  buildDetailImageSlots,
+  formatStoredHint,
+  lookupStoredAttachmentsMap,
+} from "./messageAttachmentArchive.js";
 
 export const PANEL_BUTTON_ID = "message_logs_open";
 const MODAL_PREFIX = "ml:modal:";
@@ -497,7 +502,7 @@ function buildListComponents(session: SearchSession, rows: LogRow[], total: numb
     const detailButtons = rows.map(
       (row, idx) =>
         new ButtonBuilder()
-          .setCustomId(`${DETAIL_PREFIX}${session.id}:${row.id}:0:0:open`)
+          .setCustomId(`${DETAIL_PREFIX}${session.id}:${row.id}:0:img:open`)
           .setLabel(`詳細${idx + 1}`)
           .setStyle(ButtonStyle.Secondary),
     );
@@ -511,6 +516,7 @@ function buildListPayload(db: DatabaseLib.Database, session: SearchSession, botU
   return {
     embeds: [buildListEmbed(session, rows, total, totalPages)],
     components: buildListComponents(session, rows, total, totalPages),
+    files: [],
   };
 }
 
@@ -632,18 +638,26 @@ function buildContentEmbeds(content: string | null): EmbedBuilder[] {
   return out;
 }
 
-function attachmentSummaryBlock(row: LogRow): string {
+function attachmentSummaryBlock(row: LogRow, storeDb?: DatabaseLib.Database | null): string {
   const raw = row.attachments_json || row.attachments || "[]";
   try {
     const arr = JSON.parse(String(raw)) as unknown[];
     if (!Array.isArray(arr) || arr.length === 0) return "(添付なし)";
+    const gid = snowflakeFromDb(row.guild_id);
+    const mid = snowflakeFromDb(row.message_id);
+    const map =
+      storeDb && gid && mid ? lookupStoredAttachmentsMap(storeDb, gid, mid) : new Map();
     return arr
       .slice(0, 8)
       .map((a, i) => {
         const o = a && typeof a === "object" ? (a as Record<string, unknown>) : {};
         const fn = String(o.filename || o.name || "-");
         const u = String(o.url || o.proxy_url || "");
-        return `${i + 1}. ${fn}${u ? ` — ${u}` : ""}`;
+        const aid = String(o.id ?? "").trim();
+        const stored = aid ? map.get(aid) : undefined;
+        const line = `${i + 1}. ${fn}${u ? ` — ${u}` : ""}`;
+        const hint = formatStoredHint(stored);
+        return hint ? `${line}\n   ${hint}` : line;
       })
       .join("\n");
   } catch {
@@ -651,7 +665,32 @@ function attachmentSummaryBlock(row: LogRow): string {
   }
 }
 
-function buildDetailPayload(db: DatabaseLib.Database, session: SearchSession, logId: number) {
+function buildOversizeEphemeralEmbed(
+  items: { filename: string; storageRelpath: string }[],
+): EmbedBuilder {
+  const list = items.map((o) => `**${o.filename}**\n\`${o.storageRelpath}\``).join("\n\n");
+  const desc =
+    "ファイルサイズが大きく送信できなかったため、ダウンロードして閲覧してください。\n" +
+    "ダウンロード時はウイルスに注意してください。\n\n" +
+    list;
+  return new EmbedBuilder()
+    .setTitle("大きな添付ファイル")
+    .setColor(0xf39c12)
+    .setDescription(desc.slice(0, 4096));
+}
+
+function buildDetailPayload(
+  db: DatabaseLib.Database,
+  session: SearchSession,
+  logId: number,
+  attachmentStore: DatabaseLib.Database | null | undefined,
+  imageIndexRequested: number,
+): {
+  embeds: EmbedBuilder[];
+  components: ActionRowBuilder<ButtonBuilder>[];
+  files: AttachmentBuilder[];
+  ephemeralFollowUpEmbed?: EmbedBuilder;
+} {
   const row = fetchLogById(db, session, logId);
   if (!row) {
     return {
@@ -666,34 +705,109 @@ function buildDetailPayload(db: DatabaseLib.Database, session: SearchSession, lo
             .setStyle(ButtonStyle.Secondary),
         ),
       ],
+      files: [],
     };
   }
   const meta = buildDetailMetaEmbed(row);
   const bodyEmbeds = buildContentEmbeds(row.content);
+  const gid = snowflakeFromDb(row.guild_id);
+  const mid = snowflakeFromDb(row.message_id);
+  const slots = buildDetailImageSlots(attachmentStore ?? undefined, gid, mid);
+
+  const maxImgIdx = Math.max(0, slots.imageSlots.length - 1);
+  const clampedIdx =
+    slots.imageSlots.length === 0 ? 0 : Math.max(0, Math.min(imageIndexRequested, maxImgIdx));
+
+  let attachDesc = attachmentSummaryBlock(row, attachmentStore ?? null);
+  if (slots.oversizeItems.length > 0) {
+    const extra = slots.oversizeItems
+      .map((o) => `・${o.filename}\n  \`${o.storageRelpath}\``)
+      .join("\n");
+    attachDesc = `${attachDesc}\n\n【8MB超の動画・ファイル（ローカルパス）】\n${extra}`;
+  }
+  if (slots.skippedImageCount > 0) {
+    attachDesc = `${attachDesc}\n\n※ 画像 ${slots.skippedImageCount} 件は読み込みできませんでした。`;
+  }
   const attachEmbed = new EmbedBuilder()
     .setTitle("添付一覧")
     .setColor(0x9b59b6)
-    .setDescription(attachmentSummaryBlock(row).slice(0, 4000));
-  const embeds = [meta, ...bodyEmbeds, attachEmbed].slice(0, 10);
+    .setDescription(attachDesc.slice(0, 4096))
+    .setFooter({
+      text:
+        slots.imageSlots.length > 1
+          ? "画像は「戻る」「次へ」で1枚ずつ表示。動画・ファイルは8MB以下を再送信。超過はパス参照。"
+          : "画像は上の Embed に表示。動画・ファイルは8MB以下を再送信。超過はパス参照。",
+    });
+
+  const imageEmbeds: EmbedBuilder[] = [];
+  if (slots.imageSlots.length > 0) {
+    const cur = slots.imageSlots[clampedIdx]!;
+    imageEmbeds.push(
+      new EmbedBuilder()
+        .setTitle(`画像 ${clampedIdx + 1}/${slots.imageSlots.length}: ${cur.displayName}`)
+        .setColor(0x9b59b6)
+        .setImage(`attachment://${cur.attachName}`),
+    );
+  }
+
+  const embeds = [meta, ...bodyEmbeds, ...imageEmbeds, attachEmbed].slice(0, 10);
+
+  const files: AttachmentBuilder[] = [];
+  if (slots.imageSlots.length > 0) {
+    const cur = slots.imageSlots[clampedIdx]!;
+    try {
+      files.push(new AttachmentBuilder(cur.absPath, { name: cur.attachName }));
+    } catch {
+      /* skip */
+    }
+  }
+  files.push(...slots.nonImageFiles);
+
+  const componentRows: ActionRowBuilder<ButtonBuilder>[] = [];
+  if (slots.imageSlots.length > 1) {
+    componentRows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`${DETAIL_PREFIX}${session.id}:${logId}:${clampedIdx}:img:prev`)
+          .setLabel("戻る")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(clampedIdx <= 0),
+        new ButtonBuilder()
+          .setCustomId(`${DETAIL_PREFIX}${session.id}:${logId}:${clampedIdx}:img:next`)
+          .setLabel("次へ")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(clampedIdx >= slots.imageSlots.length - 1),
+      ),
+    );
+  }
+
   const back = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`${LIST_PREFIX}${session.id}:refresh`)
       .setLabel("一覧へ戻る")
       .setStyle(ButtonStyle.Secondary),
   );
-  const gid = snowflakeFromDb(row.guild_id);
   const cid = snowflakeFromDb(row.channel_id);
-  const mid = snowflakeFromDb(row.message_id);
   const msgUrl = buildMessageUrl(gid, cid, mid);
   if (msgUrl) {
     back.addComponents(
       new ButtonBuilder().setLabel("元メッセージを開く").setStyle(ButtonStyle.Link).setURL(msgUrl),
     );
   }
-  return { embeds, components: [back] };
+  componentRows.push(back);
+
+  const ephemeralFollowUpEmbed =
+    slots.oversizeItems.length > 0 ? buildOversizeEphemeralEmbed(slots.oversizeItems) : undefined;
+
+  return {
+    embeds,
+    components: componentRows,
+    files,
+    ephemeralFollowUpEmbed,
+  };
 }
 
-function formatExportEntry(row: LogRow, index: number): string {
+function formatExportEntry(row: LogRow, index: number, storeDb?: DatabaseLib.Database | null): string {
   const channelId = snowflakeFromDb(row.channel_id) || "-";
   const messageId = snowflakeFromDb(row.message_id) || "-";
   const primary = resolvePrimaryTimestamp(row);
@@ -710,10 +824,30 @@ function formatExportEntry(row: LogRow, index: number): string {
     content || "(空)",
     `添付件数: ${resolveAttachmentCount(row)}`,
   ];
+  if (storeDb) {
+    const gid = snowflakeFromDb(row.guild_id);
+    const mid = snowflakeFromDb(row.message_id);
+    if (gid && mid) {
+      const map = lookupStoredAttachmentsMap(storeDb, gid, mid);
+      if (map.size > 0) {
+        lines.push("保存済み添付:");
+        for (const s of map.values()) {
+          lines.push(
+            `  - ${s.filename}: ${s.storage_relpath} (${s.size_bytes != null ? `${s.size_bytes} B` : "?"})`,
+          );
+        }
+      }
+    }
+  }
   return lines.join("\n");
 }
 
-function buildExportText(session: SearchSession, rows: LogRow[], total: number): string {
+function buildExportText(
+  session: SearchSession,
+  rows: LogRow[],
+  total: number,
+  attachmentStore?: DatabaseLib.Database | null,
+): string {
   const header = [
     "メッセージログ出力",
     `生成日時: ${new Date().toISOString()}`,
@@ -729,7 +863,9 @@ function buildExportText(session: SearchSession, rows: LogRow[], total: number):
     `出力件数: ${rows.length}`,
     "",
   ];
-  const body = rows.map((r, i) => formatExportEntry(r, i + 1)).join("\n\n----------------------------------------\n\n");
+  const body = rows
+    .map((r, i) => formatExportEntry(r, i + 1, attachmentStore))
+    .join("\n\n----------------------------------------\n\n");
   return `${header.join("\n")}${body}`;
 }
 
@@ -815,7 +951,7 @@ export async function routeMessageLogButton(interaction: ButtonInteraction, ctx:
           await interaction.editReply({ content: "エクスポート対象のログがありません。" });
           return true;
         }
-        const content = buildExportText(session, rows, total);
+        const content = buildExportText(session, rows, total, ctx.messageAttachmentStoreSqlite);
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         const file = new AttachmentBuilder(Buffer.from(content, "utf8"), {
           name: `message_logs_${session.guildId}_${stamp}.txt`,
@@ -847,13 +983,49 @@ export async function routeMessageLogButton(interaction: ButtonInteraction, ctx:
     if (parts.length < 7) return false;
     const sessionId = parts[2]!;
     const logId = Number(parts[3]);
+    const idxPart = Number(parts[4]);
+    const part5 = parts[5] ?? "";
+    const action = parts[6] ?? "";
     const session = await requireSession(interaction, ctx, sessionId);
     if (!session) return true;
     if (!Number.isFinite(logId)) return true;
-    const payload = buildDetailPayload(ctx.messageLogSqlite, session, logId);
-    await interaction.update(payload).catch(async () => {
+
+    let imageIndex = 0;
+    if (action === "open") {
+      if (part5 !== "img" && part5 !== "0") return false;
+      imageIndex = 0;
+    } else if (part5 === "img" && action === "prev") {
+      if (!Number.isFinite(idxPart)) return false;
+      imageIndex = Math.max(0, idxPart - 1);
+    } else if (part5 === "img" && action === "next") {
+      if (!Number.isFinite(idxPart)) return false;
+      imageIndex = idxPart + 1;
+    } else {
+      return false;
+    }
+
+    const payload = buildDetailPayload(
+      ctx.messageLogSqlite,
+      session,
+      logId,
+      ctx.messageAttachmentStoreSqlite,
+      imageIndex,
+    );
+    try {
+      await interaction.update({
+        embeds: payload.embeds,
+        components: payload.components,
+        files: payload.files,
+      });
+      if (payload.ephemeralFollowUpEmbed) {
+        await interaction.followUp({
+          embeds: [payload.ephemeralFollowUpEmbed],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    } catch {
       await interaction.reply({ content: "詳細の表示に失敗しました。", flags: MessageFlags.Ephemeral }).catch(() => undefined);
-    });
+    }
     return true;
   }
 

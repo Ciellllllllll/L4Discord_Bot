@@ -22,7 +22,7 @@ export function messageLogPanelMessageMatches(message: Message, botUserId: strin
 export function buildMessageLogPanelPayload(): MessageCreateOptions {
   const embed = new EmbedBuilder()
     .setTitle("メッセージログ")
-    .setDescription("ボタンから全文検索（FTS）を開きます。管理者・ログ閲覧権限が必要です。")
+    .setDescription("ボタンからメッセージログを閲覧できます。")
     .setColor(0x3498db);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(PANEL_BUTTON_ID).setLabel("ログを検索").setStyle(ButtonStyle.Primary),

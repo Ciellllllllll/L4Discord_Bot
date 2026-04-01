@@ -8,9 +8,10 @@ CREATE TABLE message_logs (
   content TEXT,
   edited_at TEXT,
   deleted_at TEXT,
-  time TEXT,
-  attachments TEXT DEFAULT ''
+  time TEXT
 );
+
+ALTER TABLE message_logs ADD COLUMN attachments TEXT DEFAULT '';
 
 CREATE INDEX idx_mlogs_guild ON message_logs(guild_id);
 CREATE INDEX idx_mlogs_channel ON message_logs(channel_id);

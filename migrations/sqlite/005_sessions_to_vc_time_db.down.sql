@@ -8,7 +8,6 @@ CREATE TABLE sessions (
   duration_sec INTEGER
 );
 
-CREATE INDEX idx_sessions_guild_user_open ON sessions(guild_id, user_id, ended_at);
 CREATE INDEX idx_sessions_open ON sessions(guild_id, user_id, ended_at);
-CREATE INDEX idx_sessions_channel ON sessions(channel_id);
 CREATE INDEX idx_sessions_time ON sessions(started_at);
+CREATE INDEX idx_sessions_channel ON sessions(channel_id);

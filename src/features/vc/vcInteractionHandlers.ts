@@ -10,6 +10,7 @@ import {
   VC_NAME_MODAL_PREFIX,
   VC_OPEN_MODAL_ID,
 } from "./vcCreatorUi.js";
+import { runNologToggleAndBuildEmbed, trySendNologEmbedInChannel } from "../messageLog/messageLogNolog.js";
 import { buildVcNameModal, vcCreatorErrText } from "./vcTemporaryChannelManager.js";
 
 export async function handleVcCreatorButton(
@@ -59,6 +60,14 @@ export async function handleVcCreateModal(
 
   if (result.ok) {
     await interaction.reply({ content: `VC ${result.name} を作成しました`, ephemeral: true });
+    const created = await guild.channels.fetch(result.channelId).catch(() => null);
+    if (created) {
+      const botId = ctx.client.user?.id;
+      if (botId) {
+        const nologEmbed = await runNologToggleAndBuildEmbed(ctx.db, guild.id, created.id, botId);
+        await trySendNologEmbedInChannel(created, nologEmbed, ctx.log, botId);
+      }
+    }
   } else {
     await interaction.reply({
       content: vcCreatorErrText[result.error] ?? "VC作成に失敗しました。",

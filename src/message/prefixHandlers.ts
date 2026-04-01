@@ -1,10 +1,11 @@
 import type { Message } from "discord.js";
 import type { BotContext } from "../bot/context.js";
 import { BOT_SEMVER, PREFIX_COMMAND_MIN_BOT_VERSION } from "../core/releaseVersions.js";
-import { isOwner } from "../core/permission.js";
+import { isAdmin, isOwner } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { buildSetupEntryButtonRow } from "../features/panels/setupWizard.js";
 import { reloadPanelsFromGuildSettings } from "../features/panels/panelService.js";
+import { runNologToggleAndBuildEmbed } from "../features/messageLog/messageLogNolog.js";
 
 const PREFIX = "!";
 
@@ -39,6 +40,50 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
       components: [buildSetupEntryButtonRow()],
     });
     ctx.log.info({ command: "setup", userId: message.author.id, outcome: "setup_prompt_sent" }, "prefix command");
+    return true;
+  }
+
+  if (lower === "nolog") {
+    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.nolog ?? "0.0.0")) {
+      await message.reply(versionBlockedMessage());
+      ctx.log.info({ command: "nolog", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
+      return true;
+    }
+    if (!message.guildId || !message.channelId) {
+      await message.reply("ギルド内のチャンネルでのみ使用できます。");
+      return true;
+    }
+    if (!message.member) {
+      await message.reply("メンバー情報を取得できませんでした。");
+      return true;
+    }
+    if (!isAdmin(message.member, ctx.config)) {
+      await message.reply("このコマンドは管理者のみ使用できます。");
+      ctx.log.info({ command: "nolog", userId: message.author.id, outcome: "not_admin" }, "prefix command");
+      return true;
+    }
+    const embed = await runNologToggleAndBuildEmbed(
+      ctx.db,
+      message.guildId,
+      message.channelId,
+      message.author.id,
+    );
+    const ch = message.channel;
+    try {
+      if (ch.isTextBased() && !ch.isDMBased()) {
+        await ch.send({
+          embeds: [embed],
+          allowedMentions: { users: [message.author.id] },
+        });
+      }
+      await message.delete().catch((err) => {
+        ctx.log.warn({ err: String(err) }, "nolog command message delete failed");
+      });
+    } catch (e) {
+      ctx.log.warn({ err: String(e) }, "nolog embed send failed");
+      await message.reply("埋め込みの送信に失敗しました。設定は反映済みの場合があります。").catch(() => undefined);
+    }
+    ctx.log.info({ command: "nolog", userId: message.author.id, channelId: message.channelId }, "prefix command");
     return true;
   }
 

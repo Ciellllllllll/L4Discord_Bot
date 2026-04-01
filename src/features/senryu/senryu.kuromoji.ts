@@ -1,8 +1,17 @@
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import kuromoji from "kuromoji";
 import type { IpadicToken } from "kuromoji";
 import type pino from "pino";
 import { KATAKANA_ONLY_PATTERN } from "./senryu.constants.js";
 import type { KuromojiToken } from "./senryu.types.js";
+
+const require = createRequire(import.meta.url);
+
+/** kuromoji のデフォルトは cwd 相対の dict/ のため、npm 同梱辞書へ固定する */
+function defaultKuromojiDictPath(): string {
+  return join(dirname(require.resolve("kuromoji/package.json")), "dict");
+}
 
 let tokenizer: import("kuromoji").Tokenizer | null = null;
 
@@ -15,7 +24,8 @@ export async function initKuromojiTokenizer(
   log: pino.Logger,
 ): Promise<void> {
   try {
-    const builder = dicPath ? kuromoji.builder({ dicPath }) : kuromoji.builder();
+    const resolvedDicPath = dicPath ?? defaultKuromojiDictPath();
+    const builder = kuromoji.builder({ dicPath: resolvedDicPath });
     await new Promise<void>((resolve, reject) => {
       builder.build((err, t) => {
         if (err) reject(err);
@@ -25,7 +35,7 @@ export async function initKuromojiTokenizer(
         }
       });
     });
-    log.info({ dicPath: dicPath ?? "default" }, "kuromoji tokenizer initialized");
+    log.info({ dicPath: resolvedDicPath }, "kuromoji tokenizer initialized");
   } catch (err) {
     tokenizer = null;
     log.error({ err }, "kuromoji tokenizer init failed (senryu disabled)");
