@@ -60,9 +60,5 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .addUserOption((o) => o.setName("user").setDescription("対象（省略時は自分）"))
       .toJSON(),
     new SlashCommandBuilder().setName("stamp_ranking").setDescription("スタンプランキング").toJSON(),
-    new SlashCommandBuilder()
-      .setName("reminder_hub")
-      .setDescription("リマインダー・TODO・お知らせパネルを ADMIN チャンネルに同期")
-      .toJSON(),
   ];
 }
