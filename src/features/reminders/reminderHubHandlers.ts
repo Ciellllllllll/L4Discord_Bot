@@ -378,8 +378,6 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
       return true;
     }
 
-    const mentionText = kind === "notice" ? "@everyone" : `<@${interaction.user.id}>`;
-
     const newId = await createReminderHubEntry(ctx, {
       guildId: interaction.guild.id,
       authorId: interaction.user.id,
@@ -389,7 +387,6 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
       channelId,
       fireAt: dueAt,
       recurrence: recParse.value,
-      mentionText,
     });
 
     const embed = new EmbedBuilder()

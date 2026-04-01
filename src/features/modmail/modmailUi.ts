@@ -6,17 +6,62 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
-import { FileUploadBuilder, LabelBuilder } from "@discordjs/builders";
+import {
+  ActionRowBuilder as IntakeActionRowBuilder,
+  FileUploadBuilder,
+  LabelBuilder,
+  ModalBuilder as IntakeModalBuilder,
+  TextInputBuilder as IntakeTextInputBuilder,
+} from "@discordjs/builders";
 import { buildThreePartId, MM_IDS } from "./modmailIds.js";
 
-/** DM 開始時: 添付用（guildId.userId.nonce） */
-export function buildModmailStartAttachmentRow(guildId: string, userId: string): ActionRowBuilder<ButtonBuilder> {
+/** DM: 「チケットを作成」→モーダル（DiscordBOTv2 `modmail_ticket_start:` 相当） */
+export function buildModmailTicketCreateRow(ctxId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(buildThreePartId(MM_IDS.START_ATTACHMENT_PREFIX, guildId, userId))
-      .setLabel("添付ファイルを送信")
-      .setStyle(ButtonStyle.Secondary),
+      .setCustomId(`${MM_IDS.TICKET_START_PREFIX}${ctxId}`)
+      .setLabel("チケットを作成")
+      .setStyle(ButtonStyle.Primary),
   );
+}
+
+/**
+ * Modmail 受付モーダル。
+ * TextInput は Action Row のみ @discordjs/builders で組み立てる（discord.js との instanceof 不一致を避ける）。
+ * 添付は Label + FileUpload（同一パッケージ）で追加する。
+ */
+export function buildModmailIntakeTicketModal(ctxId: string): IntakeModalBuilder {
+  return new IntakeModalBuilder()
+    .setCustomId(`${MM_IDS.TICKET_SUBMIT_PREFIX}${ctxId}`)
+    .setTitle("チケットを作成")
+    .addComponents(
+      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
+        new IntakeTextInputBuilder()
+          .setCustomId(MM_IDS.MODAL_INTAKE_TITLE)
+          .setLabel("タイトル")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(120),
+      ),
+      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
+        new IntakeTextInputBuilder()
+          .setCustomId(MM_IDS.MODAL_INTAKE_BODY)
+          .setLabel("詳細")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(2000),
+      ),
+    )
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel("添付（任意）")
+        .setFileUploadComponent(
+          new FileUploadBuilder()
+            .setCustomId(MM_IDS.MODAL_INTAKE_FILES)
+            .setRequired(false)
+            .setMaxValues(8),
+        ),
+    );
 }
 
 export function buildModmailCloseRow(ticketId: string): ActionRowBuilder<ButtonBuilder> {

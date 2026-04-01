@@ -24,6 +24,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
 /** プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER */
 export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   setup: "0.1.0",
+  reload: "0.1.0",
   start: "0.1.0",
   kill: "0.1.0",
   guard: "0.1.0",

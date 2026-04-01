@@ -52,7 +52,8 @@ import {
   reconcileVcTimeSessionsAtReady,
   trackVoiceStateUpdate,
 } from "./features/vc/voiceSessionTracker.js";
-import { handleAutoReply } from "./message/autoReply.js";
+import { createUtilitiesMessageHandlers, runUtilitiesMessageChain } from "./features/utilities/utilitiesMessage.js";
+import { sendMemberLeaveEmbed } from "./features/utilities/leaveNotifier.js";
 import { handleExtendedAutoReplies } from "./message/extendedAutoReply.js";
 import { handleAiChatMonitorMessage } from "./features/ai/aiQueryService.js";
 import { copyAiHistoryFromMainToDedicatedDb } from "./features/ai/copyAiHistoryFromMain.js";
@@ -198,6 +199,7 @@ async function main(): Promise<void> {
     vcRanking: new SqliteVcRankingRepository(vcTimeSqlite),
     vcTemp,
   };
+  const utilitiesBundle = createUtilitiesMessageHandlers(ctx);
   log.info(
     "repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db), AI history (AI_History.db), automoderation (Automoderation.db), reminders (reminder.db, on first use)",
   );
@@ -344,7 +346,7 @@ async function main(): Promise<void> {
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
       if (await handlePrefixMessage(message, ctx)) return;
-      if (await handleAutoReply(message, ctx)) return;
+      await runUtilitiesMessageChain(utilitiesBundle, message);
       if (await handleExtendedAutoReplies(message, ctx)) return;
       if (await handleAiChatMonitorMessage(message, ctx)) return;
       await handleAutoModerationMessage(message, ctx);
@@ -427,21 +429,7 @@ async function main(): Promise<void> {
       if (member.guild.id !== config.GUILD_ID) return;
       await getDetecterService(ctx).onGuildMemberRemove(member);
       endOpenVcSessionForMember(vcTimeSqlite, member.guild.id, member.id);
-      const s = await getGuildSettingsData(db, member.guild.id);
-      const chId = s.member_leave_channel_id as string | undefined;
-      if (!chId) return;
-      const ch = await member.guild.channels.fetch(chId).catch(() => null);
-      if (ch?.isTextBased()) {
-        await ch.send({
-          embeds: [
-            {
-              title: "メンバーが退出しました",
-              description: `${member.user.tag} (${member.id})`,
-              color: 0x888888,
-            },
-          ],
-        });
-      }
+      await sendMemberLeaveEmbed(ctx, member);
     } catch (err) {
       log.error({ err }, "guildMemberRemove");
     }

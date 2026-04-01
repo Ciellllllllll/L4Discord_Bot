@@ -2,8 +2,18 @@
 
 const FILE_SESSION_MS = 10 * 60 * 1000;
 const CLEAN_MS = 60 * 1000;
+const PENDING_MODMAIL_TICKET_MS = 30 * 60 * 1000;
 
-export const startAttachmentFired = new Set<string>();
+export type PendingModmailTicketCtx = {
+  createdAt: number;
+  guildId: string;
+  userId: string;
+  buttonFired: boolean;
+};
+
+/** Ticket.js `pendingModmailContexts` 相当（DM「チケットを作成」→モーダル） */
+export const pendingModmailTicketContexts = new Map<string, PendingModmailTicketCtx>();
+
 export const userAttachmentFired = new Set<string>();
 export const replyAttachmentFired = new Set<string>();
 export const userReplyFired = new Set<string>();
@@ -47,9 +57,17 @@ function cleanupStaffAttach(): void {
   }
 }
 
+function cleanupPendingModmailTicketContexts(): void {
+  const cutoff = Date.now() - PENDING_MODMAIL_TICKET_MS;
+  for (const [key, value] of pendingModmailTicketContexts.entries()) {
+    if (value.createdAt < cutoff) pendingModmailTicketContexts.delete(key);
+  }
+}
+
 setInterval(() => {
   cleanupUserAttach();
   cleanupStaffAttach();
+  cleanupPendingModmailTicketContexts();
 }, CLEAN_MS).unref?.();
 
 export function setUserAttachmentSession(userId: string, session: Omit<UserAttachSession, "expires_at">): void {

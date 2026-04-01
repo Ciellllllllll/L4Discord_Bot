@@ -31,8 +31,7 @@ function rowData(row: RemindersRow): ReminderStoredData {
     const sec = Number((rec as { interval_sec: unknown }).interval_sec);
     if (Number.isFinite(sec) && sec > 0) recurrence = { interval_sec: sec };
   }
-  const mentionText = typeof d.mention_text === "string" ? d.mention_text : undefined;
-  return { ev_type: ev, title, mention_text: mentionText, recurrence: recurrence ?? null };
+  return { ev_type: ev, title, recurrence: recurrence ?? null };
 }
 
 function recurrenceJsonFromData(data: ReminderStoredData): string | null {
@@ -79,7 +78,6 @@ export async function createReminderHubEntry(
     channelId: string;
     fireAt: Date;
     recurrence: { interval_sec: number } | null;
-    mentionText: string;
   },
 ): Promise<string> {
   const id = randomUUID();
@@ -87,9 +85,10 @@ export async function createReminderHubEntry(
   const data: ReminderStoredData = {
     ev_type: evType,
     title: input.title,
-    mention_text: input.mentionText,
     recurrence: input.recurrence,
   };
+  /** SQLite TEXT 列: better-sqlite3 はオブジェクトをバインドできないため JSON 文字列で保存 */
+  const dataJson = JSON.stringify(data);
   await rdb(ctx)
     .insertInto("reminders")
     .values({
@@ -100,7 +99,7 @@ export async function createReminderHubEntry(
       body: input.body,
       fire_at: input.fireAt.toISOString(),
       status: "pending",
-      data: data as unknown as Record<string, unknown>,
+      data: dataJson as unknown as Record<string, unknown>,
       created_at: sqliteTimestamp() as unknown as Date,
     })
     .execute();
@@ -189,15 +188,15 @@ export async function updateReminderHubContent(
   const nextData: ReminderStoredData = {
     ev_type: prev.ev_type,
     title: input.title,
-    mention_text: prev.mention_text,
     recurrence: input.recurrence,
   };
+  const nextDataJson = JSON.stringify(nextData);
   const result = await rdb(ctx)
     .updateTable("reminders")
     .set({
       body: input.body,
       fire_at: input.fireAt.toISOString(),
-      data: nextData as unknown as Record<string, unknown>,
+      data: nextDataJson as unknown as Record<string, unknown>,
     })
     .where("guild_id", "=", input.guildId)
     .where("author_id", "=", input.authorId)

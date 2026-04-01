@@ -20,8 +20,6 @@ export const EVENT_TYPES = Object.keys(EVENT_META) as ReminderEvType[];
 export type ReminderStoredData = {
   ev_type: ReminderEvType;
   title: string;
-  /** 投稿先メンション（v2 の mention_text 相当） */
-  mention_text?: string;
   recurrence?: { interval_sec: number } | null;
 };
 

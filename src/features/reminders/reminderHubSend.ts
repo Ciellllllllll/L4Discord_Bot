@@ -1,7 +1,21 @@
+import { EmbedBuilder } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import type { RemindersRow } from "../../core/db/types.js";
-import { EVENT_META, normalizeEventType } from "./reminderHubTypes.js";
+import { EVENT_META, normalizeEventType, type ReminderEvType } from "./reminderHubTypes.js";
 import { reminderRowStoredData } from "./reminderHubRepo.js";
+
+/** 公開投稿用: タイトル・本文とも Discord 見出し1（#）。本文は大文字。 */
+export function buildReminderHubPublicEmbed(
+  ev: ReminderEvType,
+  titleLine: string,
+  bodyText: string,
+): EmbedBuilder {
+  const meta = EVENT_META[ev];
+  const t = titleLine.trim() || meta.label;
+  const b = bodyText.trim();
+  const desc = `# ${t}\n# ${b.toUpperCase()}`.slice(0, 4096);
+  return new EmbedBuilder().setColor(meta.color).setDescription(desc);
+}
 
 export async function sendReminderHubMessage(ctx: BotContext, row: RemindersRow): Promise<void> {
   const data = reminderRowStoredData(row);
@@ -18,15 +32,12 @@ export async function sendReminderHubMessage(ctx: BotContext, row: RemindersRow)
 
   const ev = normalizeEventType(data.ev_type);
   const label = EVENT_META[ev].label;
-  const mentionRaw =
-    data.mention_text?.trim() || (ev === "notice" ? "@everyone" : `<@${row.author_id}>`);
-  const mention = `${mentionRaw} `;
   const title = data.title || label;
-  const content = `${mention}**${title}**\n${row.body}`.slice(0, 2000);
+  const embed = buildReminderHubPublicEmbed(ev, title, row.body);
   await ch
     .send({
-      content,
-      allowedMentions: { parse: ["users", "roles", "everyone"] },
+      embeds: [embed],
+      allowedMentions: { parse: [] },
     })
     .catch(() => undefined);
 }
@@ -40,6 +51,7 @@ async function dmFallback(
   const label = EVENT_META[ev].label;
   const user = await ctx.client.users.fetch(row.author_id).catch(() => null);
   if (!user) return;
-  const text = `${label}: ${data.title || label}\n${row.body}`.slice(0, 2000);
-  await user.send(text).catch(() => undefined);
+  const title = data.title || label;
+  const embed = buildReminderHubPublicEmbed(ev, title, row.body);
+  await user.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => undefined);
 }

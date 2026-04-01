@@ -4,6 +4,7 @@ import { BOT_SEMVER, PREFIX_COMMAND_MIN_BOT_VERSION } from "../core/releaseVersi
 import { isOwner } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { buildSetupEntryButtonRow } from "../features/panels/setupWizard.js";
+import { reloadPanelsFromGuildSettings } from "../features/panels/panelService.js";
 
 const PREFIX = "!";
 
@@ -34,10 +35,36 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
     }
     await message.reply({
       content:
-        "**OWNER向け:** **ADMIN 用**（メッセージログ・リアクションロール管理など）と **USER 用**（VC作成・Modmail/チケットなど）の送信先チャンネルを設定するには、下のボタンから続行してください。",
+        "**OWNER向け:** **ADMIN 用**（メッセージログ・リアクションロール管理など）、**VC 用**（仮チャンネル作成）、**Modmail 用**（お問い合わせ）の送信先をそれぞれ選ぶには、下のボタンから続行してください。",
       components: [buildSetupEntryButtonRow()],
     });
     ctx.log.info({ command: "setup", userId: message.author.id, outcome: "setup_prompt_sent" }, "prefix command");
+    return true;
+  }
+
+  if (lower === "reload") {
+    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.reload ?? "0.0.0")) {
+      await message.reply(versionBlockedMessage());
+      ctx.log.info({ command: "reload", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
+      return true;
+    }
+    if (!isOwner(message.author.id, ctx.config)) {
+      await message.reply("OWNER専用です。");
+      ctx.log.info({ command: "reload", userId: message.author.id, outcome: "not_owner" }, "prefix command");
+      return true;
+    }
+    if (!message.guildId) {
+      await message.reply("ギルド内でのみ実行できます。");
+      return true;
+    }
+    const result = await reloadPanelsFromGuildSettings(ctx, message.guildId);
+    if (!result.ok && result.reason === "no_channels") {
+      await message.reply("先に !Setup でパネル送信先チャンネルを設定してください。");
+      ctx.log.info({ command: "reload", userId: message.author.id, outcome: "no_channels" }, "prefix command");
+      return true;
+    }
+    await message.reply("!Setup で保存したチャンネル設定のまま、常設パネルを再同期しました。");
+    ctx.log.info({ command: "reload", userId: message.author.id, outcome: "ok" }, "prefix command");
     return true;
   }
 

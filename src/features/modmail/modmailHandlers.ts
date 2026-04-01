@@ -1,7 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { MessageFlags, type ButtonInteraction } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { buildModmailStartAttachmentRow } from "./modmailUi.js";
+import { buildModmailTicketCreateRow } from "./modmailUi.js";
 import { openModmailByGuildUser, sendModmailStartDm, upsertModmailIntake } from "./modmailService.js";
+import { pendingModmailTicketContexts } from "./modmailSessions.js";
 
 export async function handleUserPanelModmailStart(
   interaction: ButtonInteraction,
@@ -20,14 +22,24 @@ export async function handleUserPanelModmailStart(
     return;
   }
 
+  const ctxId = `${Date.now()}_${randomBytes(4).toString("hex")}`;
+  pendingModmailTicketContexts.set(ctxId, {
+    createdAt: Date.now(),
+    guildId,
+    userId: uid,
+    buttonFired: false,
+  });
+
   try {
     await upsertModmailIntake(ctx, guildId, uid);
-    await sendModmailStartDm(interaction.user, [buildModmailStartAttachmentRow(guildId, uid)]);
+    await sendModmailStartDm(interaction.user, [buildModmailTicketCreateRow(ctxId)]);
     await interaction.reply({
-      content: "DM を送信しました。DM で相談内容を送ってください（最初のメッセージで受付が始まります）。",
+      content:
+        "DM を送信しました。DM の「チケットを作成」から内容を入力するか、この DM にメッセージを送って受付を開始してください。",
       flags: MessageFlags.Ephemeral,
     });
   } catch (e) {
+    pendingModmailTicketContexts.delete(ctxId);
     ctx.log.warn({ err: e, guildId, userId: uid }, "modmail start DM failed");
     await interaction.reply({
       content: "Bot から DM を送信できませんでした。Bot の DM を受け取れる設定にしてください。",

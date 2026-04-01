@@ -44,20 +44,47 @@ type ExpectedPanel = { kind: string; channelId: string };
 
 function panelChannelIds(settings: Awaited<ReturnType<typeof getGuildSettingsData>>): {
   admin?: string;
-  user?: string;
+  vc?: string;
+  modmail?: string;
 } {
-  const a = settings.panel_channels?.admin_channel_id?.trim();
-  const u = settings.panel_channels?.user_channel_id?.trim();
+  const pc = settings.panel_channels;
+  const a = pc?.admin_channel_id?.trim();
+  const legacyUser = pc?.user_channel_id?.trim();
+  const vcRaw = pc?.vc_channel_id?.trim() ?? legacyUser;
+  const mmRaw = pc?.modmail_channel_id?.trim() ?? legacyUser;
   return {
     admin: a && /^\d+$/.test(a) ? a : undefined,
-    user: u && /^\d+$/.test(u) ? u : undefined,
+    vc: vcRaw && /^\d+$/.test(vcRaw) ? vcRaw : undefined,
+    modmail: mmRaw && /^\d+$/.test(mmRaw) ? mmRaw : undefined,
   };
+}
+
+/** guild_settings の panel_channels から、pending 行に書き込む [kind, channelId] 一覧 */
+function buildPendingChannelPairs(settings: Awaited<ReturnType<typeof getGuildSettingsData>>): [string, string][] {
+  const { admin, vc, modmail } = panelChannelIds(settings);
+  const out: [string, string][] = [];
+  if (admin) {
+    out.push(
+      [PANEL_KIND_REACTION_ROLE_ADMIN, admin],
+      [PANEL_KIND_MESSAGE_LOG_PANEL, admin],
+      [PANEL_KIND_AI_QUERY_HISTORY, admin],
+      [PANEL_KIND_REMINDER_HUB, admin],
+      [PANEL_KIND_AUTOMOD, admin],
+    );
+  }
+  if (vc) {
+    out.push([PANEL_KIND_VC_CREATOR, vc]);
+  }
+  if (modmail) {
+    out.push([PANEL_KIND_USER_CONTACT_PANEL, modmail]);
+  }
+  return out;
 }
 
 async function buildExpectedPanelsAsync(ctx: BotContext, guildId: string): Promise<ExpectedPanel[]> {
   const out: ExpectedPanel[] = [];
   const settings = await getGuildSettingsData(ctx.db, guildId);
-  const { admin, user } = panelChannelIds(settings);
+  const { admin, vc, modmail } = panelChannelIds(settings);
   if (admin) {
     out.push({ kind: PANEL_KIND_REACTION_ROLE_ADMIN, channelId: admin });
     out.push({ kind: PANEL_KIND_MESSAGE_LOG_PANEL, channelId: admin });
@@ -65,9 +92,11 @@ async function buildExpectedPanelsAsync(ctx: BotContext, guildId: string): Promi
     out.push({ kind: PANEL_KIND_REMINDER_HUB, channelId: admin });
     out.push({ kind: PANEL_KIND_AUTOMOD, channelId: admin });
   }
-  if (user) {
-    out.push({ kind: PANEL_KIND_VC_CREATOR, channelId: user });
-    out.push({ kind: PANEL_KIND_USER_CONTACT_PANEL, channelId: user });
+  if (vc) {
+    out.push({ kind: PANEL_KIND_VC_CREATOR, channelId: vc });
+  }
+  if (modmail) {
+    out.push({ kind: PANEL_KIND_USER_CONTACT_PANEL, channelId: modmail });
   }
   return out;
 }
@@ -156,22 +185,15 @@ export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string):
   await reconcileReactionRoleEntriesOnly(ctx, guild);
 }
 
-/** !Setup 完了時: ADMIN/USER チャンネルを保存し、常設 UI を同期 */
-export async function savePanelChannelsAndReconcile(
-  ctx: BotContext,
-  guildId: string,
-  adminChannelId: string,
-  userChannelId: string,
-): Promise<void> {
-  const cur = await getGuildSettingsData(ctx.db, guildId);
-  const { ui_destinations: _legacyUi, ...rest } = cur as typeof cur & { ui_destinations?: unknown };
-  void _legacyUi;
-  await upsertGuildSettingsData(ctx.db, guildId, {
-    ...rest,
-    panel_channels: { admin_channel_id: adminChannelId, user_channel_id: userChannelId },
-  });
-
+/**
+ * 現在の guild_settings を読み、Discord 上の常設パネル投稿を削除して DB を pending に戻したうえで reconcile。
+ * !Setup 保存直後および !Reload で利用。
+ */
+export async function resetPanelMessagesAndReconcile(ctx: BotContext, guildId: string): Promise<void> {
   const guild = await ctx.client.guilds.fetch(guildId).catch(() => null);
+  const settings = await getGuildSettingsData(ctx.db, guildId);
+  const pairMap = new Map(buildPendingChannelPairs(settings));
+
   if (guild) {
     for (const kind of [...MANAGED_PANEL_KINDS]) {
       const existing = await ctx.db
@@ -188,46 +210,81 @@ export async function savePanelChannelsAndReconcile(
 
   const pending: PanelMessageState = { ui_version: "0.0.0", status: "pending" };
   const pendingJson = JSON.stringify(serializePanelState(pending)) as unknown as Record<string, unknown>;
-  for (const [kind, ch] of [
-    [PANEL_KIND_REACTION_ROLE_ADMIN, adminChannelId],
-    [PANEL_KIND_MESSAGE_LOG_PANEL, adminChannelId],
-    [PANEL_KIND_AI_QUERY_HISTORY, adminChannelId],
-    [PANEL_KIND_REMINDER_HUB, adminChannelId],
-    [PANEL_KIND_AUTOMOD, adminChannelId],
-    [PANEL_KIND_VC_CREATOR, userChannelId],
-    [PANEL_KIND_USER_CONTACT_PANEL, userChannelId],
-  ] as const) {
+
+  for (const kind of [...MANAGED_PANEL_KINDS]) {
+    const ch = pairMap.get(kind);
     const existing = await ctx.db
       .selectFrom("panel_messages")
       .selectAll()
       .where("guild_id", "=", guildId)
       .where("panel_kind", "=", kind)
       .executeTakeFirst();
-    if (existing) {
-      await ctx.db
-        .updateTable("panel_messages")
-        .set({
-          channel_id: ch,
-          message_id: "",
-          data: pendingJson,
-        })
-        .where("id", "=", existing.id)
-        .execute();
-    } else {
-      await ctx.db
-        .insertInto("panel_messages")
-        .values({
-          id: randomUUID(),
-          guild_id: guildId,
-          panel_kind: kind,
-          channel_id: ch,
-          message_id: "",
-          data: pendingJson,
-          created_at: sqliteTimestamp() as unknown as Date,
-        })
-        .execute();
+    if (ch) {
+      if (existing) {
+        await ctx.db
+          .updateTable("panel_messages")
+          .set({
+            channel_id: ch,
+            message_id: "",
+            data: pendingJson,
+          })
+          .where("id", "=", existing.id)
+          .execute();
+      } else {
+        await ctx.db
+          .insertInto("panel_messages")
+          .values({
+            id: randomUUID(),
+            guild_id: guildId,
+            panel_kind: kind,
+            channel_id: ch,
+            message_id: "",
+            data: pendingJson,
+            created_at: sqliteTimestamp() as unknown as Date,
+          })
+          .execute();
+      }
+    } else if (existing) {
+      await deletePanelMessageRow(ctx, existing.id);
     }
   }
 
   await reconcilePanelsForGuild(ctx, guildId);
+}
+
+/** !Setup 完了時: ADMIN / VC / Modmail チャンネルを保存し、常設 UI を同期 */
+export async function savePanelChannelsAndReconcile(
+  ctx: BotContext,
+  guildId: string,
+  adminChannelId: string,
+  vcChannelId: string,
+  modmailChannelId: string,
+): Promise<void> {
+  const cur = await getGuildSettingsData(ctx.db, guildId);
+  const { ui_destinations: _legacyUi, ...rest } = cur as typeof cur & { ui_destinations?: unknown };
+  void _legacyUi;
+  await upsertGuildSettingsData(ctx.db, guildId, {
+    ...rest,
+    panel_channels: {
+      admin_channel_id: adminChannelId,
+      vc_channel_id: vcChannelId,
+      modmail_channel_id: modmailChannelId,
+    },
+  });
+
+  await resetPanelMessagesAndReconcile(ctx, guildId);
+}
+
+/** !Reload: チャンネル ID は変えずに UI を再送・再接続（pending 化して reconcile） */
+export async function reloadPanelsFromGuildSettings(ctx: BotContext, guildId: string): Promise<{
+  ok: boolean;
+  reason?: "no_channels";
+}> {
+  const settings = await getGuildSettingsData(ctx.db, guildId);
+  const { admin, vc, modmail } = panelChannelIds(settings);
+  if (!admin && !vc && !modmail) {
+    return { ok: false, reason: "no_channels" };
+  }
+  await resetPanelMessagesAndReconcile(ctx, guildId);
+  return { ok: true };
 }

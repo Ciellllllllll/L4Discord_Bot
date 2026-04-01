@@ -8,7 +8,11 @@ import {
   type ModalSubmitInteraction,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { pseudoMessageFromUploads, serializeUploadedCollection } from "./modmailAttachmentUtils.js";
+import {
+  type AttachmentMeta,
+  pseudoMessageFromUploads,
+  serializeUploadedCollection,
+} from "./modmailAttachmentUtils.js";
 import { appendReplyAttachmentsMeta, REPLY_STATUS, replyById } from "./modmailRepliesDb.js";
 import {
   MM_IDS,
@@ -16,11 +20,8 @@ import {
   parseUuidTail,
 } from "./modmailIds.js";
 import {
-  activeIntakeByGuildUser,
-  anyOpenModmailByUser,
-  createFromFirstDmWithAttachments,
+  createTicketFromIntakeForm,
   getModmailTicketRow,
-  openModmailByGuildUser,
   relayUserPayloadToThread,
 } from "./modmailService.js";
 import {
@@ -32,15 +33,16 @@ import {
 } from "./modmailStaffFlow.js";
 import {
   markCloseButtonFired,
+  pendingModmailTicketContexts,
   pendingUserReplyButtons,
   replyAttachmentFired,
-  startAttachmentFired,
   unmarkCloseButtonFired,
   userAttachmentFired,
   userReplyFired,
 } from "./modmailSessions.js";
 import {
   buildModmailAttachmentUploadModal,
+  buildModmailIntakeTicketModal,
   buildModmailUserReplyModal,
 } from "./modmailUi.js";
 
@@ -61,6 +63,13 @@ export async function routeModmailStaffAndUserInteractions(
 ): Promise<boolean> {
   const id = interaction.customId;
 
+  if (interaction.isButton() && id.startsWith(MM_IDS.TICKET_START_PREFIX)) {
+    return handleModmailTicketStartButton(interaction, ctx);
+  }
+  if (interaction.isModalSubmit() && id.startsWith(MM_IDS.TICKET_SUBMIT_PREFIX)) {
+    return handleModmailTicketSubmitModal(interaction, ctx);
+  }
+
   if (interaction.isButton() && id.startsWith(MM_IDS.CLOSE_PREFIX)) {
     return handleCloseButton(interaction, ctx);
   }
@@ -78,12 +87,6 @@ export async function routeModmailStaffAndUserInteractions(
   }
   if (interaction.isModalSubmit() && id.startsWith(MM_IDS.REPLY_ATTACHMENT_MODAL_PREFIX)) {
     return handleReplyAttachmentModal(interaction, ctx);
-  }
-  if (interaction.isButton() && id.startsWith(MM_IDS.START_ATTACHMENT_PREFIX)) {
-    return handleStartAttachmentButton(interaction, ctx);
-  }
-  if (interaction.isModalSubmit() && id.startsWith(MM_IDS.START_ATTACHMENT_MODAL_PREFIX)) {
-    return handleStartAttachmentModal(interaction, ctx);
   }
   if (interaction.isButton() && id.startsWith(MM_IDS.USER_ATTACHMENT_PREFIX)) {
     return handleUserAttachmentButton(interaction, ctx);
@@ -299,85 +302,6 @@ async function handleReplyAttachmentModal(interaction: ModalSubmitInteraction, c
   return true;
 }
 
-async function handleStartAttachmentButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  const parsed = parseThreePartId(interaction.customId, MM_IDS.START_ATTACHMENT_PREFIX);
-  if (!parsed || interaction.user.id !== parsed.partB) {
-    await replyEphemeral(interaction, "このボタンは対象ユーザーのみ使えます。");
-    return true;
-  }
-  const guildId = parsed.partA;
-  const key = `${guildId}:${parsed.partB}:${parsed.nonce}`;
-  if (startAttachmentFired.has(key)) {
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
-    await replyEphemeral(interaction, "このボタンは使用済みです。");
-    return true;
-  }
-  const open = await openModmailByGuildUser(ctx, guildId, parsed.partB);
-  const intake = await activeIntakeByGuildUser(ctx, guildId, parsed.partB);
-  if (!open && !intake) {
-    await replyEphemeral(interaction, "この添付ボタンの有効期限が切れています。");
-    return true;
-  }
-  try {
-    await interaction.showModal(
-      buildModmailAttachmentUploadModal(
-        `${MM_IDS.START_ATTACHMENT_MODAL_PREFIX}${interaction.customId.slice(MM_IDS.START_ATTACHMENT_PREFIX.length)}`,
-      ),
-    );
-  } catch {
-    await replyEphemeral(interaction, "モーダルを開けませんでした。");
-  }
-  return true;
-}
-
-async function handleStartAttachmentModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
-  const raw = interaction.customId.slice(MM_IDS.START_ATTACHMENT_MODAL_PREFIX.length);
-  const fake = `${MM_IDS.START_ATTACHMENT_PREFIX}${raw}`;
-  const parsed = parseThreePartId(fake, MM_IDS.START_ATTACHMENT_PREFIX);
-  if (!parsed || interaction.user.id !== parsed.partB) {
-    await replyEphemeral(interaction, "無効な操作です。");
-    return true;
-  }
-  const guildId = parsed.partA;
-  const key = `${guildId}:${parsed.partB}:${parsed.nonce}`;
-  if (startAttachmentFired.has(key)) {
-    await replyEphemeral(interaction, "このボタンは使用済みです。");
-    return true;
-  }
-  const uploaded = interaction.fields.getUploadedFiles(MM_IDS.ATTACHMENT_MODAL_FILES_ID, false);
-  const meta = serializeUploadedCollection(uploaded);
-  if (meta.length === 0) {
-    await replyEphemeral(interaction, "有効な添付がありません。");
-    return true;
-  }
-
-  let handled = false;
-  const open = await openModmailByGuildUser(ctx, guildId, parsed.partB);
-  if (open) {
-    await relayUserPayloadToThread(ctx, open, "User DM 受信", "(添付のみ)", meta);
-    handled = true;
-  } else {
-    const intake = await activeIntakeByGuildUser(ctx, guildId, parsed.partB);
-    if (intake) {
-      const created = await createFromFirstDmWithAttachments(ctx, guildId, parsed.partB, "(添付のみ)", meta);
-      handled = Boolean(created);
-    }
-  }
-  if (!handled) {
-    const anyOpen = await anyOpenModmailByUser(ctx, parsed.partB);
-    if (anyOpen) {
-      await relayUserPayloadToThread(ctx, anyOpen, "User DM 受信", "(添付のみ)", meta);
-      handled = true;
-    }
-  }
-  if (handled) startAttachmentFired.add(key);
-  await replyEphemeral(
-    interaction,
-    handled ? "添付ファイルを送信しました。" : "サーバー内の Modmail ボタンから相談を開始してください。",
-  );
-  return true;
-}
-
 async function handleUserAttachmentButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
   const parsed = parseThreePartId(interaction.customId, MM_IDS.USER_ATTACHMENT_PREFIX);
   if (!parsed || interaction.user.id !== parsed.partB) {
@@ -524,6 +448,87 @@ async function handleUserReplyModal(interaction: ModalSubmitInteraction, ctx: Bo
   } else {
     await relayUserPayloadToThread(ctx, ticket, "User Reply", body, []);
     await interaction.editReply({ content: "返信を送信しました。" }).catch(() => undefined);
+  }
+  return true;
+}
+
+async function handleModmailTicketStartButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+  const ctxId = interaction.customId.slice(MM_IDS.TICKET_START_PREFIX.length);
+  const pending = pendingModmailTicketContexts.get(ctxId);
+  if (!pending) {
+    await replyEphemeral(interaction, "このチケット作成ボタンは期限切れです。");
+    return true;
+  }
+  if (interaction.user.id !== pending.userId) {
+    await replyEphemeral(interaction, "このボタンは対象ユーザーのみ利用できます。");
+    return true;
+  }
+  if (pending.buttonFired) {
+    await interaction.message?.edit({ components: [] }).catch(() => undefined);
+    await replyEphemeral(interaction, "このチケット作成ボタンはすでに使用済みです。");
+    return true;
+  }
+  pending.buttonFired = true;
+  try {
+    await interaction.showModal(buildModmailIntakeTicketModal(ctxId));
+    await interaction.message?.edit({ components: [] }).catch(() => undefined);
+  } catch (e) {
+    pending.buttonFired = false;
+    ctx.log.warn({ err: e }, "modmail intake modal show failed");
+    await replyEphemeral(interaction, "モーダルの表示に失敗しました。時間をおいて再試行してください。");
+  }
+  return true;
+}
+
+async function handleModmailTicketSubmitModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
+  const ctxId = interaction.customId.slice(MM_IDS.TICKET_SUBMIT_PREFIX.length);
+  const pending = pendingModmailTicketContexts.get(ctxId);
+  if (!pending) {
+    await replyEphemeral(interaction, "チケット作成情報が期限切れです。");
+    return true;
+  }
+  if (interaction.user.id !== pending.userId) {
+    await replyEphemeral(interaction, "このフォームは対象ユーザーのみ送信できます。");
+    return true;
+  }
+
+  const title = interaction.fields.getTextInputValue(MM_IDS.MODAL_INTAKE_TITLE)?.trim() ?? "";
+  const body = interaction.fields.getTextInputValue(MM_IDS.MODAL_INTAKE_BODY)?.trim() ?? "";
+  let attachments: AttachmentMeta[] = [];
+  try {
+    const uploaded = interaction.fields.getUploadedFiles(MM_IDS.MODAL_INTAKE_FILES, false);
+    attachments = serializeUploadedCollection(uploaded);
+  } catch {
+    attachments = [];
+  }
+
+  await (interaction.guildId
+    ? interaction.deferReply({ flags: MessageFlags.Ephemeral })
+    : interaction.deferReply()
+  ).catch(() => undefined);
+  if (!interaction.deferred && !interaction.replied) {
+    return true;
+  }
+
+  try {
+    const result = await createTicketFromIntakeForm(ctx, {
+      guildId: pending.guildId,
+      userId: pending.userId,
+      title,
+      body,
+      attachments,
+    });
+    if (!result.ok) {
+      await interaction.editReply({ content: result.message }).catch(() => undefined);
+      return true;
+    }
+    pendingModmailTicketContexts.delete(ctxId);
+    await interaction.editReply({ content: result.message }).catch(() => undefined);
+  } catch (e) {
+    ctx.log.warn({ err: e }, "modmail ticket intake submit failed");
+    await interaction
+      .editReply({ content: "チケット作成に失敗しました。時間をおいて再試行してください。" })
+      .catch(() => undefined);
   }
   return true;
 }
