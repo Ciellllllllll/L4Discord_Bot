@@ -67,6 +67,8 @@ import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
 import { handlePrefixMessage } from "./message/prefixHandlers.js";
+import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
+import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
 
 let mainStarted = false;
 
@@ -182,6 +184,8 @@ async function main(): Promise<void> {
     "discord client created",
   );
   const vcTemp = new VcTemporaryChannelManager(log, client, config);
+  bindSenryuRepository(sqlite);
+
   const ctx: BotContext = {
     config,
     db,
@@ -347,6 +351,7 @@ async function main(): Promise<void> {
       }
       if (await handlePrefixMessage(message, ctx)) return;
       await runUtilitiesMessageChain(utilitiesBundle, message);
+      if (await handleSenryuMessage(ctx, message)) return;
       if (await handleExtendedAutoReplies(message, ctx)) return;
       if (await handleAiChatMonitorMessage(message, ctx)) return;
       await handleAutoModerationMessage(message, ctx);
@@ -434,6 +439,10 @@ async function main(): Promise<void> {
       log.error({ err }, "guildMemberRemove");
     }
   });
+
+  if (config.SENRYU_ENABLED) {
+    await initKuromojiTokenizer(config.SENRYU_KUROMOJI_DICT_PATH, log);
+  }
 
   log.info(
     {

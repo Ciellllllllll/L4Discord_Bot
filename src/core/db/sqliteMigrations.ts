@@ -66,6 +66,11 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/012_reminder_to_own_db.up.sql"),
     down: join(repoRoot, "migrations/sqlite/012_reminder_to_own_db.down.sql"),
   },
+  {
+    version: 13,
+    up: join(repoRoot, "migrations/sqlite/013_senryu.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/013_senryu.down.sql"),
+  },
 ];
 
 export function getSqliteUserVersion(db: DatabaseLib.Database): number {

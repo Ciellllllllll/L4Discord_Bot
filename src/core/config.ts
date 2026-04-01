@@ -105,6 +105,18 @@ const envSchema = z.object({
   REACTION_ROLE_OUTPUT_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   /** DiscordBOTv2 Utilities: 冷笑カウント JSON（既定: data/server/json/cold_laugh_counts.json） */
   COLD_LAUGH_STORE_PATH: z.string().min(1).default("data/server/json/cold_laugh_counts.json"),
+  /** 川柳（5-7-5）検出（kuromoji）。未設定・空は false */
+  SENRYU_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  SENRYU_REPLY_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  SENRYU_SAVE_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  /** 未設定・空は true */
+  SENRYU_AUTO_MUTE_ON_PERMISSION_ERROR: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  SENRYU_MAX_CONTENT_LENGTH: z.coerce.number().int().min(1).max(4000).default(2000),
+  /** kuromoji 辞書ディレクトリ（未設定はパッケージ既定） */
+  SENRYU_KUROMOJI_DICT_PATH: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().min(1).optional(),
+  ),
 });
 
 type ParsedEnvConfig = z.infer<typeof envSchema>;
