@@ -3,8 +3,11 @@ import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 
-const TRIGGER_KEYWORDS = ["ばっちい"] as const;
-const RESPONSE_TEXT = "ぱっちい君だよ！！！！！";
+/** メッセージ本文に含まれていれば反応する語 */
+const TRIGGER = "ばっちぃ";
+
+/** 返信本文 */
+const REPLY = "ぱっちぃ君だよ！！！！";
 
 export class KeywordResponder {
   constructor(private readonly ctx: BotContext) {}
@@ -29,12 +32,14 @@ export class KeywordResponder {
       return;
     }
 
-    if (TRIGGER_KEYWORDS.some((kw) => content.includes(kw))) {
-      try {
-        await message.reply({ content: RESPONSE_TEXT, allowedMentions: { repliedUser: false } });
-      } catch (err) {
-        this.ctx.log.warn({ err: String(err) }, "KeywordResponder reply failed");
-      }
+    if (!content.includes(TRIGGER)) {
+      return;
+    }
+
+    try {
+      await message.reply({ content: REPLY, allowedMentions: { repliedUser: false } });
+    } catch (err) {
+      this.ctx.log.warn({ err: String(err) }, "KeywordResponder reply failed");
     }
   }
 }
