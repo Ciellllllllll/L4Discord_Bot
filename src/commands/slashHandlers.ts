@@ -1,5 +1,6 @@
 import {
   ChannelType,
+  EmbedBuilder,
   type ChatInputCommandInteraction,
   type GuildMember,
   PermissionFlagsBits,
@@ -150,19 +151,31 @@ async function handleMemberCountSetup(
 }
 
 async function handleVcRank(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+  await interaction.deferReply();
   const period = interaction.options.getString("period", true) as "day" | "week" | "month" | "all";
   const rows = await ctx.vcRanking.getRanking(interaction.guildId!, period);
   if (rows.length === 0) {
-    await interaction.reply({
-      content: "VCランキングデータがありません（まだVC接続が記録されていない可能性があります）。",
-      ephemeral: true,
-    });
+    await interaction.editReply({ content: "\u0056\u0043\u30e9\u30f3\u30ad\u30f3\u30b0\u30c7\u30fc\u30bf\u304c\u3042\u308a\u307e\u305b\u3093\u3002" });
     return;
   }
-  const lines = rows.slice(0, 20).map((r, i) => `${i + 1}. <@${r.userId}> — ${r.seconds}s`);
-  await interaction.reply({ content: lines.join("\n").slice(0, 2000), ephemeral: true });
-}
 
+  const lines = rows.slice(0, 10).map((r, i) => {
+    const totalSec = Math.max(0, Math.floor(Number(r.seconds)));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const sec = totalSec % 60;
+    return `${i + 1}. <@${r.userId}> - ${h}\u6642\u9593${m}\u5206${sec}\u79d2`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle("\u0056\u0043\u6ede\u5728\u30e9\u30f3\u30ad\u30f3\u30b0\u0020\u0054\u004f\u0050\u0031\u0030")
+    .setColor(0x3498db)
+    .setDescription(lines.join("\n"));
+  await interaction.editReply({
+    embeds: [embed],
+    allowedMentions: { parse: ["users"] },
+  });
+}
 async function handleWerewolfCreate(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,

@@ -27,17 +27,9 @@ import {
 } from "./reminderHubTypes.js";
 import type { ReminderHubRowView } from "./reminderHubRepo.js";
 
-/** MessageCreateOptions の flags 等が InteractionReplyOptions と衝突するため、必要なフィールドのみ */
 export type ReminderHubMessagePayload = Pick<MessageCreateOptions, "embeds" | "components" | "content">;
 
-/** DiscordBotv2 remindersystem.js と同一のハブ用 customId（再接続スキャン用） */
-const HUB_IDS = new Set([
-  "reminder_create",
-  "todo_create",
-  "notice_create",
-  "reminder_manage",
-  "reminder_list",
-]);
+const HUB_IDS = new Set(["reminder_create", "todo_create", "notice_create", "reminder_manage", "reminder_list"]);
 
 function messageHasAnyCustomId(message: Message, customIds: Set<string>): boolean {
   if (!message.components?.length) return false;
@@ -61,24 +53,29 @@ export function buildReminderHubPanelPayload(): ReminderHubMessagePayload {
       "ボタンからリマインダー/TODO/運営お知らせを作成できます。\n日時は `+10m` `+2h` `2026-03-20 09:00` 形式を使用できます。",
     )
     .setColor(0x1abc9c);
+
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("reminder_create").setLabel("リマインダー作成").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("todo_create").setLabel("TODO作成").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("notice_create").setLabel("運営お知らせ").setStyle(ButtonStyle.Success),
   );
+
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("reminder_manage").setLabel("確認・編集").setStyle(ButtonStyle.Secondary),
   );
+
   return { embeds: [embed], components: [row1, row2] };
 }
 
 export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMessagePayload {
   const normalized = normalizeEventType(kind);
   const meta = EVENT_META[normalized];
+
   const embed = new EmbedBuilder()
     .setTitle(`${meta.createLabel}: 投稿先チャンネルを選択`)
     .setDescription("投稿先チャンネルを選択してください。選択後に入力画面を開きます。")
     .setColor(meta.color);
+
   const channelRow = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
     new ChannelSelectMenuBuilder()
       .setCustomId(`rem_create_channel:${normalized}`)
@@ -93,6 +90,7 @@ export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMess
         ChannelType.AnnouncementThread,
       ),
   );
+
   return { embeds: [embed], components: [channelRow] };
 }
 
@@ -103,6 +101,7 @@ function buildManageTabsRow(activeKind: ReminderEvType): ActionRowBuilder<Button
       .setLabel(EVENT_META[k].label)
       .setStyle(k === activeKind ? ButtonStyle.Primary : ButtonStyle.Secondary),
   );
+
   return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 }
 
@@ -114,10 +113,12 @@ export function buildManageListPayload(
   const normalized = normalizeEventType(kind);
   const title = `${EVENT_META[normalized].label}の確認・編集`;
   const descriptionLines: string[] = [];
+
   if (noticeText) {
     descriptionLines.push(noticeText);
     descriptionLines.push("");
   }
+
   if (!rows.length) {
     descriptionLines.push(`有効な${EVENT_META[normalized].label}はありません。`);
   } else {
@@ -139,6 +140,7 @@ export function buildManageListPayload(
     .setColor(EVENT_META[normalized].color);
 
   const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [buildManageTabsRow(normalized)];
+
   if (rows.length) {
     const menu = new StringSelectMenuBuilder()
       .setCustomId(`rem_manage_pick:${normalized}`)
@@ -152,19 +154,19 @@ export function buildManageListPayload(
       );
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
   }
+
   components.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`rem_manage_refresh:${normalized}`)
-        .setLabel("再読み込み")
-        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`rem_manage_refresh:${normalized}`).setLabel("再読み込み").setStyle(ButtonStyle.Secondary),
     ),
   );
+
   return { embeds: [embed], components };
 }
 
 export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = ""): ReminderHubMessagePayload {
   const kind = normalizeEventType(row.ev_type);
+
   const embed = new EmbedBuilder()
     .setTitle(`${EVENT_META[kind].label} #${row.id}`)
     .setColor(EVENT_META[kind].color)
@@ -175,6 +177,7 @@ export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = "
       { name: "繰り返し", value: formatRecurrenceLabel(row.recurrence_json), inline: true },
       { name: "投稿先", value: `<#${row.channel_id}>`, inline: true },
     );
+
   if (noticeText) {
     embed.setDescription(noticeText);
   } else {
@@ -187,6 +190,7 @@ export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = "
     new ButtonBuilder().setCustomId(`rem_manage_post:${row.id}`).setLabel("即時投稿").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`rem_manage_back:${kind}`).setLabel("一覧に戻る").setStyle(ButtonStyle.Secondary),
   );
+
   const channelRow = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
     new ChannelSelectMenuBuilder()
       .setCustomId(`rem_manage_channel_pick:${row.id}`)
@@ -201,15 +205,19 @@ export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = "
         ChannelType.AnnouncementThread,
       ),
   );
-  return {
-    embeds: [embed],
-    components: [buildManageTabsRow(kind), actionRow, channelRow],
-  };
+
+  return { embeds: [embed], components: [buildManageTabsRow(kind), actionRow, channelRow] };
 }
 
 export function buildCreateModal(kind: ReminderEvType, channelId: string): ModalBuilder {
   const normalized = normalizeEventType(kind);
   const modalTitle = EVENT_META[normalized].createLabel;
+  const initialTitleMap: Record<ReminderEvType, string> = {
+    reminder: "📅リマインダー",
+    todo: "📌TODO",
+    notice: "📢運営お知らせ",
+  };
+
   return new ModalBuilder()
     .setCustomId(`reminder_modal:${normalized}:${channelId}`)
     .setTitle(modalTitle.slice(0, 45))
@@ -220,7 +228,8 @@ export function buildCreateModal(kind: ReminderEvType, channelId: string): Modal
           .setLabel("タイトル")
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
-          .setMaxLength(100),
+          .setMaxLength(100)
+          .setValue(initialTitleMap[normalized]),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -251,6 +260,7 @@ export function buildCreateModal(kind: ReminderEvType, channelId: string): Modal
 
 export function buildEditModal(row: ReminderHubRowView): ModalBuilder {
   const kind = normalizeEventType(row.ev_type);
+
   return new ModalBuilder()
     .setCustomId(`${EDIT_MODAL_PREFIX}:${row.id}`)
     .setTitle(`${EVENT_META[kind].label}編集`.slice(0, 45))

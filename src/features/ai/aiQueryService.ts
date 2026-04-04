@@ -61,16 +61,23 @@ function asChatMessage(role: "system" | "user" | "assistant", content: string): 
 
 export class AiQueryService {
   private readonly userPromptPaths = new Map<string, string>();
-  private readonly basePromptTemplate: string;
-  private readonly basePromptResolved: string;
+  private basePromptTemplate: string;
+  private basePromptResolved: string;
   private readonly optimizingUsers = new Set<string>();
 
   constructor(private readonly ctx: BotContext) {
     const dir = path.resolve(this.ctx.config.USER_PROMPT_DIR);
     fs.mkdirSync(dir, { recursive: true });
-    const { template, resolved } = readAiBasePromptFiles(this.ctx.config);
+    const { template, resolved } = this.refreshBasePromptFromFile();
     this.basePromptTemplate = template;
     this.basePromptResolved = resolved;
+  }
+
+  private refreshBasePromptFromFile(): { template: string; resolved: string } {
+    const latest = readAiBasePromptFiles(this.ctx.config);
+    this.basePromptTemplate = latest.template;
+    this.basePromptResolved = latest.resolved;
+    return latest;
   }
 
   resolveUserName(userId: string, userName: string): string {
@@ -87,6 +94,7 @@ export class AiQueryService {
   }
 
   private ensureUserPromptFile(userId: string, userName: string): string {
+    this.refreshBasePromptFromFile();
     const uid = String(userId);
     const resolvedUserName = this.resolveUserName(uid, userName);
     const nextPath = this.userPromptPath(resolvedUserName);
@@ -187,7 +195,7 @@ export class AiQueryService {
     this.optimizingUsers.add(uid);
     try {
       const resolvedUserName = this.resolveUserName(uid, userName);
-      const basePrompt = this.basePromptResolved;
+      const { resolved: basePrompt } = this.refreshBasePromptFromFile();
       const currentPrompt = this.loadUserPrompt(uid, resolvedUserName);
       const historyWindow = await this.loadHistoryWindowForOptimizer(guildId, uid);
       const valid = historyWindow.filter(
@@ -301,8 +309,10 @@ export class AiQueryService {
     question: string,
   ): Promise<string> {
     const history = await this.loadHistoryMessages(guildId, userId);
+    const { resolved: basePrompt } = this.refreshBasePromptFromFile();
     const userPrompt = this.loadUserPrompt(userId, userName);
     const messages: ChatMessage[] = [
+      { role: "system", content: basePrompt },
       { role: "system", content: userPrompt },
       ...history,
       { role: "user", content: question },
