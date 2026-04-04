@@ -97,6 +97,8 @@ const envSchema = z.object({
   GUILD_MISMATCH_POLICY: z.enum(["warn"]).optional(),
   /** VC 滞在ログ専用 DB（既定: data/vc_time.db） */
   VC_TIME_DATABASE_PATH: z.string().min(1).default("data/vc_time.db"),
+  /** 一時VCを作成するカテゴリID（未設定時は既存VCから自動推定） */
+  VC_CREATE_CATEGORY_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   /** /q 会話履歴専用 DB（既定: data/AI_History.db） */
   AI_HISTORY_DATABASE_PATH: z.string().min(1).default("data/AI_History.db"),
   /** 自動モデレーション設定専用 DB（既定: data/Automoderation.db） */
