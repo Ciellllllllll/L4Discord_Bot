@@ -27,7 +27,7 @@ export class SqliteVcRankingRepository implements IVcRankingRepository {
     const gid = snowflakeToBigInt(guildId);
     const start = periodStartIso(period);
     let sql = `
-      SELECT user_id AS userId, SUM(duration_sec) AS sec
+      SELECT CAST(user_id AS TEXT) AS userId, CAST(SUM(duration_sec) AS TEXT) AS sec
       FROM sessions
       WHERE guild_id = ? AND ended_at IS NOT NULL AND duration_sec IS NOT NULL
     `;
@@ -38,9 +38,12 @@ export class SqliteVcRankingRepository implements IVcRankingRepository {
     }
     sql += ` GROUP BY user_id ORDER BY sec DESC LIMIT 25`;
     const stmt = this.sqlite.prepare(sql);
-    const rows = stmt.all(...args) as { userId: bigint | number; sec: number | bigint | null }[];
+    const rows = stmt.all(...args) as { userId: string | bigint | number; sec: string | number | bigint | null }[];
     return rows.map((r) => ({
-      userId: bigIntToSnowflake(typeof r.userId === "bigint" ? r.userId : BigInt(Math.trunc(Number(r.userId)))),
+      userId:
+        typeof r.userId === "string"
+          ? r.userId.trim()
+          : bigIntToSnowflake(typeof r.userId === "bigint" ? r.userId : BigInt(Math.trunc(Number(r.userId)))),
       seconds: Number(r.sec ?? 0),
     }));
   }

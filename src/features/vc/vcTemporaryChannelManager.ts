@@ -29,7 +29,6 @@ const GRACE_NO_JOIN_MS = 24 * 60 * 60 * 1000;
 const EMPTY_DELETE_DEBOUNCE_MS = 1000;
 
 type ActiveVcMeta = {
-  creatorUserId: string;
   createdAtMs: number;
   userEverJoined: boolean;
 };
@@ -55,6 +54,14 @@ function resolveDefaultVoiceCategory(guild: Guild): CategoryChannel | null {
     }
   }
   return null;
+}
+
+function resolveConfiguredVoiceCategory(guild: Guild, categoryIdRaw: string | undefined): CategoryChannel | null {
+  const categoryId = String(categoryIdRaw ?? "").trim();
+  if (!categoryId) return null;
+  const category = guild.channels.cache.get(categoryId) ?? null;
+  if (!category || category.type !== ChannelType.GuildCategory) return null;
+  return category as CategoryChannel;
 }
 
 export const vcCreatorErrText = {
@@ -140,24 +147,12 @@ export class VcTemporaryChannelManager {
     }
     if (fresh.members.size > 0) return;
 
-    const creatorId = meta.creatorUserId;
     this.activeVcs.delete(channel.id);
 
     try {
       const name = fresh.name;
       await fresh.delete("一時VC 空室のため自動削除");
       this.log.info({ channelId: fresh.id, name }, "temporary VC deleted (empty)");
-
-      const ownerId = this.config.OWNER_ID.trim();
-      if (/^\d+$/.test(ownerId)) {
-        const owner = await this.client.users.fetch(ownerId).catch(() => null);
-        if (owner) {
-          const creatorMention = creatorId ? `<@${creatorId}>` : "不明ユーザー";
-          await owner
-            .send(`ユーザー ${creatorMention} が作成した VC ${name} は空室のため削除されました`)
-            .catch(() => undefined);
-        }
-      }
     } catch (err) {
       this.log.warn({ err, channelId: channel.id }, "temporary VC delete failed");
     }
@@ -173,7 +168,8 @@ export class VcTemporaryChannelManager {
     const voices = getSortedVoiceChannels(guild);
     if (voices.length === 0) return { ok: false, error: "no_voice_category" };
 
-    const category = resolveDefaultVoiceCategory(guild);
+    const category =
+      resolveConfiguredVoiceCategory(guild, this.config.VC_CREATE_CATEGORY_ID) ?? resolveDefaultVoiceCategory(guild);
 
     const vcName = String(opts.name || "").trim();
     if (vcName.length < 2 || vcName.length > 30) return { ok: false, error: "invalid_name_length" };
@@ -187,20 +183,9 @@ export class VcTemporaryChannelManager {
       });
 
       this.activeVcs.set(vc.id, {
-        creatorUserId: opts.creatorUserId,
         createdAtMs: Date.now(),
         userEverJoined: false,
       });
-
-      const ownerId = this.config.OWNER_ID.trim();
-      if (/^\d+$/.test(ownerId)) {
-        const owner = await this.client.users.fetch(ownerId).catch(() => null);
-        if (owner) {
-          await owner
-            .send(`ユーザー <@${opts.creatorUserId}> が VC ${vcName} を作成しました`)
-            .catch(() => undefined);
-        }
-      }
 
       return { ok: true, channelId: vc.id, name: vcName };
     } catch (err) {
