@@ -13,13 +13,10 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       )
       .toJSON(),
     new SlashCommandBuilder().setName("ping").setDescription("AI応答時間計測").toJSON(),
-    new SlashCommandBuilder()
-      .setName("member_count_setup")
-      .setDescription("Member Count用カテゴリ・ボイスチャンネル設置")
-      .toJSON(),
+
     new SlashCommandBuilder()
       .setName("vc_rank")
-      .setDescription("VC滞在ランキング")
+      .setDescription("VC接続ランキング")
       .addStringOption((o) =>
         o
           .setName("period")
@@ -54,11 +51,7 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .setDescription("絵文字制限を解除")
       .addUserOption((o) => o.setName("user").setDescription("対象").setRequired(true))
       .toJSON(),
-    new SlashCommandBuilder()
-      .setName("stamp_count")
-      .setDescription("スタンプ利用回数")
-      .addUserOption((o) => o.setName("user").setDescription("対象（省略時は自分）"))
-      .toJSON(),
-    new SlashCommandBuilder().setName("stamp_ranking").setDescription("スタンプランキング").toJSON(),
+
+    new SlashCommandBuilder().setName("stamp_rank").setDescription("スタンプランキング").toJSON(),
   ];
 }
