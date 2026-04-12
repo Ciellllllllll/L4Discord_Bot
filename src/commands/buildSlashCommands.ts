@@ -16,17 +16,17 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
 
     new SlashCommandBuilder()
       .setName("vc_rank")
-      .setDescription("VC接続ランキング")
+      .setDescription("VC接続ランキング（データは vc_time.db。メインDBの sessions とは別）")
       .addStringOption((o) =>
         o
           .setName("period")
-          .setDescription("期間")
+          .setDescription("集計窓（境界は VC_TIME_RANKING_TIMEZONE、既定は日本時間）。全期間＝累計")
           .setRequired(true)
           .addChoices(
-            { name: "今日", value: "day" },
-            { name: "週間", value: "week" },
-            { name: "月間", value: "month" },
-            { name: "全期間", value: "all" },
+            { name: "今日（その日0時〜）", value: "day" },
+            { name: "週間（月曜0時〜）", value: "week" },
+            { name: "月間（1日0時〜）", value: "month" },
+            { name: "全期間（累計）", value: "all" },
           ),
       )
       .toJSON(),

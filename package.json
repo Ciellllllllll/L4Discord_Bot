@@ -11,6 +11,7 @@
     "dev:utf8": "cmd /c \"chcp 65001>nul && tsx src/features/senryu/senryu.spec.ts && tsx watch src/index.ts\"",
     "migrate": "tsx src/scripts/migrateSqlite.ts up",
     "migrate:down": "tsx src/scripts/migrateSqlite.ts down",
+    "merge:vc-time": "tsx src/scripts/mergeVcTimeDbs.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

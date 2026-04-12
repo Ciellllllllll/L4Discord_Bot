@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { DEPLOY_GUILD_ID, DEPLOY_OWNER_ID } from "./deployConstants.js";
 import { BOT_SEMVER } from "./releaseVersions.js";
@@ -14,15 +17,35 @@ function envFlagFalseByDefault(v: unknown): boolean {
   return ["1", "true", "on", "yes"].includes(String(v).toLowerCase());
 }
 
+/** 相対パスを package.json があるディレクトリ基準の絶対パスに解決する（cwd ずれ対策） */
+function findPackageJsonDir(fromFile: string): string {
+  let dir = dirname(fromFile);
+  for (;;) {
+    if (existsSync(join(dir, "package.json"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return dirname(fromFile);
+    dir = parent;
+  }
+}
+
+function assertValidIanaTimeZone(tz: string): void {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz }).format();
+  } catch {
+    throw new Error(`Invalid VC_TIME_RANKING_TIMEZONE: ${tz}`);
+  }
+}
+
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
+  /** メイン SQLite。相対パスはリポジトリルート（package.json と同じ階層）基準 */
   DATABASE_PATH: z.string().min(1).default("data/l4discord.sqlite"),
   /** メッセージログ専用 DB（既定: data/message.db）。環境変数 LOG_DB_PATH でも上書き可（DiscordBOTv2 互換） */
   MESSAGE_LOG_DB_PATH: z.string().min(1).default("data/message.db"),
   /** 添付ファイルのローカル複製メタ用 DB（message.db のスキーマは変更しない）。既定: data/message_attachment_store.db */
   MESSAGE_ATTACHMENT_STORE_DB_PATH: z.string().min(1).default("data/message_attachment_store.db"),
-  /** 上記の実体ファイル保存先（相対は cwd 基準）。既定: data/message_log_attachments */
+  /** 上記の実体ファイル保存先（相対はリポジトリルート基準）。既定: data/message_log_attachments */
   MESSAGE_ATTACHMENT_FILES_DIR: z.string().min(1).default("data/message_log_attachments"),
   /** メッセージログ取り込み時に Discord CDN から添付をダウンロードして保存する（既定: オン） */
   MESSAGE_ATTACHMENT_ARCHIVE_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
@@ -58,9 +81,9 @@ const envSchema = z.object({
   AI_LOG_COMMANDS_TO_HISTORY: z.preprocess(envFlagFalseByDefault, z.boolean()),
   /** 会話コンテキストとして渡す最大メッセージ数（user/assistant いずれも1件でカウント） */
   AI_HISTORY_MAX_MESSAGES: z.coerce.number().int().min(2).default(24),
-  /** ベース system プロンプト（相対パスは cwd 基準）。無ければコード既定 */
+  /** ベース system プロンプト（相対はリポジトリルート基準）。無ければコード既定 */
   PROMPT_FILE_PATH: z.string().min(1).default("prompt.txt"),
-  /** ユーザー別プロンプト上書きファイル置き場 */
+  /** ユーザー別プロンプト上書きファイル置き場（相対はリポジトリルート基準） */
   USER_PROMPT_DIR: z.string().min(1).default("data/AI/prompt/user"),
   /**
    * メンションまたは Bot への返信で自然文を /q と同じルートに流す（既定オフ）
@@ -95,8 +118,10 @@ const envSchema = z.object({
   ),
   COMMAND_SYNC_DEBOUNCE_MS: z.coerce.number().int().min(0).default(0),
   GUILD_MISMATCH_POLICY: z.enum(["warn"]).optional(),
-  /** VC 滞在ログ専用 DB（既定: data/vc_time.db） */
+  /** VC 滞在ログ専用 DB（相対はリポジトリルート基準。既定: data/vc_time.db） */
   VC_TIME_DATABASE_PATH: z.string().min(1).default("data/vc_time.db"),
+  /** VC ランキングの「今日／週／月」の境界に使う IANA タイムゾーン（既定: Asia/Tokyo） */
+  VC_TIME_RANKING_TIMEZONE: z.string().min(1).default("Asia/Tokyo"),
   /** 一時VCを作成するカテゴリID（未設定時は既存VCから自動推定） */
   VC_CREATE_CATEGORY_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   /** /q 会話履歴専用 DB（既定: data/AI_History.db） */
@@ -153,5 +178,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (!ownerId) {
     throw new Error("src/core/deployConstants.ts の DEPLOY_OWNER_ID を設定してください");
   }
-  return { ...parsed.data, GUILD_ID: guildId, OWNER_ID: ownerId };
+  const data = parsed.data;
+  assertValidIanaTimeZone(data.VC_TIME_RANKING_TIMEZONE);
+  const repoRoot = findPackageJsonDir(fileURLToPath(import.meta.url));
+  const R = (p: string) => (isAbsolute(p) ? p : join(repoRoot, p));
+  return {
+    ...data,
+    GUILD_ID: guildId,
+    OWNER_ID: ownerId,
+    DATABASE_PATH: R(data.DATABASE_PATH),
+    MESSAGE_LOG_DB_PATH: R(data.MESSAGE_LOG_DB_PATH),
+    MESSAGE_ATTACHMENT_STORE_DB_PATH: R(data.MESSAGE_ATTACHMENT_STORE_DB_PATH),
+    MESSAGE_ATTACHMENT_FILES_DIR: R(data.MESSAGE_ATTACHMENT_FILES_DIR),
+    TICKET_DATABASE_PATH: R(data.TICKET_DATABASE_PATH),
+    VC_TIME_DATABASE_PATH: R(data.VC_TIME_DATABASE_PATH),
+    AI_HISTORY_DATABASE_PATH: R(data.AI_HISTORY_DATABASE_PATH),
+    AUTOMODERATION_DATABASE_PATH: R(data.AUTOMODERATION_DATABASE_PATH),
+    REMINDER_DATABASE_PATH: R(data.REMINDER_DATABASE_PATH),
+    PROMPT_FILE_PATH: R(data.PROMPT_FILE_PATH),
+    USER_PROMPT_DIR: R(data.USER_PROMPT_DIR),
+    COLD_LAUGH_STORE_PATH: R(data.COLD_LAUGH_STORE_PATH),
+    SENRYU_KUROMOJI_DICT_PATH: data.SENRYU_KUROMOJI_DICT_PATH ? R(data.SENRYU_KUROMOJI_DICT_PATH) : undefined,
+  };
 }

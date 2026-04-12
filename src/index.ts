@@ -96,6 +96,7 @@ async function main(): Promise<void> {
       messageAttachmentArchiveEnabled: config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED,
       ticketDbPath: config.TICKET_DATABASE_PATH,
       vcTimeDbPath: config.VC_TIME_DATABASE_PATH,
+      vcRankingTimeZone: config.VC_TIME_RANKING_TIMEZONE,
       aiHistoryDbPath: config.AI_HISTORY_DATABASE_PATH,
       automoderationDbPath: config.AUTOMODERATION_DATABASE_PATH,
       reminderDbPath: config.REMINDER_DATABASE_PATH,
@@ -214,7 +215,7 @@ async function main(): Promise<void> {
     automodSqlite,
     log,
     client,
-    vcRanking: new SqliteVcRankingRepository(vcTimeSqlite),
+    vcRanking: new SqliteVcRankingRepository(vcTimeSqlite, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
   };
   const utilitiesBundle = createUtilitiesMessageHandlers(ctx);

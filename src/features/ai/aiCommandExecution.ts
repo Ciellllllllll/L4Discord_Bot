@@ -146,7 +146,8 @@ export async function runAiSlashCommand(ctx: BotContext, params: {
       if (rows.length === 0) {
         return {
           ok: true,
-          userMessage: "VCランキングデータがありません（まだVC接続が記録されていない可能性があります）。",
+          userMessage:
+            "VCランキングデータがありません。累計を見る場合は期間を yearly にするか、記録開始後の daily/weekly/monthly を試してください。",
         };
       }
       const lines = rows.slice(0, 20).map((r, i) => `${i + 1}. <@${r.userId}> — ${r.seconds}s`);

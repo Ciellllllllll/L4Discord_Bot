@@ -155,7 +155,11 @@ async function handleVcRank(interaction: ChatInputCommandInteraction, ctx: BotCo
   const period = interaction.options.getString("period", true) as "day" | "week" | "month" | "all";
   const rows = await ctx.vcRanking.getRanking(interaction.guildId!, period);
   if (rows.length === 0) {
-    await interaction.editReply({ content: "\u0056\u0043\u30e9\u30f3\u30ad\u30f3\u30b0\u30c7\u30fc\u30bf\u304c\u3042\u308a\u307e\u305b\u3093\u3002" });
+    const empty =
+      period === "all"
+        ? "VCランキングデータがありません。"
+        : "この期間に該当するデータがありません。累計は「全期間」を選ぶか、記録開始後の期間で試してください。";
+    await interaction.editReply({ content: empty });
     return;
   }
 
