@@ -15,6 +15,7 @@ import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { SLASH_META } from "./slashMeta.js";
 import { deepseekChat } from "../features/ai/deepseek.js";
 import { AiQueryService, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
+import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 const Q_COOLDOWN_MS = 15_000;
 const STUB = "この機能は準備中です。";
@@ -57,6 +58,8 @@ export async function handleSlashCommand(
   switch (interaction.commandName) {
     case "q":
       return handleQ(interaction, ctx);
+    case "change_prompt":
+      return handleChangePrompt(interaction, ctx);
     case "ping":
       return handlePing(interaction, ctx);
     case "member_count_setup":
@@ -81,6 +84,21 @@ export async function handleSlashCommand(
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, ephemeral: true });
+  }
+}
+
+async function handleChangePrompt(interaction: ChatInputCommandInteraction, _ctx: BotContext): Promise<void> {
+  try {
+    await interaction.showModal(buildChangePromptModal());
+  } catch {
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction
+        .reply({
+          content: "モーダルを表示できませんでした。しばらくしてから再度お試しください。",
+          ephemeral: true,
+        })
+        .catch(() => undefined);
+    }
   }
 }
 

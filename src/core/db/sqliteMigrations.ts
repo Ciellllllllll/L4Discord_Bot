@@ -71,6 +71,11 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/013_senryu.up.sql"),
     down: join(repoRoot, "migrations/sqlite/013_senryu.down.sql"),
   },
+  {
+    version: 14,
+    up: join(repoRoot, "migrations/sqlite/014_vc_temp_tracked_channels.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/014_vc_temp_tracked_channels.down.sql"),
+  },
 ];
 
 export function getSqliteUserVersion(db: DatabaseLib.Database): number {

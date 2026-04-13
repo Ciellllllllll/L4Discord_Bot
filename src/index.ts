@@ -197,7 +197,7 @@ async function main(): Promise<void> {
     },
     "discord client created",
   );
-  const vcTemp = new VcTemporaryChannelManager(log, client, config);
+  const vcTemp = new VcTemporaryChannelManager(log, client, config, sqlite);
   bindSenryuRepository(sqlite);
 
   const ctx: BotContext = {
@@ -270,6 +270,12 @@ async function main(): Promise<void> {
         log.info({ guildId: g.id }, "vc_time sessions reconciled at startup");
       } catch (err) {
         log.error({ err, guildId: g.id }, "vc_time reconcile at startup failed");
+      }
+      try {
+        await vcTemp.restoreFromDatabase(g.id);
+        log.info({ guildId: g.id }, "temporary VC tracking restored from database");
+      } catch (err) {
+        log.error({ err, guildId: g.id }, "temporary VC restore from database failed");
       }
       vcTemp.startSweep();
     }

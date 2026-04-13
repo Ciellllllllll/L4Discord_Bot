@@ -140,6 +140,28 @@ export class AiQueryService {
     }
   }
 
+  /**
+   * `/change_prompt` のモーダル送信からのみ呼ぶ。
+   * ベース prompt のコピーや `ensureUserPromptFile` は使わず、本文をそのまま UTF-8 で書き換える。
+   */
+  replaceUserPromptFromChangePromptCommand(userId: string, userName: string, fullPromptText: string): void {
+    const uid = String(userId);
+    const resolvedUserName = this.resolveUserName(uid, userName);
+    const dir = path.resolve(this.ctx.config.USER_PROMPT_DIR);
+    fs.mkdirSync(dir, { recursive: true });
+    const p = this.userPromptPath(resolvedUserName);
+    const text = safeStrip(fullPromptText);
+    if (!text) {
+      return;
+    }
+    try {
+      fs.writeFileSync(p, text, "utf8");
+    } catch {
+      /* ignore */
+    }
+    this.userPromptPaths.set(uid, p);
+  }
+
   private async countHistoryRows(guildId: string, userId: string): Promise<number> {
     const r = await this.ctx.aiHistoryDb
       .selectFrom("ai_history")

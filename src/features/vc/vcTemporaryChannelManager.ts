@@ -12,6 +12,7 @@ import {
   type VoiceChannel,
   type VoiceState,
 } from "discord.js";
+import type DatabaseLib from "better-sqlite3";
 import type { BotContext } from "../../bot/context.js";
 import type { AppConfig } from "../../core/config.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
@@ -24,9 +25,21 @@ import {
   buildVcCreatorMainRows,
   VC_NAME_MODAL_PREFIX,
 } from "./vcCreatorUi.js";
+import {
+  vcTempDeleteTracked,
+  vcTempInsertTracked,
+  vcTempListTracked,
+  vcTempSetUserEverJoined,
+} from "./vcTempPersistence.js";
 
 const GRACE_NO_JOIN_MS = 24 * 60 * 60 * 1000;
 const EMPTY_DELETE_DEBOUNCE_MS = 1000;
+/** REST: Unknown Channel */
+const DISCORD_API_UNKNOWN_CHANNEL = 10_003;
+
+function isDiscordUnknownChannel(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && Number((err as { code: unknown }).code) === DISCORD_API_UNKNOWN_CHANNEL;
+}
 
 type ActiveVcMeta = {
   createdAtMs: number;
@@ -81,6 +94,7 @@ export class VcTemporaryChannelManager {
     private readonly log: pino.Logger,
     private readonly client: Client,
     private readonly config: AppConfig,
+    private readonly sqlite: DatabaseLib.Database,
   ) {}
 
   startSweep(): void {
@@ -99,13 +113,58 @@ export class VcTemporaryChannelManager {
     const joinedId = after.channelId;
     if (joinedId && joinedId !== before.channelId && this.activeVcs.has(joinedId)) {
       const meta = this.activeVcs.get(joinedId);
-      if (meta && !meta.userEverJoined) meta.userEverJoined = true;
+      if (meta && !meta.userEverJoined) {
+        meta.userEverJoined = true;
+        vcTempSetUserEverJoined(this.sqlite, joinedId);
+      }
     }
 
-    const leftChannel = before.channel;
-    if (leftChannel && this.activeVcs.has(leftChannel.id)) {
-      void this.maybeDeleteEmptyVc(leftChannel);
+    const leftId = before.channelId;
+    if (leftId && leftId !== after.channelId && this.activeVcs.has(leftId)) {
+      void this.maybeDeleteEmptyVcById(leftId);
     }
+  }
+
+  /** 起動時: SQLite に残った一時VCをメモリへ載せ、空室なら削除処理へ回す */
+  async restoreFromDatabase(expectedGuildId: string): Promise<void> {
+    const rows = vcTempListTracked(this.sqlite);
+    for (const row of rows) {
+      if (row.guildId !== expectedGuildId) {
+        this.removeTracking(row.channelId);
+        continue;
+      }
+      this.activeVcs.set(row.channelId, {
+        createdAtMs: row.createdAtMs,
+        userEverJoined: row.userEverJoined,
+      });
+      const ch =
+        (this.client.channels.cache.get(row.channelId) as VoiceBasedChannel | undefined) ??
+        ((await this.client.channels.fetch(row.channelId).catch(() => null)) as VoiceBasedChannel | null);
+      if (!ch || ch.type !== ChannelType.GuildVoice) {
+        this.removeTracking(row.channelId);
+        continue;
+      }
+      if (ch.members.size === 0) {
+        void this.maybeDeleteEmptyVc(ch);
+      }
+    }
+  }
+
+  private removeTracking(channelId: string): void {
+    this.activeVcs.delete(channelId);
+    vcTempDeleteTracked(this.sqlite, channelId);
+  }
+
+  private async maybeDeleteEmptyVcById(channelId: string): Promise<void> {
+    if (!this.activeVcs.has(channelId)) return;
+    const ch =
+      (this.client.channels.cache.get(channelId) as VoiceBasedChannel | undefined) ??
+      ((await this.client.channels.fetch(channelId).catch(() => null)) as VoiceBasedChannel | null);
+    if (!ch || ch.type !== ChannelType.GuildVoice) {
+      this.removeTracking(channelId);
+      return;
+    }
+    await this.maybeDeleteEmptyVc(ch);
   }
 
   private async sweepTask(): Promise<void> {
@@ -114,7 +173,7 @@ export class VcTemporaryChannelManager {
         this.client.channels.cache.get(channelId) ??
         (await this.client.channels.fetch(channelId).catch(() => null));
       if (!ch || ch.type !== ChannelType.GuildVoice) {
-        this.activeVcs.delete(channelId);
+        this.removeTracking(channelId);
         continue;
       }
       if (ch.members.size === 0) await this.maybeDeleteEmptyVc(ch);
@@ -130,7 +189,7 @@ export class VcTemporaryChannelManager {
       (this.client.channels.cache.get(channel.id) as VoiceBasedChannel | undefined) ??
       ((await this.client.channels.fetch(channel.id).catch(() => null)) as VoiceBasedChannel | null);
     if (!fresh || fresh.type !== ChannelType.GuildVoice) {
-      this.activeVcs.delete(channel.id);
+      this.removeTracking(channel.id);
       return;
     }
     if (fresh.members.size > 0) return;
@@ -142,19 +201,23 @@ export class VcTemporaryChannelManager {
       (this.client.channels.cache.get(channel.id) as VoiceBasedChannel | undefined) ??
       ((await this.client.channels.fetch(channel.id).catch(() => null)) as VoiceBasedChannel | null);
     if (!fresh || fresh.type !== ChannelType.GuildVoice) {
-      this.activeVcs.delete(channel.id);
+      this.removeTracking(channel.id);
       return;
     }
     if (fresh.members.size > 0) return;
 
-    this.activeVcs.delete(channel.id);
-
     try {
       const name = fresh.name;
       await fresh.delete("一時VC 空室のため自動削除");
+      this.removeTracking(fresh.id);
       this.log.info({ channelId: fresh.id, name }, "temporary VC deleted (empty)");
     } catch (err) {
-      this.log.warn({ err, channelId: channel.id }, "temporary VC delete failed");
+      if (isDiscordUnknownChannel(err)) {
+        this.removeTracking(channel.id);
+        this.log.info({ channelId: channel.id }, "temporary VC already gone; cleared tracking");
+      } else {
+        this.log.warn({ err, channelId: channel.id }, "temporary VC delete failed");
+      }
     }
   }
 
@@ -182,8 +245,15 @@ export class VcTemporaryChannelManager {
         reason: `一時VC 作成者: ${opts.creatorTag || opts.creatorUserId}`,
       });
 
+      const createdAtMs = Date.now();
       this.activeVcs.set(vc.id, {
-        createdAtMs: Date.now(),
+        createdAtMs,
+        userEverJoined: false,
+      });
+      vcTempInsertTracked(this.sqlite, {
+        channelId: vc.id,
+        guildId: guild.id,
+        createdAtMs,
         userEverJoined: false,
       });
 

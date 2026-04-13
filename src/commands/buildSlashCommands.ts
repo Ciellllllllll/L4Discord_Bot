@@ -53,5 +53,10 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
 
     new SlashCommandBuilder().setName("stamp_rank").setDescription("スタンプランキング").toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("change_prompt")
+      .setDescription("自分用の AI システムプロンプトを書き換えます（モーダルでテキストまたは .txt/.md を指定）")
+      .toJSON(),
   ];
 }
