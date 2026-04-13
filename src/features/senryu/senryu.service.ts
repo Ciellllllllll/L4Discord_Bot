@@ -12,6 +12,10 @@ import {
   isDetectionOptedOut,
   muteChannelForSenryu,
 } from "./senryu.filters.js";
+import {
+  formatKuromojiSpanForAiReview,
+  reviewSenryuCandidateWithAi,
+} from "./senryu.aiReview.js";
 import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
 import { replySenryu } from "./senryu.reply.js";
@@ -134,6 +138,24 @@ export async function runSenryuPipeline(
   const candidate = detectFirst575(tokens);
   if (!candidate) {
     return false;
+  }
+
+  if (config.SENRYU_AI_REVIEW_ENABLED) {
+    const morphemes = formatKuromojiSpanForAiReview(tokens, candidate);
+    const excerpt = normalized.length > 400 ? `${normalized.slice(0, 400)}…` : normalized;
+    const reviewBlock = [`元文（正規化）:\n${excerpt}`, "", morphemes].join("\n");
+    const ai = await reviewSenryuCandidateWithAi(config, log, reviewBlock);
+    if (ai.ok && ai.verdict === "reject") {
+      log.info(
+        {
+          ...base,
+          candidateFormatted: candidate.formatted,
+          aiReviewMs: ai.ms,
+        },
+        "senryu ai review rejected",
+      );
+      return false;
+    }
   }
 
   log.info(

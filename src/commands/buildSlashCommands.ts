@@ -7,20 +7,20 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
   return [
     new SlashCommandBuilder()
       .setName("q")
-      .setDescription("BOTに質問（DeepSeek）")
+      .setDescription("BOTとおしゃべり")
       .addStringOption((o) =>
         o.setName("text").setDescription("質問").setRequired(true).setMaxLength(2000),
       )
       .toJSON(),
-    new SlashCommandBuilder().setName("ping").setDescription("AI応答時間計測").toJSON(),
+    new SlashCommandBuilder().setName("ping").setDescription("応答時間計測用コマンド(DEBUG用です)").toJSON(),
 
     new SlashCommandBuilder()
       .setName("vc_rank")
-      .setDescription("VC接続ランキング（データは vc_time.db。メインDBの sessions とは別）")
+      .setDescription("VCの接続ランキングを閲覧できます")
       .addStringOption((o) =>
         o
           .setName("period")
-          .setDescription("集計窓（境界は VC_TIME_RANKING_TIMEZONE、既定は日本時間）。全期間＝累計")
+          .setDescription("集計範囲を選んでください。")
           .setRequired(true)
           .addChoices(
             { name: "今日（その日0時〜）", value: "day" },

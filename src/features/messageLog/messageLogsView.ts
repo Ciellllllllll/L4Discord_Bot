@@ -499,13 +499,13 @@ function buildListComponents(session: SearchSession, rows: LogRow[], total: numb
   );
   const out: ActionRowBuilder<ButtonBuilder>[] = [navRow];
   if (rows.length > 0) {
-    const detailButtons = rows.map(
-      (row, idx) =>
-        new ButtonBuilder()
-          .setCustomId(`${DETAIL_PREFIX}${session.id}:${row.id}:0:img:open`)
-          .setLabel(`詳細${idx + 1}`)
-          .setStyle(ButtonStyle.Secondary),
-    );
+    const detailButtons = rows.map((row, idx) => {
+      const listNumber = session.page * RESULTS_PER_PAGE + idx + 1;
+      return new ButtonBuilder()
+        .setCustomId(`${DETAIL_PREFIX}${session.id}:${row.id}:0:img:open`)
+        .setLabel(`詳細${listNumber}`)
+        .setStyle(ButtonStyle.Secondary);
+    });
     out.push(new ActionRowBuilder<ButtonBuilder>().addComponents(detailButtons));
   }
   return out;

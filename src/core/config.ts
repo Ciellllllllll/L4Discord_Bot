@@ -17,6 +17,15 @@ function envFlagFalseByDefault(v: unknown): boolean {
   return ["1", "true", "on", "yes"].includes(String(v).toLowerCase());
 }
 
+/** 空は「既定に任せる」。1/true/on/yes で ON、0/false/off/no で OFF */
+function envOptionalLogDebug(v: unknown): boolean | undefined {
+  if (v === undefined || v === null || v === "") return undefined;
+  const s = String(v).toLowerCase();
+  if (["0", "false", "off", "no"].includes(s)) return false;
+  if (["1", "true", "on", "yes"].includes(s)) return true;
+  return undefined;
+}
+
 /** 相対パスを package.json があるディレクトリ基準の絶対パスに解決する（cwd ずれ対策） */
 function findPackageJsonDir(fromFile: string): string {
   let dir = dirname(fromFile);
@@ -39,6 +48,11 @@ function assertValidIanaTimeZone(tz: string): void {
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
+  /**
+   * ターミナルに pino の DEBUG を出すか。
+   * 未設定時は NODE_ENV に従い、production 以外は debug、production は info。
+   */
+  LOG_DEBUG: z.preprocess(envOptionalLogDebug, z.boolean().optional()),
   /** メイン SQLite。相対パスはリポジトリルート（package.json と同じ階層）基準 */
   DATABASE_PATH: z.string().min(1).default("data/l4discord.sqlite"),
   /** メッセージログ専用 DB（既定: data/message.db）。環境変数 LOG_DB_PATH でも上書き可（DiscordBOTv2 互換） */
@@ -145,6 +159,16 @@ const envSchema = z.object({
   /** 未設定・空は true */
   SENRYU_AUTO_MUTE_ON_PERMISSION_ERROR: z.preprocess(envFlagTrueByDefault, z.boolean()),
   SENRYU_MAX_CONTENT_LENGTH: z.coerce.number().int().min(1).max(4000).default(2000),
+  /** 川柳検出後に DeepSeek で候補を審査（未設定・空は false） */
+  SENRYU_AI_REVIEW_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  SENRYU_AI_REVIEW_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.15),
+  SENRYU_AI_REVIEW_TIMEOUT_MS: z.coerce.number().int().min(3_000).default(20_000),
+  SENRYU_AI_REVIEW_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(1),
+  /** 未設定時は DEEPSEEK_MODEL */
+  SENRYU_AI_REVIEW_MODEL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().min(1).optional(),
+  ),
   /** kuromoji 辞書ディレクトリ（未設定はパッケージ既定） */
   SENRYU_KUROMOJI_DICT_PATH: z.preprocess(
     (v) => (v === "" || v === undefined ? undefined : v),

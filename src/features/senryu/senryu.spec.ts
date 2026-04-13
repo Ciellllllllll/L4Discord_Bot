@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import type { Message } from "discord.js";
 import { countAmbiguousInReading, countMora } from "./senryu.counter.js";
+import { parseSenryuAiReviewVerdict, formatKuromojiSpanForAiReview } from "./senryu.aiReview.js";
 import { detectFirst575, extractAll575 } from "./senryu.detector.js";
 import { deleteSenryu, saveSenryu } from "./senryu.repository.js";
 import { replySenryu } from "./senryu.reply.js";
@@ -59,7 +60,9 @@ async function run(): Promise<void> {
   const threePhrase = [tok(five, five), tok(seven, seven), tok(five2, five2)];
   const all = extractAll575(threePhrase);
   assert.ok(all.length >= 1);
-  assert.equal(detectFirst575(threePhrase)?.formatted, all[0]?.formatted);
+  const first575 = detectFirst575(threePhrase);
+  assert.equal(first575?.formatted, all[0]?.formatted);
+  assert.deepEqual(first575?.tokenSpan, { start: 0, end: 3 });
 
   const twoCandidates: KuromojiToken[] = [
     ...threePhrase,
@@ -71,6 +74,21 @@ async function run(): Promise<void> {
   const multi = extractAll575(twoCandidates);
   assert.ok(multi.length >= 2);
   assert.equal(detectFirst575(twoCandidates)?.formatted, multi[0]?.formatted);
+  assert.deepEqual(multi[1]?.tokenSpan, { start: 4, end: 7 });
+
+  assert.equal(parseSenryuAiReviewVerdict('{"verdict":"accept"}'), "accept");
+  assert.equal(parseSenryuAiReviewVerdict("```json\n{\"verdict\":\"reject\"}\n```"), "reject");
+  assert.equal(parseSenryuAiReviewVerdict("not json"), null);
+
+  const spanText = formatKuromojiSpanForAiReview(threePhrase, {
+    kamigo: five,
+    nakashichi: seven,
+    shimogo: five2,
+    formatted: `${five} ${seven} ${five2}`,
+    tokenSpan: { start: 0, end: 3 },
+  });
+  assert.ok(spanText.includes("候補:"));
+  assert.ok(spanText.includes(five));
 
   const mem = new Database(":memory:");
   mem.exec(readFileSync(migration013, "utf8"));
@@ -96,11 +114,19 @@ async function run(): Promise<void> {
       replied = opts.content;
     },
   } as unknown as Message;
-  await replySenryu(fakeMessage, { kamigo: "a", nakashichi: "b", shimogo: "c", formatted: "a b c" }, false);
+  await replySenryu(
+    fakeMessage,
+    { kamigo: "a", nakashichi: "b", shimogo: "c", formatted: "a b c", tokenSpan: { start: 0, end: 0 } },
+    false,
+  );
   assert.ok(replied.includes("川柳を検出しました"));
   assert.ok(replied.includes("「a b c」"));
 
-  await replySenryu(fakeMessage, { kamigo: "a", nakashichi: "b", shimogo: "c", formatted: "a b c" }, true);
+  await replySenryu(
+    fakeMessage,
+    { kamigo: "a", nakashichi: "b", shimogo: "c", formatted: "a b c", tokenSpan: { start: 0, end: 0 } },
+    true,
+  );
   assert.ok(replied.includes("||"));
 
   await deleteSenryu(mem, saved.id);

@@ -109,7 +109,13 @@ export function extractAll575(tokens: KuromojiToken[]): SenryuCandidate[] {
       const nakashichi = parts[1]!.trim();
       const shimogo = parts[2]!.trim();
       const formatted = `${kamigo} ${nakashichi} ${shimogo}`;
-      candidates.push({ kamigo, nakashichi, shimogo, formatted });
+      candidates.push({
+        kamigo,
+        nakashichi,
+        shimogo,
+        formatted,
+        tokenSpan: { start, end: i + 1 },
+      });
       continue outer;
     }
   }

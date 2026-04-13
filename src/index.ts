@@ -83,8 +83,8 @@ async function main(): Promise<void> {
   }
   mainStarted = true;
 
-  const log = createLogger();
   const config = loadConfig();
+  const log = createLogger(config);
   log.info(
     {
       effectiveBotVersion: config.BOT_VERSION,

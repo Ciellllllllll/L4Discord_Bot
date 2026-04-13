@@ -14,6 +14,8 @@ export type SenryuCandidate = {
   nakashichi: string;
   shimogo: string;
   formatted: string;
+  /** `normalized` 文に対する kuromoji トークン列の半開区間（AI レビュー用） */
+  tokenSpan: { start: number; end: number };
 };
 
 export type SenryuRecord = {
