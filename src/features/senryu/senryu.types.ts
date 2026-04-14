@@ -17,6 +17,9 @@ export type SenryuCandidate = {
     // `normalized` 文に対する kuromoji トークン列の半開区間（AI レビュー用）
 
   tokenSpan: { start: number; end: number };
+    // 各句の実モーラ数（スコアリング・ログ用。許容検出時は 5,7,5 と一致しないことがある）
+
+  moraUsed: [number, number, number];
 };
 
 export type SenryuRecord = {

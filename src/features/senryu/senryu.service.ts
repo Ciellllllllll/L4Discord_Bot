@@ -1,7 +1,7 @@
 import { ChannelType } from "discord.js";
 import type { Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { detectFirst575 } from "./senryu.detector.js";
+import { pickSenryuCandidate, senryuCandidate575MismatchScore } from "./senryu.detector.js";
 import {
   expandUnknownKatakanaTokens,
   fetchKuromojiTokens,
@@ -12,10 +12,8 @@ import {
   isDetectionOptedOut,
   muteChannelForSenryu,
 } from "./senryu.filters.js";
-import {
-  formatKuromojiSpanForAiReview,
-  reviewSenryuCandidateWithAi,
-} from "./senryu.aiReview.js";
+import { buildSenryuAiReviewUserBlock, reviewSenryuCandidateWithAi } from "./senryu.aiReview.js";
+import { buildSenryuReviewContextExcerpt } from "./senryu.reviewContext.js";
 import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
 import { replySenryu } from "./senryu.reply.js";
@@ -135,15 +133,19 @@ export async function runSenryuPipeline(
     return false;
   }
 
-  const candidate = detectFirst575(tokens);
+  const moraTolerance = config.SENRYU_MORA_TOLERANCE === 1 ? 1 : 0;
+  const candidate = pickSenryuCandidate(tokens, {
+    moraTolerance,
+    bestCandidate: config.SENRYU_BEST_CANDIDATE,
+  });
   if (!candidate) {
     return false;
   }
 
   if (config.SENRYU_AI_REVIEW_ENABLED) {
-    const morphemes = formatKuromojiSpanForAiReview(tokens, candidate);
-    const excerpt = normalized.length > 400 ? `${normalized.slice(0, 400)}…` : normalized;
-    const reviewBlock = [`元文（正規化）:\n${excerpt}`, "", morphemes].join("\n");
+    // API 失敗・JSON 不正時は ai.ok が false のため reject せず、検出結果どおり通過する
+    const contextExcerpt = buildSenryuReviewContextExcerpt(normalized, candidate);
+    const reviewBlock = buildSenryuAiReviewUserBlock(contextExcerpt, tokens, candidate);
     const ai = await reviewSenryuCandidateWithAi(config, log, reviewBlock);
     if (ai.ok && ai.verdict === "reject") {
       log.info(
@@ -163,6 +165,10 @@ export async function runSenryuPipeline(
       ...base,
       candidateFormatted: candidate.formatted,
       contentLength: content.length,
+      senryuMoraTolerance: moraTolerance,
+      senryuBestCandidate: config.SENRYU_BEST_CANDIDATE,
+      senryu575MismatchScore: senryuCandidate575MismatchScore(candidate),
+      senryuMoraUsed: candidate.moraUsed,
     },
     "senryu 575 detected",
   );

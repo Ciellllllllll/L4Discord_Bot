@@ -179,6 +179,12 @@ const envSchema = z.object({
 
   SENRYU_AUTO_MUTE_ON_PERMISSION_ERROR: z.preprocess(envFlagTrueByDefault, z.boolean()),
   SENRYU_MAX_CONTENT_LENGTH: z.coerce.number().int().min(1).max(4000).default(2000),
+    // 各句のモーラ数を ±1 まで許容（0=厳密 5/7/5、1=雑談向けに取りこぼし減）
+
+  SENRYU_MORA_TOLERANCE: z.coerce.number().int().min(0).max(1).default(0),
+    // 複数候補があるときスコア最小の1件を選ぶ（先頭候補より全体の 5/7/5 近さを優先）
+
+  SENRYU_BEST_CANDIDATE: z.preprocess(envFlagFalseByDefault, z.boolean()),
     // 川柳検出後に DeepSeek で候補を審査（未設定・空は false）
 
   SENRYU_AI_REVIEW_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),

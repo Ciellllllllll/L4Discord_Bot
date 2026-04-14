@@ -52,17 +52,48 @@ export function formatKuromojiSpanForAiReview(tokens: KuromojiToken[], candidate
   ].join("\n");
 }
 
+export function formatSenryuMorphemeTableForAiReview(tokens: KuromojiToken[], candidate: SenryuCandidate): string {
+  const { start, end } = candidate.tokenSpan;
+  const slice = tokens.slice(Math.max(0, start), Math.min(tokens.length, end));
+  const lines = slice.map((t) => {
+    const r = resolveReading(t);
+    const reading = r ?? (t.reading.trim() || t.surface);
+    const pos = t.pos[0] ?? "*";
+    return `${t.surface}\t${reading}\t${pos}`;
+  });
+  return ["形態素（表層形<TAB>読み/表記<TAB>品詞大分類）:", ...lines].join("\n");
+}
+
+export function buildSenryuAiReviewUserBlock(
+  contextExcerpt: string,
+  tokens: KuromojiToken[],
+  candidate: SenryuCandidate,
+): string {
+  return [
+    "周辺文脈（正規化テキストの抜粋。Discord等の雑談の一部です）:",
+    contextExcerpt,
+    "",
+    "検出した三拍子:",
+    `上句: ${candidate.kamigo}`,
+    `中句: ${candidate.nakashichi}`,
+    `下句: ${candidate.shimogo}`,
+    "",
+    formatSenryuMorphemeTableForAiReview(tokens, candidate),
+  ].join("\n");
+}
+
 function buildSenryuReviewSystemPrompt(): string {
   return [
-    "あなたは日本語川柳（5-7-5）の審査役です。",
-    "入力は形態素解析器 kuromoji の結果です。モーラ数は目安であり、機械カウントと耳なじみのリズムがずれることは普通です。",
+    "あなたは、Discord 等の雑談・業務メッセージの中から「5・7・5 に近い三拍子」を拾うための軽いフィルタです。",
+    "伝統的な川柳の鑑定（季語・切字・各句の百科的完結）は求めません。",
+    "",
+    "入力の「上句・中句・下句」と形態素は、機械的な候補です。口語・カタカナ・業務用語はそのまま前提です。",
     "",
     "verdict は原則 accept にしてください。reject にしてよいのは次のような明らかなケースに限定します:",
-    "- 意味のない記号・数字・英単語の羅列など、明らかなノイズ",
-    "- 日本語としてほとんど意味が通らず、短文・川柳として読めない",
+    "- 記号・数字・英単語の羅列など、明らかなノイズやスパム",
+    "- 三拍子として日本語がほとんど成立せず、読み物として意味が通らない",
     "",
-    "口語・俳句調・多少の言い換えや省略があっても、全体として 5・7・5 に近いリズムで意味が通るなら accept です。",
-    "微妙な場合や迷った場合は必ず accept にしてください。",
+    "取りこぼしを減らすため、迷った場合や微妙な場合は必ず accept にしてください。",
     "",
     "出力は1行の JSON のみ。前後に説明やマークダウン禁止。",
     '{"verdict":"accept"} または {"verdict":"reject"}',
