@@ -3,6 +3,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  MessageFlags,
   StringSelectMenuBuilder,
   type ButtonInteraction,
   type Guild,
@@ -341,27 +342,27 @@ export async function handleAiHistoryAdminButton(
 ): Promise<boolean> {
   if (interaction.customId === HISTORY_CLEAR_ALL_ID) {
     if (!interaction.guildId || interaction.guildId !== ctx.config.GUILD_ID) {
-      await interaction.reply({ content: "このサーバーでは利用できません。", ephemeral: true });
+      await interaction.reply({ content: "このサーバーでは利用できません。", flags: MessageFlags.Ephemeral });
       return true;
     }
     if (!isOwner(ctx, interaction.user.id)) {
-      await interaction.reply({ content: "OWNER 専用です。", ephemeral: true });
+      await interaction.reply({ content: "OWNER 専用です。", flags: MessageFlags.Ephemeral });
       return true;
     }
     const count = await clearAllAiHistoryInGuild(ctx, interaction.guildId);
     await refreshHistoryAdminPanelMessage(interaction.message, ctx);
-    await interaction.reply({ content: `全履歴を削除しました。（${count} 行）`, ephemeral: true });
+    await interaction.reply({ content: `全履歴を削除しました。（${count} 行）`, flags: MessageFlags.Ephemeral });
     return true;
   }
 
   if (interaction.customId === HISTORY_CLEAR_ME_ID) {
     if (!interaction.guildId || interaction.guildId !== ctx.config.GUILD_ID) {
-      await interaction.reply({ content: "このサーバーでは利用できません。", ephemeral: true });
+      await interaction.reply({ content: "このサーバーでは利用できません。", flags: MessageFlags.Ephemeral });
       return true;
     }
     await clearUserAiHistory(ctx, interaction.guildId, interaction.user.id);
     await sendOrReconnectAiHistoryAdminPanel(ctx).catch(() => undefined);
-    await interaction.reply({ content: "あなたの履歴を削除しました。", ephemeral: true });
+    await interaction.reply({ content: "あなたの履歴を削除しました。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
@@ -378,20 +379,20 @@ export async function handleAiHistoryAdminStringSelect(
 
   if (interaction.customId === HISTORY_ADMIN_USER_SELECT_ID) {
     if (!isOwner(ctx, interaction.user.id)) {
-      await interaction.reply({ content: "OWNER 専用です。", ephemeral: true });
+      await interaction.reply({ content: "OWNER 専用です。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
     const userId = interaction.values?.[0];
     if (!userId || userId === "none" || !/^\d+$/.test(String(userId))) {
-      await interaction.reply({ content: "対象ユーザーが不正です。", ephemeral: true });
+      await interaction.reply({ content: "対象ユーザーが不正です。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
     const { options, historyCount } = await buildConversationOptionsForUser(ctx, interaction.guildId, userId);
     if (historyCount === 0) {
       await refreshHistoryAdminPanelMessage(interaction.message, ctx);
-      await interaction.reply({ content: "このユーザーの履歴はありません。", ephemeral: true });
+      await interaction.reply({ content: "このユーザーの履歴はありません。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
@@ -408,53 +409,53 @@ export async function handleAiHistoryAdminStringSelect(
     await interaction.reply({
       content: `対象ユーザー: <@${userId}> （${historyCount}件のメッセージ）`,
       components: [row],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return true;
   }
 
   if (interaction.customId.startsWith(HISTORY_ADMIN_CONVERSATION_SELECT_PREFIX)) {
     if (!isOwner(ctx, interaction.user.id)) {
-      await interaction.reply({ content: "OWNER 専用です。", ephemeral: true });
+      await interaction.reply({ content: "OWNER 専用です。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
     const userId = interaction.customId.slice(HISTORY_ADMIN_CONVERSATION_SELECT_PREFIX.length);
     if (!/^\d+$/.test(String(userId))) {
-      await interaction.reply({ content: "対象ユーザーが不正です。", ephemeral: true });
+      await interaction.reply({ content: "対象ユーザーが不正です。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
     if (interaction.values.includes("all")) {
       await clearUserAiHistory(ctx, interaction.guildId, userId);
       await sendOrReconnectAiHistoryAdminPanel(ctx).catch(() => undefined);
-      await interaction.reply({ content: `<@${userId}> の全履歴を削除しました。`, ephemeral: true });
+      await interaction.reply({ content: `<@${userId}> の全履歴を削除しました。`, flags: MessageFlags.Ephemeral });
       return true;
     }
 
     const rows = await loadUserHistoryRows(ctx, interaction.guildId, userId);
     if (!rows.length) {
       await sendOrReconnectAiHistoryAdminPanel(ctx).catch(() => undefined);
-      await interaction.reply({ content: "履歴が見つかりませんでした。", ephemeral: true });
+      await interaction.reply({ content: "履歴が見つかりませんでした。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
     const ranges = parseConversationRanges(interaction.values);
     if (!ranges.length) {
-      await interaction.reply({ content: "削除対象の会話が不正です。", ephemeral: true });
+      await interaction.reply({ content: "削除対象の会話が不正です。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
     const removed = await deleteAiHistoryRanges(ctx, interaction.guildId, userId, ranges);
     if (removed <= 0) {
-      await interaction.reply({ content: "削除対象が見つかりませんでした。", ephemeral: true });
+      await interaction.reply({ content: "削除対象が見つかりませんでした。", flags: MessageFlags.Ephemeral });
       return true;
     }
 
     await sendOrReconnectAiHistoryAdminPanel(ctx).catch(() => undefined);
     await interaction.reply({
       content: `<@${userId}> の会話履歴を削除しました。（${removed}件）`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return true;
   }

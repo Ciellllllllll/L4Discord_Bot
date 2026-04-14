@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  MessageFlags,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -66,15 +67,15 @@ export async function handleDetecterButton(
     const svc = getDetecterService(ctx);
     const event = svc.getPendingEvent(parsed.shortId);
     if (!event) {
-      await interaction.reply({ content: "このイベントは期限切れか、既に処理済みです。", ephemeral: true });
+      await interaction.reply({ content: "このイベントは期限切れか、既に処理済みです。", flags: MessageFlags.Ephemeral });
       return true;
     }
     if (event.reasonButtonFired) {
-      await interaction.reply({ content: "この理由入力は既に処理済みです。", ephemeral: true });
+      await interaction.reply({ content: "この理由入力は既に処理済みです。", flags: MessageFlags.Ephemeral });
       return true;
     }
     if (interaction.user.id !== event.actorUserId) {
-      await interaction.reply({ content: "処罰を実行したユーザーのみこのボタンを使用できます。", ephemeral: true });
+      await interaction.reply({ content: "処罰を実行したユーザーのみこのボタンを使用できます。", flags: MessageFlags.Ephemeral });
       return true;
     }
     const modal = new ModalBuilder()
@@ -98,7 +99,7 @@ export async function handleDetecterButton(
         await interaction
           .reply({
             content: "モーダルを表示できませんでした。しばらくしてから再度お試しください。",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           })
           .catch(() => undefined);
       }
@@ -134,12 +135,18 @@ export async function handleDetecterModal(
 
   if (parsed.action === "reasonModalPrompt") {
     const reason = interaction.fields.getTextInputValue(DETECTER_REASON_INPUT_ID);
-    const result = await getDetecterService(ctx).submitModeratorReason(
-      interaction.user.id,
-      parsed.shortId,
-      reason,
-    );
-    await interaction.reply({ content: result.message, ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const result = await getDetecterService(ctx).submitModeratorReason(
+        interaction.user.id,
+        parsed.shortId,
+        reason,
+      );
+      await interaction.editReply({ content: result.message });
+    } catch (err) {
+      ctx.log.error({ err }, "detecter: reason modal submit failed");
+      await interaction.editReply({ content: "処理中にエラーが発生しました。" }).catch(() => undefined);
+    }
     return true;
   }
 

@@ -218,19 +218,19 @@ export async function handleAppealReviewButton(interaction: ButtonInteraction, c
   const { appealId, action, isThreadPanel } = parsed;
 
   if (!interaction.guildId || !interaction.member) {
-    await interaction.reply({ content: "ギルド内でのみ利用できます。", ephemeral: true });
+    await interaction.reply({ content: "ギルド内でのみ利用できます。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
   const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "審査操作を行う権限がありません。", ephemeral: true });
+    await interaction.reply({ content: "審査操作を行う権限がありません。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
   const reviewLockKey = `${interaction.customId}:${interaction.message?.id ?? ""}`;
   if (reviewActionLocks.has(reviewLockKey)) {
-    await interaction.reply({ content: "この審査操作は現在処理中です。", ephemeral: true });
+    await interaction.reply({ content: "この審査操作は現在処理中です。", flags: MessageFlags.Ephemeral });
     return true;
   }
   reviewActionLocks.add(reviewLockKey);

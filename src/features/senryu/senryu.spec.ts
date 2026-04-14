@@ -9,6 +9,7 @@ import { parseSenryuAiReviewVerdict, formatKuromojiSpanForAiReview } from "./sen
 import { detectFirst575, extractAll575 } from "./senryu.detector.js";
 import { deleteSenryu, saveSenryu } from "./senryu.repository.js";
 import { replySenryu } from "./senryu.reply.js";
+import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
 import type { KuromojiToken } from "./senryu.types.js";
 
@@ -50,6 +51,11 @@ async function run(): Promise<void> {
 
   assert.equal(countAmbiguousInReading("ガッキー"), 2);
 
+  assert.equal(normalizeSenryuText("ねこが、すき"), "ねこがすき");
+  assert.equal(normalizeSenryuText("ねこが,すき"), "ねこがすき");
+  assert.equal(normalizeSenryuText("ねこが すき"), "ねこがすき");
+  assert.equal(normalizeSenryuText("ねこが　すき"), "ねこがすき");
+
   const five = "アイウエオ";
   const seven = "カキクケコアイ";
   const five2 = "サシスセソ";
@@ -58,6 +64,16 @@ async function run(): Promise<void> {
   assert.equal(countMora(five2), 5);
 
   const threePhrase = [tok(five, five), tok(seven, seven), tok(five2, five2)];
+  const punctBetween: KuromojiToken[] = [
+    tok(five, five),
+    tok("、", "", ["記号", "読点", "*", "*"]),
+    tok(seven, seven),
+    tok(" ", "", ["記号", "空白", "*", "*"]),
+    tok(five2, five2),
+  ];
+  assert.ok(extractAll575(punctBetween).length >= 1);
+  assert.equal(detectFirst575(punctBetween)?.formatted, `${five} ${seven} ${five2}`);
+
   const all = extractAll575(threePhrase);
   assert.ok(all.length >= 1);
   const first575 = detectFirst575(threePhrase);

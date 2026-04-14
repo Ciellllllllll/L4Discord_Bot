@@ -3,6 +3,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  MessageFlags,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type GuildMember,
@@ -532,18 +533,18 @@ export async function handleAiHistoryClearButton(interaction: ButtonInteraction,
   }
 
   if (interaction.user.id !== ownerId) {
-    await interaction.reply({ content: "この履歴は /q 実行ユーザーのみ削除できます。", ephemeral: true });
+    await interaction.reply({ content: "この履歴は /q 実行ユーザーのみ削除できます。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
   if (interaction.guildId !== guildId) {
-    await interaction.reply({ content: "このボタンは別サーバー用です。", ephemeral: true });
+    await interaction.reply({ content: "このボタンは別サーバー用です。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
   const svc = new AiQueryService(ctx);
   await svc.clearHistory(guildId, ownerId);
   void sendOrReconnectAiHistoryAdminPanel(ctx).catch(() => undefined);
-  await interaction.reply({ content: "あなたの会話履歴を削除しました。", ephemeral: true });
+  await interaction.reply({ content: "あなたの会話履歴を削除しました。", flags: MessageFlags.Ephemeral });
   return true;
 }

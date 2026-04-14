@@ -1,7 +1,8 @@
-import type {
-  ButtonInteraction,
-  ModalSubmitInteraction,
-  StringSelectMenuInteraction,
+import {
+  MessageFlags,
+  type ButtonInteraction,
+  type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import {
@@ -21,7 +22,7 @@ export async function handleVcCreatorButton(
   await interaction.reply({
     content: "ジャンルを選択してください",
     components: buildVcCreatorGenreRows(),
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
   return true;
 }
@@ -33,7 +34,7 @@ export async function handleVcGenreSelect(
   if (interaction.customId !== VC_GENRE_SELECT_ID) return false;
   const genre = interaction.values?.[0];
   if (!genre) {
-    await interaction.reply({ content: "ジャンル選択に失敗しました。", ephemeral: true });
+    await interaction.reply({ content: "ジャンル選択に失敗しました。", flags: MessageFlags.Ephemeral });
     return true;
   }
   await interaction.showModal(buildVcNameModal(genre));
@@ -47,7 +48,7 @@ export async function handleVcCreateModal(
   if (!interaction.customId.startsWith(VC_NAME_MODAL_PREFIX)) return false;
   const guild = interaction.guild;
   if (!guild) {
-    await interaction.reply({ content: "この機能はサーバー内のみ使用できます。", ephemeral: true });
+    await interaction.reply({ content: "この機能はサーバー内のみ使用できます。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
@@ -61,7 +62,7 @@ export async function handleVcCreateModal(
   });
 
   if (result.ok) {
-    await interaction.reply({ content: `VC ${result.name} を作成しました`, ephemeral: true });
+    await interaction.reply({ content: `VC ${result.name} を作成しました`, flags: MessageFlags.Ephemeral });
     const created = await guild.channels.fetch(result.channelId).catch(() => null);
     if (created) {
       const botId = ctx.client.user?.id;
@@ -73,7 +74,7 @@ export async function handleVcCreateModal(
   } else {
     await interaction.reply({
       content: vcCreatorErrText[result.error] ?? "VC作成に失敗しました。",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
   return true;

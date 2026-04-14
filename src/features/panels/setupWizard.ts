@@ -4,6 +4,7 @@ import {
   ButtonStyle,
   ChannelSelectMenuBuilder,
   ChannelType,
+  MessageFlags,
   type ButtonInteraction,
   type ChannelSelectMenuInteraction,
 } from "discord.js";
@@ -32,14 +33,14 @@ export async function handleSetupUiOpenButton(interaction: ButtonInteraction, ct
     return false;
   }
   if (!interaction.guildId) {
-    await interaction.reply({ content: "ギルド内でのみ実行できます。", ephemeral: true });
+    await interaction.reply({ content: "ギルド内でのみ実行できます。", flags: MessageFlags.Ephemeral });
     return true;
   }
   if (!isOwner(interaction.user.id, ctx.config)) {
-    await interaction.reply({ content: "OWNER 専用です。", ephemeral: true });
+    await interaction.reply({ content: "OWNER 専用です。", flags: MessageFlags.Ephemeral });
     return true;
   }
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sid = ulid();
   await createSession(ctx.db, {
     id: sid,

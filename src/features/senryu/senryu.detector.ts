@@ -1,5 +1,5 @@
 import { countAmbiguousInReading, countMora } from "./senryu.counter.js";
-import { isDigitOnlyToken, resolveReading } from "./senryu.kuromoji.js";
+import { isDigitOnlyToken, isSkippableInterwordToken, resolveReading } from "./senryu.kuromoji.js";
 import type { KuromojiToken, SenryuCandidate } from "./senryu.types.js";
 
 export function isValidPhraseStart(token: KuromojiToken): boolean {
@@ -58,6 +58,10 @@ export function extractAll575(tokens: KuromojiToken[]): SenryuCandidate[] {
       const t = tokens[i]!;
       if (isDigitOnlyToken(t)) {
         break;
+      }
+      if (isSkippableInterwordToken(t)) {
+        i += 1;
+        continue;
       }
       const reading = resolveReading(t);
       if (reading === null) {

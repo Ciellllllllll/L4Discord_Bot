@@ -6,6 +6,7 @@ if (process.platform === "win32") {
     execSync("cmd /c chcp 65001>nul", { stdio: "ignore", windowsHide: true });
   } catch {}
 }
+import { MessageFlags } from "discord.js";
 import { createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
 import { startPresenceRotation } from "./bot/presence.js";
@@ -349,7 +350,9 @@ async function main(): Promise<void> {
         "interaction handler error",
       );
       if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: "エラーが発生しました。", ephemeral: true }).catch(() => undefined);
+        await interaction
+          .reply({ content: "エラーが発生しました。", flags: MessageFlags.Ephemeral })
+          .catch(() => undefined);
       }
     }
   });

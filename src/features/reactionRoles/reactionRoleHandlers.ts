@@ -1,11 +1,13 @@
 import {
   ActionRowBuilder,
+  MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
   type ButtonInteraction,
+  type InteractionReplyOptions,
   type ModalSubmitInteraction,
   type StringSelectMenuInteraction,
 } from "discord.js";
@@ -53,7 +55,7 @@ async function replyEphemeral(
   content: string,
   components?: ActionRowBuilder<StringSelectMenuBuilder>[],
 ): Promise<void> {
-  const payload = { content, ephemeral: true as const, components };
+  const payload: InteractionReplyOptions = { content, flags: MessageFlags.Ephemeral, components };
   if (interaction.replied || interaction.deferred) {
     await interaction.followUp(payload).catch(() => undefined);
     return;

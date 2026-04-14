@@ -84,6 +84,18 @@ export function resolveReading(token: KuromojiToken): string | null {
   return null;
 }
 
+// 読みが取れないが、句読点・空白などで文が途切れているだけのトークン（5-7-5 カウントから除外）
+
+export function isSkippableInterwordToken(token: KuromojiToken): boolean {
+  if (resolveReading(token) !== null) return false;
+  const [pos, d1] = token.pos;
+  if (pos === "記号") return true;
+  if (pos === "補助記号") return true;
+  if (d1 === "空白") return true;
+  if (d1 === "読点" || d1 === "句点") return true;
+  return /^[\p{P}\p{Z}\p{Cf}]+$/u.test(token.surface);
+}
+
 export function isDigitOnlyToken(token: KuromojiToken): boolean {
   return /^[０-９0-9]+$/.test(token.surface);
 }
