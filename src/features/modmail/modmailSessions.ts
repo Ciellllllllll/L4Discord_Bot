@@ -1,4 +1,5 @@
-/** メモリ上のワンショット／排他（DiscordBOTv2 ModmailCog の Map/Set 相当） */
+// メモリ上のワンショット／排他（DiscordBOTv2 ModmailCog の Map/Set 相当）
+
 
 const FILE_SESSION_MS = 10 * 60 * 1000;
 const CLEAN_MS = 60 * 1000;
@@ -11,7 +12,8 @@ export type PendingModmailTicketCtx = {
   buttonFired: boolean;
 };
 
-/** Ticket.js `pendingModmailContexts` 相当（DM「チケットを作成」→モーダル） */
+// Ticket.js `pendingModmailContexts` 相当（DM「チケットを作成」→モーダル）
+
 export const pendingModmailTicketContexts = new Map<string, PendingModmailTicketCtx>();
 
 export const userAttachmentFired = new Set<string>();

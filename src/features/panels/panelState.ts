@@ -1,5 +1,6 @@
 export type PanelMessageState = {
-  /** 常設 UI の論理版（releaseVersions.PERMANENT_UI_VERSION と照合） */
+    // 常設 UI の論理版（releaseVersions.PERMANENT_UI_VERSION と照合）
+
   ui_version: string;
   status: "pending" | "sent" | "error";
   last_error?: string;

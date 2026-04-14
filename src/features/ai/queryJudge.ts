@@ -2,7 +2,8 @@ import type { AppConfig } from "../../core/config.js";
 import type { ChatMessage } from "./deepseek.js";
 import { deepseekChat } from "./deepseek.js";
 
-/** 方針: ここに無い action は command として採用しない（question に落とす） */
+// 方針: ここに無い action は command として採用しない（question に落とす）
+
 export const ALLOWED_COMMAND_ACTIONS = ["create_vc", "vc_ranking"] as const;
 
 export type JudgeResult =

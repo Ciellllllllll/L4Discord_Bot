@@ -3,7 +3,8 @@ import type { BotContext } from "../../bot/context.js";
 import { AiQueryService } from "./aiQueryService.js";
 import { CHANGE_PROMPT_FILE_ID, CHANGE_PROMPT_MODAL_ID, CHANGE_PROMPT_TEXT_ID } from "./changePromptIds.js";
 
-/** モーダル経由のプロンプト用テキスト添付の最大バイト（本文のみ） */
+// モーダル経由のプロンプト用テキスト添付の最大バイト（本文のみ）
+
 const MAX_PROMPT_ATTACHMENT_BYTES = 1 * 1024 * 1024;
 
 function isTxtOrMdFilename(name: string): boolean {
@@ -31,10 +32,9 @@ async function fetchAttachmentAsUtf8(att: Attachment, log: BotContext["log"]): P
   }
 }
 
-/**
- * `/change_prompt` モーダル送信。
- * @returns 処理した場合 true（未該当 customId は false）
- */
+// `/change_prompt` モーダル送信。
+// @returns 処理した場合 true（未該当 customId は false）
+
 export async function handleChangePromptModalSubmit(
   interaction: ModalSubmitInteraction,
   ctx: BotContext,

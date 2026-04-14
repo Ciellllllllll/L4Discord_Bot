@@ -8,10 +8,9 @@ function tableExists(db: DatabaseLib.Database, name: string): boolean {
   return Boolean(row);
 }
 
-/**
- * メイン DB に ai_history が残っている場合のみ、専用 DB へコピーする。
- * マイグレーション 011 適用直前に呼ぶ（011 でメインから DROP される）。
- */
+// メイン DB に ai_history が残っている場合のみ、専用 DB へコピーする。
+// マイグレーション 011 適用直前に呼ぶ（011 でメインから DROP される）。
+
 export function copyAiHistoryFromMainToDedicatedDb(
   mainSqlite: DatabaseLib.Database,
   destSqlite: DatabaseLib.Database,

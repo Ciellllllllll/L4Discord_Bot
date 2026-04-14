@@ -76,7 +76,8 @@ export interface ModmailThreadsRow {
   created_at: Date;
 }
 
-/** Modmail スタッフ返信キュー（!reply → 承認後にユーザーへ DM） */
+// Modmail スタッフ返信キュー（!reply → 承認後にユーザーへ DM）
+
 export interface ModmailRepliesRow {
   id: string;
   ticket_id: string;
@@ -110,7 +111,8 @@ export interface ModmailEventsRow {
   created_at: Date;
 }
 
-/** DiscordBOTv2 modmail_intakes 相当（DM 前の受付状態） */
+// DiscordBOTv2 modmail_intakes 相当（DM 前の受付状態）
+
 export interface ModmailIntakesRow {
   guild_id: string;
   user_id: string;
@@ -166,7 +168,8 @@ export interface ReactionRoleMessagesRow {
   created_at: Date;
 }
 
-/** ボタン式リアクションロール（1エントリ = 1公開メッセージ、最大5ロール） */
+// ボタン式リアクションロール（1エントリ = 1公開メッセージ、最大5ロール）
+
 export interface ReactionRoleEntriesRow {
   id: string;
   guild_id: string;
@@ -198,7 +201,8 @@ export interface StampUsageRow {
   updated_at: Date;
 }
 
-/** 参照 vc_time.db 互換 */
+// 参照 vc_time.db 互換
+
 export interface VcSessionsRow {
   id: Generated<number>;
   guild_id: bigint | number;
@@ -278,12 +282,14 @@ export interface PollsRow {
   updated_at: Date;
 }
 
-/** /q 会話履歴（data/AI_History.db） */
+// /q 会話履歴（data/AI_History.db）
+
 export interface AiHistoryDatabase {
   ai_history: AiHistoryRow;
 }
 
-/** 自動モデレーション設定（data/Automoderation.db） */
+// 自動モデレーション設定（data/Automoderation.db）
+
 export interface AutomodGuildSettingsRow {
   guild_id: string;
   data: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
@@ -294,12 +300,14 @@ export interface AutomoderationDatabase {
   automod_guild_settings: AutomodGuildSettingsRow;
 }
 
-/** リマインダーハブ専用（既定: data/reminder.db） */
+// リマインダーハブ専用（既定: data/reminder.db）
+
 export interface ReminderDatabase {
   reminders: RemindersRow;
 }
 
-/** Modmail / appeals / 汎用 tickets（data/ticket.db） */
+// Modmail / appeals / 汎用 tickets（data/ticket.db）
+
 export interface TicketDatabase {
   tickets: TicketsRow;
   appeals: AppealsRow;

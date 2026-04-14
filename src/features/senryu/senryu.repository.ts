@@ -44,7 +44,8 @@ export function createSenryuRepository(sqlite: DatabaseLib.Database) {
 
 export type SenryuRepository = ReturnType<typeof createSenryuRepository>;
 
-/** 仕様: 公開 API（内部は同期 DB） */
+// 仕様: 公開 API（内部は同期 DB）
+
 export async function saveSenryu(
   sqlite: DatabaseLib.Database,
   record: SenryuRecord,

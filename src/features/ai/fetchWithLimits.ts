@@ -1,11 +1,11 @@
-/**
- * 外部 HTTP: タイムアウトとレスポンス最大バイト（arrayBuffer 読み込み後検査）
- * DiscordBOTv2 の fetchWithLimits と同等。
- */
+// 外部 HTTP: タイムアウトとレスポンス最大バイト（arrayBuffer 読み込み後検査）
+// DiscordBOTv2 の fetchWithLimits と同等。
+
 export type FetchWithLimitsOptions = {
   timeoutMs: number;
   maxResponseBytes: number;
-  /** 呼び出し側のキャンセル（併用時はいずれかで中断） */
+    // 呼び出し側のキャンセル（併用時はいずれかで中断）
+
   outerSignal?: AbortSignal;
 };
 

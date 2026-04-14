@@ -1,4 +1,5 @@
-/** Discord 除外: メンション・チャンネル・ロール・カスタム絵文字・URL */
+// Discord 除外: メンション・チャンネル・ロール・カスタム絵文字・URL
+
 export const DISCORD_TOKEN_PATTERN =
   /<@!?\d+>|<#\d+>|<@&\d+>|<a?:\w+:\d+>|https?:\/\/\S+/;
 

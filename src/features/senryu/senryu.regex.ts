@@ -8,7 +8,8 @@ export function containsSpoiler(content: string): boolean {
   return SPOILER_PATTERN.test(content);
 }
 
-/** `||` のみ除去し、中身は残す（ネストは非貪欲に繰り返し） */
+// `||` のみ除去し、中身は残す（ネストは非貪欲に繰り返し）
+
 export function stripSpoilerMarkers(content: string): string {
   let s = content;
   let prev = "";

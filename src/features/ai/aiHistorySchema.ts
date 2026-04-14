@@ -1,6 +1,7 @@
 import type DatabaseLib from "better-sqlite3";
 
-/** /q 会話履歴専用 DB（既定: data/AI_History.db） */
+// /q 会話履歴専用 DB（既定: data/AI_History.db）
+
 export function ensureAiHistorySchema(db: DatabaseLib.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ai_history (

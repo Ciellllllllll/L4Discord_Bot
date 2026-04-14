@@ -1,4 +1,5 @@
-/** /vc_rank の期間フィルタ（リポジトリの VcRankPeriod と同値） */
+// /vc_rank の期間フィルタ（リポジトリの VcRankPeriod と同値）
+
 export type VcRankingPeriodKey = "day" | "week" | "month" | "all";
 
 function gregorianToJdn(y: number, m: number, d: number): number {
@@ -29,7 +30,8 @@ function jdnToGregorian(j: number): { y: number; m: number; d: number } {
   return { y: year, m: month, d: day };
 }
 
-/** IANA タイムゾーンにおける UTC 瞬間 ms の暦日（en-CA 形式 yyyy-mm-dd） */
+// IANA タイムゾーンにおける UTC 瞬間 ms の暦日（en-CA 形式 yyyy-mm-dd）
+
 export function zonedYmdFromUtcMs(timeZone: string, ms: number): { y: number; m: number; d: number } {
   const s = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -41,7 +43,8 @@ export function zonedYmdFromUtcMs(timeZone: string, ms: number): { y: number; m:
   return { y, m, d };
 }
 
-/** 0=日曜 … 6=土曜（Intl en-US weekday short） */
+// 0=日曜 … 6=土曜（Intl en-US weekday short）
+
 function zonedWeekdaySun0(timeZone: string, ms: number): number {
   const w = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(new Date(ms));
   const key = w.slice(0, 3);
@@ -49,10 +52,9 @@ function zonedWeekdaySun0(timeZone: string, ms: number): number {
   return map[key] ?? 0;
 }
 
-/**
- * 指定タイムゾーンで「その暦日の hour:minute:second」に相当する UTC エポック ms。
- * DST 等は ±36 時間を 1 分刻みで走査して解決する（ランキング境界用・呼び出しは低頻度）。
- */
+// 指定タイムゾーンで「その暦日の hour:minute:second」に相当する UTC エポック ms。
+// DST 等は ±36 時間を 1 分刻みで走査して解決する（ランキング境界用・呼び出しは低頻度）。
+
 export function zonedWallTimeToUtcMs(
   timeZone: string,
   year: number,
@@ -110,10 +112,9 @@ export function zonedWallTimeToUtcMs(
   return null;
 }
 
-/**
- * started_at に使う ISO8601（UTC Z）。period が all のときは null。
- * 週は月曜始まり（従来ロジックと同じ）。
- */
+// started_at に使う ISO8601（UTC Z）。period が all のときは null。
+// 週は月曜始まり（従来ロジックと同じ）。
+
 export function vcRankingPeriodStartIso(
   period: VcRankingPeriodKey,
   timeZone: string,
@@ -129,7 +130,7 @@ export function vcRankingPeriodStartIso(
     const t = zonedWallTimeToUtcMs(timeZone, y, m, 1, 0, 0, 0);
     return new Date(t ?? Date.UTC(y, m - 1, 1, 0, 0, 0)).toISOString();
   }
-  /* week */
+  
   const j = gregorianToJdn(y, m, d);
   const noonMs = zonedWallTimeToUtcMs(timeZone, y, m, d, 12, 0, 0) ?? nowMs;
   const wd = zonedWeekdaySun0(timeZone, noonMs);

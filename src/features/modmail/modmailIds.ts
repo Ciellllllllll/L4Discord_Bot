@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
-/** customId 用（DiscordBOTv2 の IDS 相当。UUID はドットを含まないため 3 段分割でスコープ化） */
+// customId 用（DiscordBOTv2 の IDS 相当。UUID はドットを含まないため 3 段分割でスコープ化）
+
 export const MM_IDS = {
   USER_ATTACHMENT_PREFIX: "mm_uatt:",
   USER_ATTACHMENT_MODAL_PREFIX: "mm_uattm:",
@@ -12,7 +13,8 @@ export const MM_IDS = {
   REPLY_ATTACHMENT_MODAL_PREFIX: "mm_rattm:",
   USER_REPLY_PREFIX: "mm_urep:",
   USER_REPLY_MODAL_PREFIX: "mm_urepm:",
-  /** DM 受付: チケット作成モーダルへ（DiscordBOTv2 `modmail_ticket_start:` 相当） */
+    // DM 受付: チケット作成モーダルへ（DiscordBOTv2 `modmail_ticket_start:` 相当）
+
   TICKET_START_PREFIX: "mm_tktstart:",
   TICKET_SUBMIT_PREFIX: "mm_tktmodal:",
   MODAL_INTAKE_TITLE: "modmail_title",
@@ -28,7 +30,8 @@ export function makeModmailNonce(): string {
   return randomBytes(6).toString("base64url").replace(/=/g, "").slice(0, 12);
 }
 
-/** `prefix + partA.partB.nonce`（partA は UUID、partB は snowflake を想定） */
+// `prefix + partA.partB.nonce`（partA は UUID、partB は snowflake を想定）
+
 export function buildThreePartId(prefix: string, partA: string, partB: string): string {
   return `${prefix}${partA}.${partB}.${makeModmailNonce()}`;
 }
@@ -44,7 +47,8 @@ export function parseThreePartId(
   return { partA: parts[0]!, partB: parts[1]!, nonce: parts[2]! };
 }
 
-/** 承認・却下・クローズ: `prefix + <uuid>` */
+// 承認・却下・クローズ: `prefix + <uuid>`
+
 export function parseUuidTail(customId: string, prefix: string): string | null {
   if (!customId.startsWith(prefix)) return null;
   const id = customId.slice(prefix.length).trim();

@@ -1,6 +1,7 @@
 const SYMBOL_REPLACE_PATTERN = /[\[\]［］「」『』、。？！]/g;
 
-/** 半角カタカナ → 全角（U+FF61–FF9F ブロック） */
+// 半角カタカナ → 全角（U+FF61–FF9F ブロック）
+
 export function toFullWidthKana(text: string): string {
   let out = "";
   for (let i = 0; i < text.length; i++) {

@@ -66,7 +66,8 @@ export async function buildAutoModPanelPayload(ctx: BotContext, guildId: string)
   return { embeds: [embed], components: [row] as const };
 }
 
-/** !Setup の ADMIN チャンネル（panel_channels.admin_channel_id） */
+// !Setup の ADMIN チャンネル（panel_channels.admin_channel_id）
+
 export async function resolveAutoModAdminChannelId(ctx: BotContext, guildId: string): Promise<string | null> {
   const settings = await getGuildSettingsData(ctx.db, guildId);
   const a = settings.panel_channels?.admin_channel_id?.trim();

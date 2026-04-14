@@ -14,7 +14,8 @@ export type DeepSeekRequestOptions = {
   signal?: AbortSignal;
   temperature?: number;
   model?: string;
-  /** false のとき @everyone 等のサニタイズをしない（分類器など） */
+    // false のとき @everyone 等のサニタイズをしない（分類器など）
+
   sanitizeOutput?: boolean;
   timeoutMs?: number;
   maxRetries?: number;
@@ -31,10 +32,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/**
- * DeepSeek（OpenAI 互換）chat completions。`third` に AbortSignal かオプションオブジェクトを渡せる。
- * レスポンスサイズは AI_MAX_RESPONSE_BYTES で制限（fetchWithLimits）。
- */
+// DeepSeek（OpenAI 互換）chat completions。`third` に AbortSignal かオプションオブジェクトを渡せる。
+// レスポンスサイズは AI_MAX_RESPONSE_BYTES で制限（fetchWithLimits）。
+
 export async function deepseekChat(
   config: AppConfig,
   messages: ChatMessage[],

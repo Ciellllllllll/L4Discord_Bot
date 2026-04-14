@@ -1,6 +1,7 @@
 import type DatabaseLib from "better-sqlite3";
 
-/** vc_time.db: ensure_tables_and_indexes（Python）と同一の sessions + 索引 */
+// vc_time.db: ensure_tables_and_indexes（Python）と同一の sessions + 索引
+
 export function ensureVcTimeSchema(db: DatabaseLib.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (

@@ -44,7 +44,8 @@ function eventColorFn(kind: ReminderEvType): number {
   return EVENT_META[normalizeEventType(kind)].color;
 }
 
-/** DiscordBotv2 と同一のボタン customId か（誤ルーティング防止） */
+// DiscordBotv2 と同一のボタン customId か（誤ルーティング防止）
+
 function isReminderSystemButtonId(id: string): boolean {
   if (
     id === "reminder_create" ||

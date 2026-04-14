@@ -2,9 +2,8 @@ import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 
-/**
- * 旧 guild_settings.data.automod_settings から専用 DB へ 1 回だけ移行（行が無い場合のみ）。
- */
+// 旧 guild_settings.data.automod_settings から専用 DB へ 1 回だけ移行（行が無い場合のみ）。
+
 export async function copyAutomodFromGuildSettingsIfMissing(ctx: BotContext, guildId: string): Promise<void> {
   const existing = await ctx.automodDb
     .selectFrom("automod_guild_settings")

@@ -59,7 +59,8 @@ async function handleViolation(message: Message, reason: string, settings: AutoM
   }
 }
 
-/** ギルドメッセージの自動モデレーション（DiscordBOTv2 AutoModeration.js と同順序） */
+// ギルドメッセージの自動モデレーション（DiscordBOTv2 AutoModeration.js と同順序）
+
 export async function handleAutoModerationMessage(message: Message, ctx: BotContext): Promise<void> {
   if (!message.guild || message.author.bot) return;
   if (message.guild.id !== ctx.config.GUILD_ID) return;

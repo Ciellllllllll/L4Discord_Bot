@@ -17,13 +17,15 @@ import { PANEL_KIND_AI_QUERY_HISTORY } from "../panels/constants.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessageStore.js";
 import { parsePanelState } from "../panels/panelState.js";
 
-/** DiscordBOTv2 AI_Query.js と同一の customId */
+// DiscordBOTv2 AI_Query.js と同一の customId
+
 export const HISTORY_ADMIN_USER_SELECT_ID = "chatgpt_history_admin_select_user";
 export const HISTORY_ADMIN_CONVERSATION_SELECT_PREFIX = "chatgpt_history_admin_select_conversation:";
 export const HISTORY_CLEAR_ALL_ID = "chatgpt_history_clear_all";
 export const HISTORY_CLEAR_ME_ID = "chatgpt_history_clear_me";
 
-/** !Setup で保存した ADMIN パネルチャンネルのみ（履歴管理 UI をここに置く） */
+// !Setup で保存した ADMIN パネルチャンネルのみ（履歴管理 UI をここに置く）
+
 export async function resolveAiHistoryAdminChannelId(ctx: BotContext, guildId: string): Promise<string | null> {
   const settings = await getGuildSettingsData(ctx.db, guildId);
   const a = settings.panel_channels?.admin_channel_id?.trim();

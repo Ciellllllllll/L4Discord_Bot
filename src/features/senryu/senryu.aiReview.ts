@@ -17,7 +17,8 @@ function stripOptionalMarkdownFence(s: string): string {
   return t;
 }
 
-/** 単体テスト用 */
+// 単体テスト用
+
 export function parseSenryuAiReviewVerdict(raw: string): SenryuAiReviewVerdict | null {
   const trimmed = stripOptionalMarkdownFence(raw);
   if (!trimmed.startsWith("{")) return null;
@@ -33,9 +34,8 @@ export function parseSenryuAiReviewVerdict(raw: string): SenryuAiReviewVerdict |
   return null;
 }
 
-/**
- * kuromoji トークン列のうち検出区間だけを、API 入力向けに短く整形する（Kagome の生 JSON は送らない）。
- */
+// kuromoji トークン列のうち検出区間だけを、API 入力向けに短く整形する（Kagome の生 JSON は送らない）。
+
 export function formatKuromojiSpanForAiReview(tokens: KuromojiToken[], candidate: SenryuCandidate): string {
   const { start, end } = candidate.tokenSpan;
   const slice = tokens.slice(Math.max(0, start), Math.min(tokens.length, end));
@@ -73,9 +73,8 @@ export type SenryuAiReviewResult =
   | { ok: true; verdict: SenryuAiReviewVerdict; ms: number }
   | { ok: false; err: string };
 
-/**
- * DeepSeek（既存の OpenAI 互換エンドポイント）で候補を審査する。
- */
+// DeepSeek（既存の OpenAI 互換エンドポイント）で候補を審査する。
+
 export async function reviewSenryuCandidateWithAi(
   config: AppConfig,
   log: { warn: (o: Record<string, unknown>, m: string) => void },

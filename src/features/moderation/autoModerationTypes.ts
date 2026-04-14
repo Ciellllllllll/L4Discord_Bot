@@ -1,4 +1,5 @@
-/** DiscordBOTv2 AutoModeration.js と同一の設定キー */
+// DiscordBOTv2 AutoModeration.js と同一の設定キー
+
 export type AutoModSettings = {
   enabled: boolean;
   linkBlock: boolean;
@@ -8,7 +9,8 @@ export type AutoModSettings = {
   spamWindowSec: number;
   spamThreshold: number;
   timeoutSec: number;
-  /** 空文字はモッドログなし（既定は env のログチャンネル） */
+    // 空文字はモッドログなし（既定は env のログチャンネル）
+
   modlogChannelId: string;
 };
 

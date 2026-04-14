@@ -34,7 +34,8 @@ import {
 
 const GRACE_NO_JOIN_MS = 24 * 60 * 60 * 1000;
 const EMPTY_DELETE_DEBOUNCE_MS = 1000;
-/** REST: Unknown Channel */
+// REST: Unknown Channel
+
 const DISCORD_API_UNKNOWN_CHANNEL = 10_003;
 
 function isDiscordUnknownChannel(err: unknown): boolean {
@@ -46,17 +47,17 @@ type ActiveVcMeta = {
   userEverJoined: boolean;
 };
 
-/** サーバー上のボイスチャンネルを表示順で列挙 */
+// サーバー上のボイスチャンネルを表示順で列挙
+
 function getSortedVoiceChannels(guild: Guild): VoiceChannel[] {
   return [...guild.channels.cache.values()]
     .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice)
     .sort((a, b) => a.rawPosition - b.rawPosition);
 }
 
-/**
- * 既存の通常ボイスチャンネルが属するカテゴリを1つ選ぶ（先頭のカテゴリ付きVCの親）。
- * カテゴリなしのVCのみの場合は null（作成時は親なしで同列に置く）。
- */
+// 既存の通常ボイスチャンネルが属するカテゴリを1つ選ぶ（先頭のカテゴリ付きVCの親）。
+// カテゴリなしのVCのみの場合は null（作成時は親なしで同列に置く）。
+
 function resolveDefaultVoiceCategory(guild: Guild): CategoryChannel | null {
   for (const vc of getSortedVoiceChannels(guild)) {
     const pid = vc.parentId;
@@ -125,7 +126,8 @@ export class VcTemporaryChannelManager {
     }
   }
 
-  /** 起動時: SQLite に残った一時VCをメモリへ載せ、空室なら削除処理へ回す */
+    // 起動時: SQLite に残った一時VCをメモリへ載せ、空室なら削除処理へ回す
+
   async restoreFromDatabase(expectedGuildId: string): Promise<void> {
     const rows = vcTempListTracked(this.sqlite);
     for (const row of rows) {
@@ -283,7 +285,8 @@ export function buildVcNameModal(genre: string): ModalBuilder {
     );
 }
 
-/** メッセージが当 Bot の VC 作成パネルか（再接続スキャン用） */
+// メッセージが当 Bot の VC 作成パネルか（再接続スキャン用）
+
 export function vcPanelMessageHasOpenButton(message: Message<boolean>): boolean {
   for (const row of message.components) {
     if (!("components" in row) || !row.components) continue;

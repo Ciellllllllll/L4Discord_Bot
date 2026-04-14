@@ -25,7 +25,6 @@ function startSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint, ch
     .run(gid, uid, cid, now);
 }
 
-/** ギルドから外れたメンバーの未終了セッションを閉じる */
 export function endOpenVcSessionForMember(
   sqlite: DatabaseLib.Database,
   guildId: string,
@@ -36,9 +35,6 @@ export function endOpenVcSessionForMember(
   closeOpenSession(sqlite, gid, uid);
 }
 
-/**
- * 起動時: 実際のボイス接続と DB の未終了行を突き合わせる（Feature_VC.js と同様）
- */
 export function reconcileVcTimeSessionsAtReady(
   client: Client,
   sqlite: DatabaseLib.Database,

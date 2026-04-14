@@ -1,4 +1,5 @@
-/** 川柳検出をスキップするチャンネル（権限不足時の自動ミュート等） */
+// 川柳検出をスキップするチャンネル（権限不足時の自動ミュート等）
+
 const mutedChannelIds = new Set<string>();
 
 export function muteChannelForSenryu(channelId: string): void {

@@ -3,10 +3,12 @@ import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 
-/** メッセージ本文に含まれていれば反応する語 */
+// メッセージ本文に含まれていれば反応する語
+
 const TRIGGER = "ばっちぃ";
 
-/** 返信本文 */
+// 返信本文
+
 const REPLY = "ぱっちぃ君だよ！！！！";
 
 export class KeywordResponder {

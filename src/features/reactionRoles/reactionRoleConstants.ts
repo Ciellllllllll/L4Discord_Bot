@@ -1,4 +1,5 @@
-/** DiscordBOTv2 cogs/reaction_role.js と同じ customId 規約 */
+// DiscordBOTv2 cogs/reaction_role.js と同じ customId 規約
+
 
 export const TOGGLE_PREFIX = "reaction_role:";
 export const ADMIN_CREATE_BUTTON_ID = "rr_admin:create";

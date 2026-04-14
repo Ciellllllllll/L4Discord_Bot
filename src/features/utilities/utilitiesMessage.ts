@@ -18,7 +18,8 @@ export function createUtilitiesMessageHandlers(ctx: BotContext): UtilitiesMessag
   };
 }
 
-/** DiscordBOTv2 `Utilities.js` setup() と同じ順序（Link → Keyword → Leave の onMessage） */
+// DiscordBOTv2 `Utilities.js` setup() と同じ順序（Link → Keyword → Leave の onMessage）
+
 export async function runUtilitiesMessageChain(bundle: UtilitiesMessageBundle, message: Message): Promise<void> {
   await bundle.linkAndColdLaugh.onMessage(message);
   await bundle.keywordResponder.onMessage(message);

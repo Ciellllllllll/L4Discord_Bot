@@ -1,10 +1,10 @@
-/**
- * リリース版の単一ソース（DB / JSON ファイルではなく TypeScript）。
- * 起動時にログ・スラッシュ同期・機能ゲート・常設 UI で参照される。
- */
+// リリース版の単一ソース（DB / JSON ファイルではなく TypeScript）。
+// 起動時にログ・スラッシュ同期・機能ゲート・常設 UI で参照される。
+
 export const BOT_SEMVER = "2.0.1";
 
-/** スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER */
+// スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER
+
 export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   q: "0.1.0",
   ping: "0.1.0",
@@ -19,7 +19,8 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   change_prompt: "2.0.1",
 };
 
-/** プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER */
+// プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER
+
 export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   setup: "0.1.0",
   reload: "0.1.0",
@@ -31,11 +32,10 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   nolog: "0.1.0",
 };
 
-/**
- * 常設パネル（panel_kind）ごとの UI 論理バージョン。
- * DB に保存された値と一致し、かつメッセージが生きていれば再送信・編集しない。
- * レイアウト変更時はここだけ上げると次回起動で編集反映される。
- */
+// 常設パネル（panel_kind）ごとの UI 論理バージョン。
+// DB に保存された値と一致し、かつメッセージが生きていれば再送信・編集しない。
+// レイアウト変更時はここだけ上げると次回起動で編集反映される。
+
 export const PERMANENT_UI_VERSION: Record<string, string> = {
   vc_creator: "1.0.0",
   reaction_role_admin: "1.0.0",
@@ -50,7 +50,8 @@ export function getPermanentUiVersion(panelKind: string): string {
   return PERMANENT_UI_VERSION[panelKind] ?? "1.0.0";
 }
 
-/** 起動ログ・スラッシュ同期ログ用（DB/JSON ではなくコード由来の版情報） */
+// 起動ログ・スラッシュ同期ログ用（DB/JSON ではなくコード由来の版情報）
+
 export function getReleaseBundleForLog(): {
   botSemver: string;
   slashCommandMinBotVersion: Record<string, string>;

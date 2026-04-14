@@ -10,8 +10,10 @@ export async function handleExtendedAutoReplies(message: Message, ctx: BotContex
   const s = await getGuildSettingsData(ctx.db, message.guild.id);
   if (s.auto_reply_excluded_channel_ids?.includes(message.channelId)) return false;
 
-  /** 冷笑・「ばっちい」・Discord メッセージリンク展開は `features/utilities`（DiscordBOTv2 Utilities.js 互換）に移行済み */
-  /** 川柳検出は `features/senryu` に集約 */
+    // 冷笑・「ばっちい」・Discord メッセージリンク展開は `features/utilities`（DiscordBOTv2 Utilities.js 互換）に移行済み
+
+    // 川柳検出は `features/senryu` に集約
+
 
   return false;
 }

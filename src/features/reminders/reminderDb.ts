@@ -7,10 +7,9 @@ import { ensureReminderSchema } from "./reminderDbSchema.js";
 
 let reminderKysely: Kysely<ReminderDatabase> | null = null;
 
-/**
- * リマインダー機能が初めて DB に触れるときだけ `reminder.db` を開き、スキーマを保証する。
- * （マイグレーション 012 で既にファイルが作られている場合はそのまま再利用）
- */
+// リマインダー機能が初めて DB に触れるときだけ `reminder.db` を開き、スキーマを保証する。
+// （マイグレーション 012 で既にファイルが作られている場合はそのまま再利用）
+
 export function getReminderDb(ctx: BotContext): Kysely<ReminderDatabase> {
   if (reminderKysely) return reminderKysely;
   const sqlite = createSqliteDatabase(ctx.config.REMINDER_DATABASE_PATH);

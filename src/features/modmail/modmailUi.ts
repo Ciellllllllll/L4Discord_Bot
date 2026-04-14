@@ -15,7 +15,8 @@ import {
 } from "@discordjs/builders";
 import { buildThreePartId, MM_IDS } from "./modmailIds.js";
 
-/** DM: 「チケットを作成」→モーダル（DiscordBOTv2 `modmail_ticket_start:` 相当） */
+// DM: 「チケットを作成」→モーダル（DiscordBOTv2 `modmail_ticket_start:` 相当）
+
 export function buildModmailTicketCreateRow(ctxId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -25,11 +26,10 @@ export function buildModmailTicketCreateRow(ctxId: string): ActionRowBuilder<But
   );
 }
 
-/**
- * Modmail 受付モーダル。
- * TextInput は Action Row のみ @discordjs/builders で組み立てる（discord.js との instanceof 不一致を避ける）。
- * 添付は Label + FileUpload（同一パッケージ）で追加する。
- */
+// Modmail 受付モーダル。
+// TextInput は Action Row のみ @discordjs/builders で組み立てる（discord.js との instanceof 不一致を避ける）。
+// 添付は Label + FileUpload（同一パッケージ）で追加する。
+
 export function buildModmailIntakeTicketModal(ctxId: string): IntakeModalBuilder {
   return new IntakeModalBuilder()
     .setCustomId(`${MM_IDS.TICKET_SUBMIT_PREFIX}${ctxId}`)

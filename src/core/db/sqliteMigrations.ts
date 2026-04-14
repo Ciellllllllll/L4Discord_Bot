@@ -88,11 +88,13 @@ function setSqliteUserVersion(db: DatabaseLib.Database, v: number): void {
 }
 
 export type SqliteMigrationHooks = {
-  /** 該当バージョンの up を実行する直前（例: v10 で ticket.db へデータコピー） */
+    // 該当バージョンの up を実行する直前（例: v10 で ticket.db へデータコピー）
+
   beforeApplyVersion?: (version: number, mainDb: DatabaseLib.Database) => void;
 };
 
-/** Applies pending migrations in order. Returns applied version numbers. */
+// Applies pending migrations in order. Returns applied version numbers.
+
 export function applyPendingSqliteMigrations(
   db: DatabaseLib.Database,
   hooks?: SqliteMigrationHooks,
@@ -111,7 +113,8 @@ export function applyPendingSqliteMigrations(
   return applied;
 }
 
-/** Reverts migrations from current version down (same semantics as migrate script `down`). */
+// Reverts migrations from current version down (same semantics as migrate script `down`).
+
 export function revertSqliteMigrations(db: DatabaseLib.Database): number[] {
   const reverted: number[] = [];
   let v = getSqliteUserVersion(db);

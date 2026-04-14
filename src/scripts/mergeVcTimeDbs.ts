@@ -1,14 +1,13 @@
-/**
- * vc_time.db 形式の2ファイルを統合する（置換ではなく INSERT マージ）。
- * 重複キー: (guild_id, user_id, started_at) — ベース側の行を優先。
- *
- * 既定: Downloads の vc_time_new.db をベースに vc_time_old.db を取り込み、
- *       vc_time_merged.db に出力。
- *
- * 使い方:
- *   npx tsx src/scripts/mergeVcTimeDbs.ts
- *   npx tsx src/scripts/mergeVcTimeDbs.ts --base pathA --donor pathB --out pathC
- */
+// vc_time.db 形式の2ファイルを統合する（置換ではなく INSERT マージ）。
+// 重複キー: (guild_id, user_id, started_at) — ベース側の行を優先。
+//
+// 既定: Downloads の vc_time_new.db をベースに vc_time_old.db を取り込み、
+// vc_time_merged.db に出力。
+//
+// 使い方:
+// npx tsx src/scripts/mergeVcTimeDbs.ts
+// npx tsx src/scripts/mergeVcTimeDbs.ts --base pathA --donor pathB --out pathC
+
 import Database from "better-sqlite3";
 import { copyFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";

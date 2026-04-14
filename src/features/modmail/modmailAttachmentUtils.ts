@@ -124,7 +124,8 @@ export async function buildForwardDmFiles(rawJson: string): Promise<{
   return { files, failed };
 }
 
-/** モーダル添付など擬似メッセージ用 */
+// モーダル添付など擬似メッセージ用
+
 export function pseudoMessageFromUploads(
   _userId: string,
   uploaded: ReadonlyMap<string, Attachment>,

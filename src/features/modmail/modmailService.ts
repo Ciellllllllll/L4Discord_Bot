@@ -20,7 +20,8 @@ import { resolveModmailParentChannelId } from "./modmailConstants.js";
 import { logModmailEvent } from "./modmailEventsLog.js";
 import { buildModmailCloseRow } from "./modmailUi.js";
 
-/** select 結果（Kysely の ColumnType と整合させるためのランタイム行型） */
+// select 結果（Kysely の ColumnType と整合させるためのランタイム行型）
+
 export type ModmailThreadRow = {
   id: string;
   guild_id: string;
@@ -55,9 +56,7 @@ export function parseModmailRowData(data: unknown): Record<string, unknown> {
     try {
       const p = JSON.parse(data) as unknown;
       if (p && typeof p === "object" && !Array.isArray(p)) return p as Record<string, unknown>;
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
   return {};
 }
@@ -569,7 +568,8 @@ async function relayModalIntakeToThread(
 
 export type CreateTicketFromIntakeFormResult = { ok: boolean; message: string };
 
-/** DiscordBOTv2 `ModmailCog.createTicketFromIntakeForm` 相当 */
+// DiscordBOTv2 `ModmailCog.createTicketFromIntakeForm` 相当
+
 export async function createTicketFromIntakeForm(
   ctx: BotContext,
   params: {
@@ -731,7 +731,8 @@ export async function createFromFirstDm(
   return full;
 }
 
-/** 添付モーダル経由の初回作成（本文 + メタ添付） */
+// 添付モーダル経由の初回作成（本文 + メタ添付）
+
 export async function createFromFirstDmWithAttachments(
   ctx: BotContext,
   intakeGuildId: string,

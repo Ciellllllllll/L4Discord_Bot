@@ -59,7 +59,8 @@ function panelChannelIds(settings: Awaited<ReturnType<typeof getGuildSettingsDat
   };
 }
 
-/** guild_settings の panel_channels から、pending 行に書き込む [kind, channelId] 一覧 */
+// guild_settings の panel_channels から、pending 行に書き込む [kind, channelId] 一覧
+
 function buildPendingChannelPairs(settings: Awaited<ReturnType<typeof getGuildSettingsData>>): [string, string][] {
   const { admin, vc, modmail } = panelChannelIds(settings);
   const out: [string, string][] = [];
@@ -185,10 +186,9 @@ export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string):
   await reconcileReactionRoleEntriesOnly(ctx, guild);
 }
 
-/**
- * 現在の guild_settings を読み、Discord 上の常設パネル投稿を削除して DB を pending に戻したうえで reconcile。
- * !Setup 保存直後および !Reload で利用。
- */
+// 現在の guild_settings を読み、Discord 上の常設パネル投稿を削除して DB を pending に戻したうえで reconcile。
+// !Setup 保存直後および !Reload で利用。
+
 export async function resetPanelMessagesAndReconcile(ctx: BotContext, guildId: string): Promise<void> {
   const guild = await ctx.client.guilds.fetch(guildId).catch(() => null);
   const settings = await getGuildSettingsData(ctx.db, guildId);
@@ -252,7 +252,8 @@ export async function resetPanelMessagesAndReconcile(ctx: BotContext, guildId: s
   await reconcilePanelsForGuild(ctx, guildId);
 }
 
-/** !Setup 完了時: ADMIN / VC / Modmail チャンネルを保存し、常設 UI を同期 */
+// !Setup 完了時: ADMIN / VC / Modmail チャンネルを保存し、常設 UI を同期
+
 export async function savePanelChannelsAndReconcile(
   ctx: BotContext,
   guildId: string,
@@ -275,7 +276,8 @@ export async function savePanelChannelsAndReconcile(
   await resetPanelMessagesAndReconcile(ctx, guildId);
 }
 
-/** !Reload: チャンネル ID は変えずに UI を再送・再接続（pending 化して reconcile） */
+// !Reload: チャンネル ID は変えずに UI を再送・再接続（pending 化して reconcile）
+
 export async function reloadPanelsFromGuildSettings(ctx: BotContext, guildId: string): Promise<{
   ok: boolean;
   reason?: "no_channels";

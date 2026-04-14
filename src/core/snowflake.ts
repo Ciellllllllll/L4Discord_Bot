@@ -1,4 +1,5 @@
-/** Discord Snowflake を参照DB互換の SQLite INTEGER として扱う（64bit、JS Number は不可） */
+// Discord Snowflake を参照DB互換の SQLite INTEGER として扱う（64bit、JS Number は不可）
+
 
 export function snowflakeToBigInt(id: string): bigint {
   return BigInt(id);

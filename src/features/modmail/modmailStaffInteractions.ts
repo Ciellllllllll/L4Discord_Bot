@@ -52,9 +52,7 @@ async function replyEphemeral(interaction: ButtonInteraction | ModalSubmitIntera
     if (interaction.deferred) await interaction.editReply({ content: text });
     else if (interaction.replied) await interaction.followUp({ content: text, ...(flags ? { flags } : {}) });
     else await interaction.reply({ content: text, ...(flags ? { flags } : {}) });
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 
 export async function routeModmailStaffAndUserInteractions(

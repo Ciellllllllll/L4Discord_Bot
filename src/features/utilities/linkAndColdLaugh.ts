@@ -66,7 +66,8 @@ function countKeywordOccurrences(text: string, keyword: string): number {
   return String(text).split(keyword).length - 1;
 }
 
-/** v2 と同じ split 挙動だが、カンマ区切り各フレーズを個別に数える（元の巨大1文字列検索は実質無効のため） */
+// v2 と同じ split 挙動だが、カンマ区切り各フレーズを個別に数える（元の巨大1文字列検索は実質無効のため）
+
 function totalColdLaughHits(content: string): number {
   const phrases = COLD_LAUGH_KEYWORD.split(",")
     .map((s) => s.trim())
@@ -212,9 +213,7 @@ export class LinkAndColdLaugh {
 
     try {
       await message.suppressEmbeds(true);
-    } catch {
-      /* noop */
-    }
+    } catch {}
 
     try {
       await message.reply({

@@ -4,9 +4,8 @@ import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import { tryDeleteBotPanelMessage } from "./panelDiscordOps.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "./panelMessageStore.js";
 
-/**
- * 埋め込み＋ボタン等の静的パネルを 1 種類だけ置く（VC/RR と同じ再接続・版管理ルール）。
- */
+// 埋め込み＋ボタン等の静的パネルを 1 種類だけ置く（VC/RR と同じ再接続・版管理ルール）。
+
 export async function reconcileStaticPanelMessage(
   ctx: BotContext,
   guild: Guild,

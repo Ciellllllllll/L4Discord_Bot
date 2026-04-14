@@ -20,14 +20,16 @@ import { classifyUserIntent } from "./queryJudge.js";
 import { runAiSlashCommand } from "./aiCommandExecution.js";
 import { sendOrReconnectAiHistoryAdminPanel } from "./aiHistoryAdminPanel.js";
 
-/** DiscordBOTv2 AI_Query.js と同じ customId 接頭辞 */
+// DiscordBOTv2 AI_Query.js と同じ customId 接頭辞
+
 export const HISTORY_CLEAR_Q_PREFIX = "chatgpt_history_clear_q:";
 
 function safeStrip(text: string): string {
   return String(text || "").trim();
 }
 
-/** prompt.txt 等。ユーザー用ファイルの初期コピー元と /ping の system に使う */
+// prompt.txt 等。ユーザー用ファイルの初期コピー元と /ping の system に使う
+
 export function readAiBasePromptFiles(config: AppConfig): { template: string; resolved: string } {
   const file = path.resolve(config.PROMPT_FILE_PATH);
   let template = "You are a helpful assistant. 簡潔に日本語で答えてください。";
@@ -36,9 +38,7 @@ export function readAiBasePromptFiles(config: AppConfig): { template: string; re
       const r = fs.readFileSync(file, "utf8");
       if (safeStrip(r)) template = r;
     }
-  } catch {
-    /* keep default */
-  }
+  } catch {}
   const resolved = safeStrip(template) || "You are a helpful assistant.";
   return { template, resolved };
 }
@@ -103,17 +103,13 @@ export class AiQueryService {
     if (prevPath && prevPath !== nextPath && fs.existsSync(prevPath) && !fs.existsSync(nextPath)) {
       try {
         fs.copyFileSync(prevPath, nextPath);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
 
     if (!fs.existsSync(nextPath)) {
       try {
         fs.writeFileSync(nextPath, this.basePromptTemplate, "utf8");
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
 
     this.userPromptPaths.set(uid, nextPath);
@@ -135,15 +131,12 @@ export class AiQueryService {
     const text = safeStrip(promptText) || this.basePromptResolved;
     try {
       fs.writeFileSync(p, text, "utf8");
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
 
-  /**
-   * `/change_prompt` のモーダル送信からのみ呼ぶ。
-   * ベース prompt のコピーや `ensureUserPromptFile` は使わず、本文をそのまま UTF-8 で書き換える。
-   */
+    // `/change_prompt` のモーダル送信からのみ呼ぶ。
+  // ベース prompt のコピーや `ensureUserPromptFile` は使わず、本文をそのまま UTF-8 で書き換える。
+
   replaceUserPromptFromChangePromptCommand(userId: string, userName: string, fullPromptText: string): void {
     const uid = String(userId);
     const resolvedUserName = this.resolveUserName(uid, userName);
@@ -156,9 +149,7 @@ export class AiQueryService {
     }
     try {
       fs.writeFileSync(p, text, "utf8");
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     this.userPromptPaths.set(uid, p);
   }
 
@@ -418,7 +409,8 @@ export class AiQueryService {
     await replyCommand(execResult.userMessage, execResult.embeds);
   }
 
-  /** メンション／Bot 返信時（CHAT_MONITOR_ENABLED） */
+    // メンション／Bot 返信時（CHAT_MONITOR_ENABLED）
+
   async routeMonitorMessage(message: Message, text: string): Promise<void> {
     const guild = message.guild;
     if (!guild) return;
@@ -483,7 +475,8 @@ export class AiQueryService {
   }
 }
 
-/** メンションまたは Bot への返信で /q と同じルートへ（CHAT_MONITOR_ENABLED 時） */
+// メンションまたは Bot への返信で /q と同じルートへ（CHAT_MONITOR_ENABLED 時）
+
 export async function handleAiChatMonitorMessage(message: Message, ctx: BotContext): Promise<boolean> {
   if (!ctx.config.CHAT_MONITOR_ENABLED) {
     return false;

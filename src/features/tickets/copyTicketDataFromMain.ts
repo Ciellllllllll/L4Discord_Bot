@@ -31,7 +31,8 @@ function copyTable(main: DatabaseLib.Database, ticket: DatabaseLib.Database, tab
   }
 }
 
-/** modmail_events の AUTOINCREMENT をコピー後の最大 id に合わせる */
+// modmail_events の AUTOINCREMENT をコピー後の最大 id に合わせる
+
 function syncModmailEventsSequence(ticket: DatabaseLib.Database): void {
   if (!tableExists(ticket, "modmail_events")) return;
   const row = ticket.prepare("SELECT MAX(id) AS m FROM modmail_events").get() as { m: number | null };
@@ -40,15 +41,12 @@ function syncModmailEventsSequence(ticket: DatabaseLib.Database): void {
   try {
     ticket.prepare("DELETE FROM sqlite_sequence WHERE name = 'modmail_events'").run();
     ticket.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('modmail_events', ?)").run(maxId);
-  } catch {
-    /* sqlite_sequence 未作成時は無視（次回 INSERT で自動採番） */
-  }
+  } catch {}
 }
 
-/**
- * メイン DB にチケット系テーブルが残っている場合のみ、ticket.db へコピーする。
- * マイグレーション 010 適用直前に呼ぶ（010 でメインから DROP される）。
- */
+// メイン DB にチケット系テーブルが残っている場合のみ、ticket.db へコピーする。
+// マイグレーション 010 適用直前に呼ぶ（010 でメインから DROP される）。
+
 export function copyTicketDataFromMainToTicketDb(
   mainSqlite: DatabaseLib.Database,
   ticketSqlite: DatabaseLib.Database,

@@ -8,7 +8,8 @@ import type { KuromojiToken } from "./senryu.types.js";
 
 const require = createRequire(import.meta.url);
 
-/** kuromoji のデフォルトは cwd 相対の dict/ のため、npm 同梱辞書へ固定する */
+// kuromoji のデフォルトは cwd 相対の dict/ のため、npm 同梱辞書へ固定する
+
 function defaultKuromojiDictPath(): string {
   return join(dirname(require.resolve("kuromoji/package.json")), "dict");
 }
@@ -104,9 +105,7 @@ export async function expandUnknownKatakanaTokens(
           out.push(...sub);
           continue;
         }
-      } catch {
-        /* keep original */
-      }
+      } catch {}
     }
     out.push(t);
   }

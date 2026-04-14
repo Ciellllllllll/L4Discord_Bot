@@ -1,6 +1,7 @@
 import type DatabaseLib from "better-sqlite3";
 
-/** リマインダーハブ専用 DB（既定: data/reminder.db）— メイン DB の reminders と同一スキーマ */
+// リマインダーハブ専用 DB（既定: data/reminder.db）— メイン DB の reminders と同一スキーマ
+
 export function ensureReminderSchema(db: DatabaseLib.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS reminders (

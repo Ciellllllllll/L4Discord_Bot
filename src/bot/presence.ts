@@ -25,9 +25,7 @@ export function startPresenceRotation(client: Client, log: pino.Logger, version:
             activities: [{ name: "接続エラー", type: ActivityType.Playing }],
             status: "idle",
           });
-        } catch {
-          /* ignore */
-        }
+        } catch {}
       }
     })();
   };

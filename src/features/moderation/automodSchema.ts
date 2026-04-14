@@ -1,6 +1,7 @@
 import type DatabaseLib from "better-sqlite3";
 
-/** 自動モデレーション専用 DB（既定: data/Automoderation.db） */
+// 自動モデレーション専用 DB（既定: data/Automoderation.db）
+
 export function ensureAutomoderationSchema(db: DatabaseLib.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS automod_guild_settings (

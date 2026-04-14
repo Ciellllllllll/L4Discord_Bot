@@ -4,9 +4,7 @@ import "dotenv/config";
 if (process.platform === "win32") {
   try {
     execSync("cmd /c chcp 65001>nul", { stdio: "ignore", windowsHide: true });
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 import { createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
@@ -108,7 +106,8 @@ async function main(): Promise<void> {
   const sqlite = createSqliteDatabase(config.DATABASE_PATH);
   const ticketSqlite = createSqliteDatabase(config.TICKET_DATABASE_PATH);
   const messageLogSqlite = createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
-  /** 19桁スノーフレークを Number で読むと精度が落ち、添付ストア検索が一致しない */
+    // 19桁スノーフレークを Number で読むと精度が落ち、添付ストア検索が一致しない
+
   messageLogSqlite.defaultSafeIntegers(true);
   const messageAttachmentStoreSqlite = createSqliteDatabase(config.MESSAGE_ATTACHMENT_STORE_DB_PATH);
   const vcTimeSqlite = createSqliteDatabase(config.VC_TIME_DATABASE_PATH);

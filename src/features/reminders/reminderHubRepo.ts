@@ -87,7 +87,8 @@ export async function createReminderHubEntry(
     title: input.title,
     recurrence: input.recurrence,
   };
-  /** SQLite TEXT 列: better-sqlite3 はオブジェクトをバインドできないため JSON 文字列で保存 */
+    // SQLite TEXT 列: better-sqlite3 はオブジェクトをバインドできないため JSON 文字列で保存
+
   const dataJson = JSON.stringify(data);
   await rdb(ctx)
     .insertInto("reminders")
@@ -253,7 +254,8 @@ export async function fetchDuePending(ctx: BotContext, nowIsoStr: string, limit:
   return rows as RemindersRow[];
 }
 
-/** 即時投稿後の更新（繰り返しは基準を「今」に） */
+// 即時投稿後の更新（繰り返しは基準を「今」に）
+
 export async function applyDispatchResult(
   ctx: BotContext,
   row: RemindersRow,

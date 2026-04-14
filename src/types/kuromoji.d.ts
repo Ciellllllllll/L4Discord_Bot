@@ -1,7 +1,8 @@
 declare module "kuromoji" {
   export interface IpadicToken {
     word_id: number;
-    /** KNOWN | UNKNOWN | … */
+        // KNOWN | UNKNOWN | …
+
     word_type: string;
     word_position: number;
     surface_form: string;

@@ -5,7 +5,8 @@ import type pino from "pino";
 import type { Database } from "../../core/db/types.js";
 import { getGuildSettingsData, upsertGuildSettingsData } from "../../core/guildSettings.js";
 
-/** タイトルは「ログ対象切り替え」（Embed 見出しとして大きく表示）。チャンネル・実行者は <#…> / <@…> でリンク表示。括弧は使わない */
+// タイトルは「ログ対象切り替え」（Embed 見出しとして大きく表示）。チャンネル・実行者は <#…> / <@…> でリンク表示。括弧は使わない
+
 export function buildNologToggleEmbed(opts: {
   nowExcluded: boolean;
   channelId: string;
@@ -24,9 +25,8 @@ export function buildNologToggleEmbed(opts: {
     );
 }
 
-/**
- * message_log_excluded_channel_ids をトグル。戻り値の nowExcluded はトグル後に当該チャンネルが除外リストに含まれるか。
- */
+// message_log_excluded_channel_ids をトグル。戻り値の nowExcluded はトグル後に当該チャンネルが除外リストに含まれるか。
+
 export async function toggleMessageLogExcludedForChannel(
   db: Kysely<Database>,
   guildId: string,
@@ -52,7 +52,8 @@ export async function runNologToggleAndBuildEmbed(
   return buildNologToggleEmbed({ nowExcluded, channelId, executorUserId });
 }
 
-/** ボイス／テキスト等、send 可能なチャンネルへ Embed を送る */
+// ボイス／テキスト等、send 可能なチャンネルへ Embed を送る
+
 export async function trySendNologEmbedInChannel(
   channel: Channel,
   embed: EmbedBuilder,

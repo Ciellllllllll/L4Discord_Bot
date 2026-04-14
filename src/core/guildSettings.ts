@@ -10,12 +10,6 @@ export type GuildSettingsData = {
   member_leave_channel_id?: string;
   cold_keywords?: string[];
   keyword_replies?: Record<string, string>;
-  /**
-   * 常設パネル送信先。
-   * ADMIN: メッセージログ・リアクションロール管理など
-   * VC / Modmail: ユーザー向け（チャンネル別指定）
-   * user_channel_id: 旧 Setup（VC と Modmail を同一チャンネルに置いた設定の互換用）
-   */
   panel_channels?: {
     admin_channel_id?: string;
     vc_channel_id?: string;

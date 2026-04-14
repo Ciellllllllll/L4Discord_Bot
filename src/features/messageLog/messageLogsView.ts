@@ -757,9 +757,7 @@ function buildDetailPayload(
     const cur = slots.imageSlots[clampedIdx]!;
     try {
       files.push(new AttachmentBuilder(cur.absPath, { name: cur.attachName }));
-    } catch {
-      /* skip */
-    }
+    } catch {}
   }
   files.push(...slots.nonImageFiles);
 

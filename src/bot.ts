@@ -6,9 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 if (process.platform === "win32") {
   try {
     execSync("cmd /c chcp 65001>nul", { stdio: "ignore", windowsHide: true });
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 
 function resolveDistIndexPath(): string | undefined {

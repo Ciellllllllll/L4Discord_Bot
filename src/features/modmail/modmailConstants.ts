@@ -1,10 +1,9 @@
 import type { AppConfig } from "../../core/config.js";
 
-/**
- * Modmail スタッフ用スレッドの親チャンネル。
- * MOD_LOG_CHANNEL_ID（Detecter 理由入力・退出通知と同じ）を最優先し、
- * 未設定時は DiscordBOTv2 互換で MODMAIL_LOG_CHANNEL_ID → LOG_CHANNEL_ID → LOGGER_CHANNEL_ID。
- */
+// Modmail スタッフ用スレッドの親チャンネル。
+// MOD_LOG_CHANNEL_ID（Detecter 理由入力・退出通知と同じ）を最優先し、
+// 未設定時は DiscordBOTv2 互換で MODMAIL_LOG_CHANNEL_ID → LOG_CHANNEL_ID → LOGGER_CHANNEL_ID。
+
 export function resolveModmailParentChannelId(config: AppConfig): string | undefined {
   const modLog = config.MOD_LOG_CHANNEL_ID?.trim();
   if (modLog) return modLog;

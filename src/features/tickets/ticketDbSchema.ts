@@ -1,6 +1,7 @@
 import type DatabaseLib from "better-sqlite3";
 
-/** Modmail / appeals / 汎用 tickets を ticket.db に集約するスキーマ（CREATE IF NOT EXISTS） */
+// Modmail / appeals / 汎用 tickets を ticket.db に集約するスキーマ（CREATE IF NOT EXISTS）
+
 export function ensureTicketDatabaseSchema(db: DatabaseLib.Database): void {
   db.exec(`
 CREATE TABLE IF NOT EXISTS tickets (

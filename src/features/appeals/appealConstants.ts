@@ -4,7 +4,8 @@ export const APPEAL_START_PREFIX = "appeal_start:";
 export const APPEAL_SUBMIT_PREFIX = "appeal_submit:";
 export const APPEAL_REASON_FIELD = "appeal_reason";
 
-/** appeal_rcv|{appealId}|{action} — UUID にコロンが含まれるため区切りは | */
+// appeal_rcv|{appealId}|{action} — UUID にコロンが含まれるため区切りは |
+
 export const APPEAL_REVIEW_PREFIX = "appeal_rcv|";
 export const APPEAL_REVIEW_THREAD_PREFIX = "appeal_rcvt|";
 

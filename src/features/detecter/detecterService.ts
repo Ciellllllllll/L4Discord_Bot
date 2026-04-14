@@ -85,7 +85,8 @@ function extractPublicExecutionApprover(reasonText: string): string {
   return normalizeSnowflake(m[1] ?? "");
 }
 
-/** DiscordBOTv2 Detecter.js の timeoutUntil と同じ（gateway の before/after をそのまま評価） */
+// DiscordBOTv2 Detecter.js の timeoutUntil と同じ（gateway の before/after をそのまま評価）
+
 function timeoutUntil(member: GuildMember | PartialGuildMember): Date | null {
   const until = member.communicationDisabledUntil;
   if (!until) return null;
@@ -98,7 +99,8 @@ export type AuditLookupResult = {
   reason: string;
   auditId: string;
   createdAt: Date;
-  /** MemberUpdate 監査の communication_disabled_until 新値（ゲートウェイで member が欠ける場合の補完用） */
+    // MemberUpdate 監査の communication_disabled_until 新値（ゲートウェイで member が欠ける場合の補完用）
+
   communicationDisabledUntilFromAudit: Date | null;
 };
 
@@ -174,7 +176,8 @@ export class DetecterService {
     return false;
   }
 
-  /** Discord 監査のタイムアウト終了値（型ゆらぎ対応）。秒/ミリ秒の数値も許容 */
+    // Discord 監査のタイムアウト終了値（型ゆらぎ対応）。秒/ミリ秒の数値も許容
+
   private parseAuditTimeoutRaw(raw: unknown): Date | null {
     if (raw == null || raw === "") return null;
     if (raw instanceof Date) return Number.isNaN(raw.getTime()) ? null : raw;
@@ -205,11 +208,10 @@ export class DetecterService {
     return null;
   }
 
-  /**
-   * 監査ログ changes の新タイムアウト終了時刻。
-   * 同一エントリに複数の timeout 系 change があり、先頭の new が null だけの場合があるため、
-   * 該当キーをすべて走査し new から取れた最も遅い有効日時を採用する。
-   */
+    // 監査ログ changes の新タイムアウト終了時刻。
+  // 同一エントリに複数の timeout 系 change があり、先頭の new が null だけの場合があるため、
+  // 該当キーをすべて走査し new から取れた最も遅い有効日時を採用する。
+
   private parseCommunicationDisabledUntilFromEntry(entry: GuildAuditLogsEntry): Date | null {
     try {
       let best: Date | null = null;

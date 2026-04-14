@@ -71,9 +71,7 @@ async function respondEphemeralOrEdit(
       return;
     }
     await interaction.reply({ ...payload, ...(flags !== undefined ? { flags } : {}) });
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 
 async function respondReviewEphemeral(interaction: ButtonInteraction, content: string): Promise<void> {
@@ -87,9 +85,7 @@ async function respondReviewEphemeral(interaction: ButtonInteraction, content: s
       return;
     }
     await interaction.reply({ content, flags: MessageFlags.Ephemeral });
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 
 export async function handleAppealStartButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {

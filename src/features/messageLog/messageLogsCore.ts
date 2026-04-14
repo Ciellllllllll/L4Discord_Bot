@@ -220,7 +220,8 @@ function insertLog(db: DatabaseLib.Database, r: ReturnType<typeof buildLogRecord
   );
 }
 
-/** message.db を開いた直後に呼ぶ（スキーマ・FTS・トリガー） */
+// message.db を開いた直後に呼ぶ（スキーマ・FTS・トリガー）
+
 export function prepareMessageLogsDatabase(db: DatabaseLib.Database): void {
   ensureMessageLogsSchema(db);
 }

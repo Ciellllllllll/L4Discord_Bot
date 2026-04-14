@@ -8,7 +8,8 @@ import type { Message, PartialMessage } from "discord.js";
 import type pino from "pino";
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
-/** 動画・一般ファイルの「再送信」しきい値（バイト）。画像の Embed 表示は別扱い（最大はアーカイブ上限まで）。 */
+// 動画・一般ファイルの「再送信」しきい値（バイト）。画像の Embed 表示は別扱い（最大はアーカイブ上限まで）。
+
 export const BOT_RESEND_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_DISCORD_FILES = 10;
 
@@ -70,9 +71,8 @@ function pickExtension(filename: string, contentType: string | null | undefined)
   return "";
 }
 
-/**
- * message.db は変更せず、専用 DB + ディスクに添付を複製する（Discord CDN 失効後も参照可能にする）。
- */
+// message.db は変更せず、専用 DB + ディスクに添付を複製する（Discord CDN 失効後も参照可能にする）。
+
 export async function archiveMessageAttachmentsFromDiscord(
   storeDb: DatabaseLib.Database,
   filesRootResolved: string,
@@ -225,7 +225,8 @@ function sortedRows(storeDb: DatabaseLib.Database, guildIdStr: string, messageId
   return [...map.values()].sort((a, b) => a.attachment_id.localeCompare(b.attachment_id));
 }
 
-/** 詳細でページ送りする 1 枚分の画像（メタのみ。実体は buildDetailPayload で 1 枚ずつ添付） */
+// 詳細でページ送りする 1 枚分の画像（メタのみ。実体は buildDetailPayload で 1 枚ずつ添付）
+
 export type DetailImageSlot = {
   attachName: string;
   displayName: string;
@@ -236,14 +237,14 @@ export type DetailImageSlotsResult = {
   imageSlots: DetailImageSlot[];
   nonImageFiles: AttachmentBuilder[];
   oversizeItems: { filename: string; storageRelpath: string }[];
-  /** 読み込み失敗などでスキップした画像数 */
+    // 読み込み失敗などでスキップした画像数
+
   skippedImageCount: number;
 };
 
-/**
- * 詳細表示用: 画像はスロット一覧のみ（1 枚ずつ Embed に出す）。動画・ファイルは 8MB 以下をまとめて添付。
- * 画像 1 枚を同じメッセージに載せるため、非画像は最大 9 件まで。
- */
+// 詳細表示用: 画像はスロット一覧のみ（1 枚ずつ Embed に出す）。動画・ファイルは 8MB 以下をまとめて添付。
+// 画像 1 枚を同じメッセージに載せるため、非画像は最大 9 件まで。
+
 export function buildDetailImageSlots(
   storeDb: DatabaseLib.Database | undefined,
   guildIdStr: string | null,

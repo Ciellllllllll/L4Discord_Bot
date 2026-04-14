@@ -10,9 +10,8 @@ export function bindSenryuRepository(sqlite: DatabaseLib.Database): void {
   repo = createSenryuRepository(sqlite);
 }
 
-/**
- * @returns true なら川柳として処理済み（reply 有無は設定による）。messageCreate で後続をスキップする用途。
- */
+// @returns true なら川柳として処理済み（reply 有無は設定による）。messageCreate で後続をスキップする用途。
+
 export async function handleSenryuMessage(ctx: BotContext, message: Message): Promise<boolean> {
   if (!repo) {
     ctx.log.error({}, "senryu repository not bound");

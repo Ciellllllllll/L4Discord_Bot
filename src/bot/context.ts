@@ -11,19 +11,25 @@ export type BotContext = {
   config: AppConfig;
   db: Kysely<Database>;
   sqlite: DatabaseLib.Database;
-  /** Modmail / 異議申し立て / 汎用 tickets（ticket.db） */
+    // Modmail / 異議申し立て / 汎用 tickets（ticket.db）
+
   ticketDb: Kysely<TicketDatabase>;
   ticketSqlite: DatabaseLib.Database;
-  /** メッセージログ専用（message.db） */
+    // メッセージログ専用（message.db）
+
   messageLogSqlite: DatabaseLib.Database;
-  /** 添付ローカル複製のメタ（message_attachment_store.db）。message.db とは別ファイル */
+    // 添付ローカル複製のメタ（message_attachment_store.db）。message.db とは別ファイル
+
   messageAttachmentStoreSqlite: DatabaseLib.Database;
-  /** VC 滞在時間（sessions）専用（vc_time.db） */
+    // VC 滞在時間（sessions）専用（vc_time.db）
+
   vcTimeSqlite: DatabaseLib.Database;
-  /** /q 会話履歴（AI_History.db） */
+    // /q 会話履歴（AI_History.db）
+
   aiHistoryDb: Kysely<AiHistoryDatabase>;
   aiHistorySqlite: DatabaseLib.Database;
-  /** 自動モデレーション設定（Automoderation.db） */
+    // 自動モデレーション設定（Automoderation.db）
+
   automodDb: Kysely<AutomoderationDatabase>;
   automodSqlite: DatabaseLib.Database;
   log: pino.Logger;

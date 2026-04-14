@@ -8,10 +8,9 @@ function tableExists(db: DatabaseLib.Database, name: string): boolean {
   return Boolean(row);
 }
 
-/**
- * メイン DB に reminders が残っている場合のみ、reminder.db へコピーする。
- * マイグレーション 012 適用直前に呼ぶ（012 でメインから DROP される）。
- */
+// メイン DB に reminders が残っている場合のみ、reminder.db へコピーする。
+// マイグレーション 012 適用直前に呼ぶ（012 でメインから DROP される）。
+
 export function copyRemindersFromMainToReminderDb(
   mainSqlite: DatabaseLib.Database,
   destSqlite: DatabaseLib.Database,

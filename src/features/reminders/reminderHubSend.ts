@@ -4,7 +4,8 @@ import type { RemindersRow } from "../../core/db/types.js";
 import { EVENT_META, normalizeEventType, type ReminderEvType } from "./reminderHubTypes.js";
 import { reminderRowStoredData } from "./reminderHubRepo.js";
 
-/** 公開投稿用: タイトル・本文とも Discord 見出し1（#）。本文は大文字。 */
+// 公開投稿用: タイトル・本文とも Discord 見出し1（#）。本文は大文字。
+
 export function buildReminderHubPublicEmbed(
   ev: ReminderEvType,
   titleLine: string,

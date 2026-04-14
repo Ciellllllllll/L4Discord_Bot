@@ -8,10 +8,9 @@ import {
 } from "@discordjs/builders";
 import { CHANGE_PROMPT_FILE_ID, CHANGE_PROMPT_MODAL_ID, CHANGE_PROMPT_TEXT_ID } from "./changePromptIds.js";
 
-/**
- * `/change_prompt` 用モーダル。
- * TextInput は builders 側（discord.js との instanceof 整合のため Modmail と同パターン）。
- */
+// `/change_prompt` 用モーダル。
+// TextInput は builders 側（discord.js との instanceof 整合のため Modmail と同パターン）。
+
 export function buildChangePromptModal(): IntakeModalBuilder {
   return new IntakeModalBuilder()
     .setCustomId(CHANGE_PROMPT_MODAL_ID)

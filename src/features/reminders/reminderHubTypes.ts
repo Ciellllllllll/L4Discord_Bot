@@ -1,7 +1,9 @@
-/** DiscordBotv2 remindersystem.js の編集モーダル customId 接頭辞 */
+// DiscordBotv2 remindersystem.js の編集モーダル customId 接頭辞
+
 export const EDIT_MODAL_PREFIX = "rem_manage_edit_modal";
 
-/** モーダル入力の繰り返し欄（`10m` 形式） */
+// モーダル入力の繰り返し欄（`10m` 形式）
+
 export const RECURRENCE_INPUT_MAX = 20;
 
 export type ReminderEvType = "reminder" | "todo" | "notice";

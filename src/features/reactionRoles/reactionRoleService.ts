@@ -160,9 +160,7 @@ export function buildEntryRows(entry: ReactionRoleEntry): ActionRowBuilder<Butto
     if (item.emoji) {
       try {
         button.setEmoji(item.emoji);
-      } catch {
-        /* invalid emoji */
-      }
+      } catch {}
     }
     return button;
   });
@@ -236,7 +234,8 @@ async function resolveTextChannel(guild: Guild, channelId: string) {
   return channel;
 }
 
-/** 公開メッセージを送信または更新し、最終 message ID を返す */
+// 公開メッセージを送信または更新し、最終 message ID を返す
+
 export async function sendOrUpdateEntryMessage(
   ctx: BotContext,
   guild: Guild,

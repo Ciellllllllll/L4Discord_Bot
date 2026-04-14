@@ -33,7 +33,8 @@ function messageHasButtonCustomId(msg: Message, predicate: (customId: string) =>
   return false;
 }
 
-/** 起動時: 未処理の承認パネル・要約パネルを再同期（DiscordBOTv2 registerPersistentUI 相当） */
+// 起動時: 未処理の承認パネル・要約パネルを再同期（DiscordBOTv2 registerPersistentUI 相当）
+
 export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
   const pending = await allPendingReplies(ctx);
   for (const row of pending) {

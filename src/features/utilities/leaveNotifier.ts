@@ -6,7 +6,8 @@ import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 const MESSAGE_LINK_RE =
   /https?:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/(\d+)\/(\d+)\/(\d+)/g;
 
-/** メンバー退出通知は `MOD_LOG_CHANNEL_ID`（.env）のみへ送信 */
+// メンバー退出通知は `MOD_LOG_CHANNEL_ID`（.env）のみへ送信
+
 export async function sendMemberLeaveEmbed(
   ctx: BotContext,
   member: GuildMember | PartialGuildMember,

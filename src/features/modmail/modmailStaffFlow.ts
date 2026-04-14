@@ -303,9 +303,7 @@ export async function closeModmailTicketFull(
         })
         .catch(() => undefined);
     }
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 
   return { ok: true, message: `チケット ${ticketDisplayCode(input.ticketId)} をクローズしました。` };
 }

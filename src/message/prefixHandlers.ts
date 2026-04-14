@@ -135,7 +135,8 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
       ctx.log.info({ command: "reply", userId: message.author.id, outcome: "not_thread" }, "prefix command");
       return true;
     }
-    /** スレッド内は messageCreate で Modmail 処理済み。ここには通常届かない。 */
+        // スレッド内は messageCreate で Modmail 処理済み。ここには通常届かない。
+
     ctx.log.debug({ command: "reply", userId: message.author.id }, "prefix !reply after thread handler");
     return true;
   }
