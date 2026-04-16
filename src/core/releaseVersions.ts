@@ -1,7 +1,4 @@
-// リリース版の単一ソース（DB / JSON ファイルではなく TypeScript）。
-// 起動時にログ・スラッシュ同期・機能ゲート・常設 UI で参照される。
-
-export const BOT_SEMVER = "2.0.1";
+export const BOT_SEMVER = "2.0.2";
 
 // スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER
 
