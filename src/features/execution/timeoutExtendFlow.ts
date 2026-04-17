@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { isAdmin } from "../../core/permission.js";
-import { clampTimeoutMs } from "./executionConstants.js";
+import { clampTimeoutMs, discordVoteDeadlineEmbedLine } from "./executionConstants.js";
 import {
   TE_APPROVAL_PREFIX,
   TE_POLL1_KEYS,
@@ -30,7 +30,6 @@ import {
 import type { TimeoutExtendFlowState } from "./timeoutExtendFlow.types.js";
 import { parseTimeoutExtendFlowState } from "./timeoutExtendFlow.types.js";
 
-const teVoteRefreshLoops = new Map<string, ReturnType<typeof setInterval>>();
 const teAdminWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** `${guildId}:${targetId}` — 同一対象の重複開始防止 */
 const activeTeTargets = new Set<string>();
@@ -41,12 +40,6 @@ function teLockKey(guildId: string, targetId: string): string {
 
 function releaseTeLock(guildId: string, targetId: string): void {
   activeTeTargets.delete(teLockKey(guildId, targetId));
-}
-
-function clearTeVoteRefresh(flowId: string): void {
-  const id = teVoteRefreshLoops.get(flowId);
-  if (id) clearInterval(id);
-  teVoteRefreshLoops.delete(flowId);
 }
 
 function clearTeAdminWait(flowId: string): void {
@@ -176,25 +169,25 @@ function durationLabelJa(sec: number | null): string {
   return `${Math.floor(sec / (86400 * 7))}週間`;
 }
 
-function buildPoll1Embed(state: TimeoutExtendFlowState, remainingSec: number): EmbedBuilder {
+function buildPoll1Embed(state: TimeoutExtendFlowState, poll1DeadlineMs: number, pollEnded = false): EmbedBuilder {
   const counts = tallyChoices(state.votes_poll1, [...TE_POLL1_KEYS]);
   const lines = TE_POLL1_KEYS.map((k) => `**${TE_POLL1_LABEL[k]}** — ${counts[k] ?? 0} 票`);
   return new EmbedBuilder()
     .setTitle("タイムアウト処理を選択")
     .setDescription(
-      [`対象: <@${state.target_id}>`, "", ...lines, "", `残り時間: **${remainingSec}** 秒`].join("\n"),
+      [`対象: <@${state.target_id}>`, "", ...lines, "", discordVoteDeadlineEmbedLine(poll1DeadlineMs, pollEnded)].join("\n"),
     )
     .setColor(0x3498db)
     .setTimestamp(new Date());
 }
 
-function buildPoll2Embed(state: TimeoutExtendFlowState, remainingSec: number): EmbedBuilder {
+function buildPoll2Embed(state: TimeoutExtendFlowState, poll2DeadlineMs: number, pollEnded = false): EmbedBuilder {
   const counts = tallyChoices(state.votes_poll2, [...TE_POLL2_KEYS]);
   const lines = TE_POLL2_KEYS.map((k) => `**${TE_POLL2_LABEL[k]}** — ${counts[k] ?? 0} 票`);
   return new EmbedBuilder()
     .setTitle("延長時間を選択")
     .setDescription(
-      [`対象: <@${state.target_id}>`, "", ...lines, "", `残り時間: **${remainingSec}** 秒`].join("\n"),
+      [`対象: <@${state.target_id}>`, "", ...lines, "", discordVoteDeadlineEmbedLine(poll2DeadlineMs, pollEnded)].join("\n"),
     )
     .setColor(0x9b59b6)
     .setTimestamp(new Date());
@@ -268,7 +261,6 @@ async function abortTeFlow(
   state: TimeoutExtendFlowState,
   heading: string,
 ): Promise<void> {
-  clearTeVoteRefresh(flowId);
   clearTeAdminWait(flowId);
   releaseTeLock(guildId, state.target_id);
   const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
@@ -300,42 +292,6 @@ function scheduleTeAdminWait(ctx: BotContext, flowId: string, guildId: string): 
   teAdminWaitTimers.set(flowId, h);
 }
 
-function startTeVoteRefresh(ctx: BotContext, flowId: string, kind: "poll1" | "poll2"): void {
-  clearTeVoteRefresh(flowId);
-  const id = setInterval(() => {
-    void (async () => {
-      const found = await findOpenTimeoutExtendFlowById(ctx, flowId);
-      if (!found) {
-        clearTeVoteRefresh(flowId);
-        return;
-      }
-      const want = kind === "poll1" ? "poll1_pending" : "poll2_pending";
-      if (found.state.phase !== want) {
-        clearTeVoteRefresh(flowId);
-        return;
-      }
-      const ch = (await ctx.client.channels.fetch(found.state.channel_id).catch(() => null)) as TextChannel | null;
-      if (!ch?.isTextBased()) return;
-      const mid = kind === "poll1" ? found.state.poll1_message_id : found.state.poll2_message_id;
-      if (!mid) return;
-      const m = await ch.messages.fetch(mid).catch(() => null);
-      if (!m) return;
-      const deadline = kind === "poll1" ? found.state.poll1_deadline_ms : found.state.poll2_deadline_ms;
-      if (!deadline) return;
-      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      const embed = kind === "poll1" ? buildPoll1Embed(found.state, remaining) : buildPoll2Embed(found.state, remaining);
-      await m
-        .edit({
-          content: null,
-          embeds: [embed],
-          components: kind === "poll1" ? tePoll1Rows(flowId, false) : tePoll2Rows(flowId, false),
-        })
-        .catch(() => undefined);
-    })().catch(() => undefined);
-  }, 1000);
-  teVoteRefreshLoops.set(flowId, id);
-}
-
 async function postTeAdminRequest(ctx: BotContext, channel: TextChannel, flowId: string, body: string): Promise<Message | null> {
   const adminRoleId = ctx.config.ADMIN_ROLE_ID.trim();
   try {
@@ -356,14 +312,13 @@ async function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, st
 
   const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
   const deadline = Date.now() + voteMs;
-  const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
   const draft: TimeoutExtendFlowState = {
     ...state,
     poll1_deadline_ms: deadline,
     votes_poll1: {},
     phase: "poll1_pending",
   };
-  const embed = buildPoll1Embed(draft, remaining);
+  const embed = buildPoll1Embed(draft, deadline);
 
   let msg: Message;
   try {
@@ -386,7 +341,6 @@ async function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, st
     votes_poll1: {},
   };
   await saveTeFullState(ctx, flowId, next, msg.id);
-  startTeVoteRefresh(ctx, flowId, "poll1");
   setTimeout(() => {
     void transitionTePoll1ToNext(ctx, flowId, guildId).catch((err) =>
       ctx.log.error({ err, flowId }, "timeoutExtend: poll1 finalize failed"),
@@ -399,7 +353,6 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
   if (!found || found.state.phase !== "poll1_pending") return;
 
   const { state } = found;
-  clearTeVoteRefresh(flowId);
 
   const counts = tallyChoices(state.votes_poll1, [...TE_POLL1_KEYS]);
   const winner = pickSingleWinner(counts, [...TE_POLL1_KEYS]);
@@ -411,7 +364,7 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
       const m = await ch.messages.fetch(state.poll1_message_id).catch(() => null);
       if (m) {
         await m.edit({
-          embeds: [buildPoll1Embed(state, 0)],
+          embeds: [buildPoll1Embed(state, state.poll1_deadline_ms, true)],
           components: tePoll1Rows(flowId, true),
         });
       }
@@ -446,7 +399,6 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
 
   const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
   const deadline = Date.now() + voteMs;
-  const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
   const embed = buildPoll2Embed(
     {
       ...state,
@@ -455,7 +407,7 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
       votes_poll2: {},
       resolved_extend: "extend",
     },
-    remaining,
+    deadline,
   );
 
   let msg: Message;
@@ -480,7 +432,6 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
     votes_poll2: {},
   };
   await saveTeFullState(ctx, flowId, next, msg.id);
-  startTeVoteRefresh(ctx, flowId, "poll2");
   setTimeout(() => {
     void transitionTePoll2ToAdmin(ctx, flowId, guildId).catch((err) =>
       ctx.log.error({ err, flowId }, "timeoutExtend: poll2 finalize failed"),
@@ -493,19 +444,18 @@ async function transitionTePoll2ToAdmin(ctx: BotContext, flowId: string, guildId
   if (!found || found.state.phase !== "poll2_pending") return;
 
   const { state } = found;
-  clearTeVoteRefresh(flowId);
 
   const counts = tallyChoices(state.votes_poll2, [...TE_POLL2_KEYS]);
   const winner = pickSingleWinner(counts, [...TE_POLL2_KEYS]);
   const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
   if (!ch?.isTextBased()) return;
 
-  if (state.poll2_message_id) {
+  if (state.poll2_message_id && state.poll2_deadline_ms) {
     try {
       const m = await ch.messages.fetch(state.poll2_message_id).catch(() => null);
       if (m) {
         await m.edit({
-          embeds: [buildPoll2Embed(state, 0)],
+          embeds: [buildPoll2Embed(state, state.poll2_deadline_ms, true)],
           components: tePoll2Rows(flowId, true),
         });
       }
@@ -757,9 +707,8 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
     if (ch?.isTextBased() && !ch.isDMBased() && state.poll1_message_id) {
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll1_message_id);
-        const remaining = Math.max(0, Math.ceil((state.poll1_deadline_ms - Date.now()) / 1000));
         await m.edit({
-          embeds: [buildPoll1Embed(next, remaining)],
+          embeds: [buildPoll1Embed(next, next.poll1_deadline_ms)],
           components: tePoll1Rows(flowId, false),
         });
       } catch (err) {
@@ -796,9 +745,8 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
     if (ch?.isTextBased() && !ch.isDMBased() && state.poll2_message_id) {
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll2_message_id);
-        const remaining = Math.max(0, Math.ceil((state.poll2_deadline_ms - Date.now()) / 1000));
         await m.edit({
-          embeds: [buildPoll2Embed(next, remaining)],
+          embeds: [buildPoll2Embed(next, next.poll2_deadline_ms!)],
           components: tePoll2Rows(flowId, false),
         });
       } catch (err) {

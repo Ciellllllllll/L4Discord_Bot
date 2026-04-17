@@ -1,11 +1,4 @@
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-} from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextInputStyle } from "discord.js";
 import {
   ActionRowBuilder as IntakeActionRowBuilder,
   FileUploadBuilder,
@@ -73,15 +66,17 @@ export function buildModmailCloseRow(ticketId: string): ActionRowBuilder<ButtonB
   );
 }
 
+/** ユーザー DM: 本文＋添付を1モーダルで送信（旧 DM の「添付ファイルを送信」ボタンは互換のためハンドラのみ残す） */
 export function buildModmailUserReplyRow(ticketId: string, userId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(buildThreePartId(MM_IDS.USER_REPLY_PREFIX, ticketId, userId))
-      .setLabel("返信する")
+      .setLabel("スタッフへ返信")
       .setStyle(ButtonStyle.Primary),
   );
 }
 
+/** @deprecated 旧メッセージ互換。新規 DM は {@link buildModmailUserReplyRow} のみ使用 */
 export function buildModmailUserAttachmentRow(ticketId: string, userId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -108,10 +103,24 @@ export function buildModmailConfirmRow(replyId: string, authorStaffId: string): 
   );
 }
 
-export function buildModmailAttachmentUploadModal(customId: string, title = "ファイルを添付"): ModalBuilder {
-  return new ModalBuilder()
+/**
+ * スタッフ（!reply 承認前の「ファイルを添付」）および旧ユーザー添付ボタン用。
+ * {@link buildModmailIntakeTicketModal} と同じ builders のみ（FileUpload 付きモーダルの showModal 互換）。
+ */
+export function buildModmailAttachmentUploadModal(customId: string, title = "ファイルを添付"): IntakeModalBuilder {
+  return new IntakeModalBuilder()
     .setCustomId(customId)
     .setTitle(title.slice(0, 45))
+    .addComponents(
+      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
+        new IntakeTextInputBuilder()
+          .setCustomId(MM_IDS.ATTACHMENT_MODAL_NOTE_ID)
+          .setLabel("メモ（任意）")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(100),
+      ),
+    )
     .addLabelComponents(
       new LabelBuilder()
         .setLabel("添付ファイル")
@@ -124,13 +133,19 @@ export function buildModmailAttachmentUploadModal(customId: string, title = "フ
     );
 }
 
-export function buildModmailUserReplyModal(customId: string): ModalBuilder {
-  return new ModalBuilder()
+/**
+ * ユーザー DM の「スタッフへ返信」用モーダル（本文 + 任意添付を1つに統合）。
+ * TextInput を先に置く（FileUpload のみのモーダルより DM で開きやすい）。
+ * 構成は {@link buildModmailIntakeTicketModal} と同じ builders のみ。
+ * （discord.js の ModalBuilder と Label/FileUpload を混ぜると DM で showModal が失敗することがある）
+ */
+export function buildModmailUserReplyModal(customId: string): IntakeModalBuilder {
+  return new IntakeModalBuilder()
     .setCustomId(customId)
     .setTitle("スタッフへ返信")
     .addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
+      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
+        new IntakeTextInputBuilder()
           .setCustomId("reply_body")
           .setLabel("メッセージ")
           .setStyle(TextInputStyle.Paragraph)

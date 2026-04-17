@@ -285,7 +285,14 @@ async function handleReplyAttachmentModal(interaction: ModalSubmitInteraction, c
     await replyEphemeral(interaction, "返信予約が無効です。");
     return true;
   }
-  const uploaded = interaction.fields.getUploadedFiles(MM_IDS.ATTACHMENT_MODAL_FILES_ID, false);
+  let uploaded = null;
+  if (interaction.fields.fields.has(MM_IDS.ATTACHMENT_MODAL_FILES_ID)) {
+    try {
+      uploaded = interaction.fields.getUploadedFiles(MM_IDS.ATTACHMENT_MODAL_FILES_ID, false);
+    } catch {
+      uploaded = null;
+    }
+  }
   const meta = serializeUploadedCollection(uploaded);
   if (meta.length === 0) {
     await replyEphemeral(interaction, "有効な添付がありません。");
@@ -361,7 +368,14 @@ async function handleUserAttachmentModal(interaction: ModalSubmitInteraction, ct
     await replyEphemeral(interaction, "このチケットには返信できません。");
     return true;
   }
-  const uploaded = interaction.fields.getUploadedFiles(MM_IDS.ATTACHMENT_MODAL_FILES_ID, false);
+  let uploaded = null;
+  if (interaction.fields.fields.has(MM_IDS.ATTACHMENT_MODAL_FILES_ID)) {
+    try {
+      uploaded = interaction.fields.getUploadedFiles(MM_IDS.ATTACHMENT_MODAL_FILES_ID, false);
+    } catch {
+      uploaded = null;
+    }
+  }
   const meta = serializeUploadedCollection(uploaded);
   if (meta.length === 0) {
     await replyEphemeral(interaction, "有効な添付がありません。");
@@ -461,11 +475,13 @@ async function handleUserReplyModal(interaction: ModalSubmitInteraction, ctx: Bo
   }
 
   const body = interaction.fields.getTextInputValue("reply_body") || "";
-  let uploaded = interaction.fields.getUploadedFiles(MM_IDS.USER_REPLY_MODAL_FILES_ID, false);
-  try {
-    if (!uploaded || uploaded.size === 0) uploaded = null;
-  } catch {
-    uploaded = null;
+  let uploaded = null;
+  if (interaction.fields.fields.has(MM_IDS.USER_REPLY_MODAL_FILES_ID)) {
+    try {
+      uploaded = interaction.fields.getUploadedFiles(MM_IDS.USER_REPLY_MODAL_FILES_ID, false);
+    } catch {
+      uploaded = null;
+    }
   }
 
   if (ticketOk && ticket) {

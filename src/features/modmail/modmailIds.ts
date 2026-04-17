@@ -21,6 +21,8 @@ export const MM_IDS = {
   MODAL_INTAKE_BODY: "modmail_body",
   MODAL_INTAKE_FILES: "modmail_attachments",
   ATTACHMENT_MODAL_FILES_ID: "mm_files",
+  /** 添付モーダル先頭の任意 TextInput（FileUpload のみのモーダルが環境によって showModal 失敗するため） */
+  ATTACHMENT_MODAL_NOTE_ID: "mm_attach_note",
   USER_REPLY_MODAL_FILES_ID: "mm_urep_files",
 } as const;
 

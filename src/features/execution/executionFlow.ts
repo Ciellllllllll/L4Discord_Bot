@@ -19,6 +19,7 @@ import { isAdmin } from "../../core/permission.js";
 import {
   buildExecutionAuditReason,
   clampTimeoutMs,
+  discordVoteDeadlineEmbedLine,
   EXECUTION_FLOW_KIND,
   EXEC_APPROVAL_PREFIX,
   EXEC_VOTE_PREFIX,
@@ -31,14 +32,7 @@ import {
 import type { ExecutionAction, ExecutionFlowState } from "./executionFlow.types.js";
 import { parseExecutionFlowState } from "./executionFlow.types.js";
 
-const voteRefreshLoops = new Map<string, ReturnType<typeof setInterval>>();
 const adminWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-function clearVoteRefresh(flowId: string): void {
-  const id = voteRefreshLoops.get(flowId);
-  if (id) clearInterval(id);
-  voteRefreshLoops.delete(flowId);
-}
 
 function clearAdminWait(flowId: string): void {
   const t = adminWaitTimers.get(flowId);
@@ -160,8 +154,8 @@ function choiceToAction1(c: string): ExecutionAction | null {
   return null;
 }
 
-/** 処刑フロー第1投票（処刑内容）— タイムアウト延長フローと同様に Embed で表記 */
-function buildPoll1Embed(state: ExecutionFlowState, remainingSec: number): EmbedBuilder {
+/** 処刑フロー第1投票（処刑内容）。`pollEnded` 後は `:R` を使わず増加表示を防ぐ */
+function buildPoll1Embed(state: ExecutionFlowState, poll1DeadlineMs: number, pollEnded = false): EmbedBuilder {
   const counts = tallyChoices(state.votes_poll1, POLL1_KEYS);
   const lines = POLL1_KEYS.map((k) => `**${k}.** ${POLL1_LABEL[k]} — ${counts[k] ?? 0} 票`);
   return new EmbedBuilder()
@@ -173,7 +167,7 @@ function buildPoll1Embed(state: ExecutionFlowState, remainingSec: number): Embed
         "**投票先（ボタン 1〜3）**",
         ...lines,
         "",
-        `**残り時間**: **${remainingSec}** 秒`,
+        discordVoteDeadlineEmbedLine(poll1DeadlineMs, pollEnded),
       ].join("\n"),
     )
     .setColor(0x3498db)
@@ -181,7 +175,7 @@ function buildPoll1Embed(state: ExecutionFlowState, remainingSec: number): Embed
 }
 
 /** 処刑フロー第2投票（タイムアウト時間） */
-function buildPoll2Embed(state: ExecutionFlowState, remainingSec: number): EmbedBuilder {
+function buildPoll2Embed(state: ExecutionFlowState, poll2DeadlineMs: number, pollEnded = false): EmbedBuilder {
   const counts = tallyChoices(state.votes_poll2, POLL2_KEYS);
   const lines = POLL2_KEYS.map((k) => `**${k}.** ${POLL2_LABEL[k]} — ${counts[k] ?? 0} 票`);
   return new EmbedBuilder()
@@ -193,7 +187,7 @@ function buildPoll2Embed(state: ExecutionFlowState, remainingSec: number): Embed
         "**投票先（ボタン 1〜4）**",
         ...lines,
         "",
-        `**残り時間**: **${remainingSec}** 秒`,
+        discordVoteDeadlineEmbedLine(poll2DeadlineMs, pollEnded),
       ].join("\n"),
     )
     .setColor(0x9b59b6)
@@ -267,7 +261,6 @@ async function abortFlow(
   state: ExecutionFlowState,
   heading: string,
 ): Promise<void> {
-  clearVoteRefresh(flowId);
   clearAdminWait(flowId);
   const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
   if (ch?.isTextBased()) {
@@ -296,49 +289,6 @@ function scheduleAdminWait(ctx: BotContext, flowId: string, expectedPhase: "prec
     })().catch((err) => ctx.log.error({ err, flowId }, "execution: admin timeout handler failed"));
   }, ms);
   adminWaitTimers.set(flowId, h);
-}
-
-function startVoteRefresh(
-  ctx: BotContext,
-  flowId: string,
-  kind: "poll1" | "poll2",
-): void {
-  clearVoteRefresh(flowId);
-  const id = setInterval(() => {
-    void (async () => {
-      const found = await findOpenExecutionFlowById(ctx, flowId);
-      if (!found) {
-        clearVoteRefresh(flowId);
-        return;
-      }
-      const want = kind === "poll1" ? "poll1_pending" : "poll2_pending";
-      if (found.state.phase !== want) {
-        clearVoteRefresh(flowId);
-        return;
-      }
-      const ch = (await ctx.client.channels.fetch(found.state.channel_id).catch(() => null)) as TextChannel | null;
-      if (!ch?.isTextBased()) return;
-      const mid = kind === "poll1" ? found.state.poll1_message_id : found.state.poll2_message_id;
-      if (!mid) return;
-      const m = await ch.messages.fetch(mid).catch(() => null);
-      if (!m) return;
-      const deadline = kind === "poll1" ? found.state.poll1_deadline_ms : found.state.poll2_deadline_ms;
-      if (!deadline) return;
-      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      const embed =
-        kind === "poll1"
-          ? buildPoll1Embed(found.state, remaining)
-          : buildPoll2Embed(found.state, remaining);
-      await m
-        .edit({
-          content: null,
-          embeds: [embed],
-          components: kind === "poll1" ? poll1Rows(flowId, false) : poll2Rows(flowId, false),
-        })
-        .catch(() => undefined);
-    })().catch(() => undefined);
-  }, 1000);
-  voteRefreshLoops.set(flowId, id);
 }
 
 async function postPrecheckRequest(ctx: BotContext, channel: TextChannel, flowId: string): Promise<Message | null> {
@@ -375,8 +325,7 @@ async function beginPoll1(ctx: BotContext, flowId: string, state: ExecutionFlowS
 
   const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
   const deadline = Date.now() + voteMs;
-  const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-  const embed = buildPoll1Embed({ ...state, poll1_deadline_ms: deadline, votes_poll1: {} }, remaining);
+  const embed = buildPoll1Embed({ ...state, poll1_deadline_ms: deadline, votes_poll1: {} }, deadline);
 
   let msg: Message;
   try {
@@ -399,7 +348,6 @@ async function beginPoll1(ctx: BotContext, flowId: string, state: ExecutionFlowS
     votes_poll1: {},
   };
   await saveFullState(ctx, flowId, next, msg.id);
-  startVoteRefresh(ctx, flowId, "poll1");
   setTimeout(() => {
     void transitionPoll1ToNext(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll1 finalize failed"));
   }, voteMs);
@@ -410,7 +358,6 @@ async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<v
   if (!found || found.state.phase !== "poll1_pending") return;
 
   const { state } = found;
-  clearVoteRefresh(flowId);
 
   const counts = tallyChoices(state.votes_poll1, POLL1_KEYS);
   const winner = pickSingleWinner(counts, [...POLL1_KEYS]);
@@ -421,10 +368,9 @@ async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<v
     try {
       const m = await ch.messages.fetch(state.poll1_message_id).catch(() => null);
       if (m) {
-        const remaining = 0;
         await m.edit({
           content: null,
-          embeds: [buildPoll1Embed(state, remaining)],
+          embeds: [buildPoll1Embed(state, state.poll1_deadline_ms, true)],
           components: poll1Rows(flowId, true),
         });
       }
@@ -444,10 +390,9 @@ async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<v
   if (action === "timeout") {
     const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
     const deadline = Date.now() + voteMs;
-    const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     const poll2Embed = buildPoll2Embed(
       { ...state, poll2_deadline_ms: deadline, votes_poll2: {}, phase: "poll2_pending" },
-      remaining,
+      deadline,
     );
     let msg: Message;
     try {
@@ -471,7 +416,6 @@ async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<v
       votes_poll2: {},
     };
     await saveFullState(ctx, flowId, next, msg.id);
-    startVoteRefresh(ctx, flowId, "poll2");
     setTimeout(() => {
       void transitionPoll2ToAdmin(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll2 finalize failed"));
     }, voteMs);
@@ -502,20 +446,19 @@ async function transitionPoll2ToAdmin(ctx: BotContext, flowId: string): Promise<
   if (!found || found.state.phase !== "poll2_pending") return;
 
   const { state } = found;
-  clearVoteRefresh(flowId);
 
   const counts = tallyChoices(state.votes_poll2, POLL2_KEYS);
   const winner = pickSingleWinner(counts, [...POLL2_KEYS]);
   const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
   if (!ch?.isTextBased()) return;
 
-  if (state.poll2_message_id) {
+  if (state.poll2_message_id && state.poll2_deadline_ms) {
     try {
       const m = await ch.messages.fetch(state.poll2_message_id).catch(() => null);
       if (m) {
         await m.edit({
           content: null,
-          embeds: [buildPoll2Embed(state, 0)],
+          embeds: [buildPoll2Embed(state, state.poll2_deadline_ms, true)],
           components: poll2Rows(flowId, true),
         });
       }
@@ -712,11 +655,9 @@ async function handleVote(interaction: ButtonInteraction, ctx: BotContext): Prom
     if (ch?.isTextBased() && !ch.isDMBased() && state.poll1_message_id) {
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll1_message_id);
-        const deadline = state.poll1_deadline_ms;
-        const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
         await m.edit({
           content: null,
-          embeds: [buildPoll1Embed(next, remaining)],
+          embeds: [buildPoll1Embed(next, next.poll1_deadline_ms)],
           components: poll1Rows(flowId, false),
         });
       } catch (err) {
@@ -753,10 +694,9 @@ async function handleVote(interaction: ButtonInteraction, ctx: BotContext): Prom
     if (ch?.isTextBased() && !ch.isDMBased() && state.poll2_message_id) {
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll2_message_id);
-        const remaining = Math.max(0, Math.ceil((state.poll2_deadline_ms - Date.now()) / 1000));
         await m.edit({
           content: null,
-          embeds: [buildPoll2Embed(next, remaining)],
+          embeds: [buildPoll2Embed(next, next.poll2_deadline_ms!)],
           components: poll2Rows(flowId, false),
         });
       } catch (err) {

@@ -55,3 +55,16 @@ export function clampTimeoutMs(ms: number): number {
   if (!Number.isFinite(ms) || ms <= 0) return 60_000;
   return Math.min(ms, DISCORD_TIMEOUT_MAX_MS);
 }
+
+/**
+ * 投票締切の1行（Embed 説明文用）。
+ * - 投票中: `<t:unix:R>` で残り時間風表示（Discord クライアントが更新）。
+ * - 締切後: `:R` は「1秒前」「2秒前」と増えるため、`pollEnded` 時は `<t:unix:T>` の静止時刻＋「終了」表記に切り替える。
+ */
+export function discordVoteDeadlineEmbedLine(deadlineMs: number, pollEnded: boolean): string {
+  const sec = Math.floor(deadlineMs / 1000);
+  if (pollEnded) {
+    return `**投票締切**: 終了（<t:${sec}:T>）`;
+  }
+  return `**投票締切**: <t:${sec}:R>`;
+}
