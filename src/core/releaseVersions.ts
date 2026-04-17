@@ -14,6 +14,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   enable_emoji: "0.1.0",
   stamp_rank: "0.1.0",
   change_prompt: "2.0.1",
+  mute: "2.0.1",
 };
 
 // プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER

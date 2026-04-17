@@ -185,6 +185,9 @@ const envSchema = z.object({
     // 複数候補があるときスコア最小の1件を選ぶ（先頭候補より全体の 5/7/5 近さを優先）
 
   SENRYU_BEST_CANDIDATE: z.preprocess(envFlagFalseByDefault, z.boolean()),
+    // go-haiku 相当（js-haiku）の find(5-7-5) と候補が一致する場合のみ採用（未設定・空は false）
+
+  SENRYU_JS_HAIKU_VERIFY_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
     // 川柳検出後に DeepSeek で候補を審査（未設定・空は false）
 
   SENRYU_AI_REVIEW_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),

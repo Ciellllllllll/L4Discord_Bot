@@ -18,6 +18,8 @@ import { deepseekChat } from "../features/ai/deepseek.js";
 import { AiQueryService, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
+import { startExecutionFlow } from "../features/execution/executionFlow.js";
+import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 const Q_COOLDOWN_MS = 15_000;
 const STUB = "この機能は準備中です。";
 
@@ -72,6 +74,7 @@ export async function handleSlashCommand(
     case "end_werewolfgame":
       return handleWerewolfEnd(interaction, ctx, member);
     case "処刑":
+      return handleExecutionSlash(interaction, ctx, member);
     case "タイムアウト延長":
       return handlePollSlash(interaction, ctx, member);
     case "disable_emoji":
@@ -82,6 +85,8 @@ export async function handleSlashCommand(
       return handleStampCount(interaction, ctx);
     case "stamp_ranking":
       return handleStampRanking(interaction, ctx);
+    case "mute":
+      return handleSenryuMute(interaction, ctx);
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
@@ -258,6 +263,14 @@ async function handleWerewolfEnd(
   });
 }
 
+async function handleExecutionSlash(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  _member: GuildMember | null,
+): Promise<void> {
+  await startExecutionFlow(interaction, ctx);
+}
+
 async function handlePollSlash(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
@@ -269,12 +282,8 @@ async function handlePollSlash(
   }
   const guildId = interaction.guildId!;
   const channelId = interaction.channelId!;
-  const kind = interaction.commandName === "処刑" ? "execution" : "timeout_extend";
-  let state: Record<string, unknown> = { created_by: interaction.user.id };
-  if (kind === "execution") {
-    const target = interaction.options.getUser("target", true);
-    state = { ...state, target_id: target.id };
-  }
+  const kind = "timeout_extend";
+  const state: Record<string, unknown> = { created_by: interaction.user.id };
   const id = randomUUID();
   await ctx.db
     .insertInto("polls")
@@ -362,4 +371,18 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
   }
   const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> — ${r.total}`);
   await interaction.reply({ content: lines.join("\n").slice(0, 2000), flags: MessageFlags.Ephemeral });
+}
+
+async function handleSenryuMute(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+  const channelId = interaction.channelId;
+  muteChannelForSenryu(channelId);
+  ctx.log.info(
+    { channelId, userId: interaction.user.id, command: "mute" },
+    "senryu: channel muted via slash command",
+  );
+  await interaction.reply({
+    content:
+      "このチャンネルでの川柳検出をオフにしました。メッセージの川柳は検出・返信されません。（親フォーラム／テキストチャンネルをミュートした場合は、その下のスレッドでも検出がスキップされます）",
+    flags: MessageFlags.Ephemeral,
+  });
 }

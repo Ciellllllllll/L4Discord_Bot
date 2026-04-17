@@ -56,7 +56,12 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
 
     new SlashCommandBuilder()
       .setName("change_prompt")
-      .setDescription("自分用の AI システムプロンプトを書き換えます（モーダルでテキストまたは .txt/.md を指定）")
+      .setDescription("自分用の AI システムプロンプトを書き換えます")
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("mute")
+      .setDescription("このチャンネル・スレッドでの川柳機能をオフにします")
       .toJSON(),
   ];
 }

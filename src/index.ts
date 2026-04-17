@@ -69,6 +69,7 @@ import { ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js
 import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
+import { onExecutionMessagePollMaybeFinalized } from "./features/execution/executionFlow.js";
 import { handlePrefixMessage } from "./message/prefixHandlers.js";
 import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
@@ -392,8 +393,16 @@ async function main(): Promise<void> {
     }
   });
 
-  client.on("messageUpdate", async (_old, message) => {
+  client.on("messageUpdate", async (oldMessage, newMessage) => {
     try {
+      if (newMessage.guildId === config.GUILD_ID && newMessage.author?.id === client.user?.id) {
+        await onExecutionMessagePollMaybeFinalized(oldMessage, newMessage, ctx);
+      }
+    } catch (err) {
+      log.error({ err }, "execution messageUpdate");
+    }
+    try {
+      const message = newMessage;
       if (!message.guildId || message.author?.bot) return;
       if (message.guildId !== config.GUILD_ID) return;
       const s = await getGuildSettingsData(db, message.guildId);
