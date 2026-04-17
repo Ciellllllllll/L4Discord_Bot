@@ -14,6 +14,7 @@ import {
 } from "./senryu.filters.js";
 import { buildSenryuAiReviewUserBlock, reviewSenryuCandidateWithAi } from "./senryu.aiReview.js";
 import { buildSenryuReviewContextExcerpt } from "./senryu.reviewContext.js";
+import { senryuCandidateMatchesJsHaiku575 } from "./senryu.jsHaikuVerify.js";
 import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
 import { replySenryu } from "./senryu.reply.js";
@@ -140,6 +141,13 @@ export async function runSenryuPipeline(
   });
   if (!candidate) {
     return false;
+  }
+
+  if (config.SENRYU_JS_HAIKU_VERIFY_ENABLED) {
+    if (!senryuCandidateMatchesJsHaiku575(tokens, candidate)) {
+      logSkip("js_haiku_mismatch");
+      return false;
+    }
   }
 
   if (config.SENRYU_AI_REVIEW_ENABLED) {

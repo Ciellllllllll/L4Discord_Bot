@@ -18,6 +18,7 @@ import {
 } from "./senryu.detector.js";
 import { deleteSenryu, saveSenryu } from "./senryu.repository.js";
 import { replySenryu } from "./senryu.reply.js";
+import { senryuCandidateMatchesJsHaiku575 } from "./senryu.jsHaikuVerify.js";
 import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { buildSenryuReviewContextExcerpt } from "./senryu.reviewContext.js";
 import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
@@ -90,6 +91,22 @@ async function run(): Promise<void> {
   assert.equal(first575?.formatted, all[0]?.formatted);
   assert.deepEqual(first575?.tokenSpan, { start: 0, end: 3 });
   assert.deepEqual(first575?.moraUsed, [5, 7, 5]);
+
+  const threePhraseHiraSurface = [
+    tok("あいうえお", "アイウエオ"),
+    tok("かきくけこあい", "カキクケコアイ"),
+    tok("さしすせそ", "サシスセソ"),
+  ];
+  const candJs = detectFirst575(threePhraseHiraSurface);
+  assert.ok(candJs);
+  assert.equal(senryuCandidateMatchesJsHaiku575(threePhraseHiraSurface, candJs), true);
+  assert.equal(
+    senryuCandidateMatchesJsHaiku575(threePhraseHiraSurface, {
+      ...candJs,
+      formatted: "ノノノ ノノノノノ ノノノ",
+    }),
+    false,
+  );
 
   const fourMora = "アイウエ";
   assert.equal(countMora(fourMora), 4);
