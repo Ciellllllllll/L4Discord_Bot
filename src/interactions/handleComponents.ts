@@ -50,6 +50,7 @@ import {
 } from "../features/appeals/appealHandlers.js";
 import { getDetecterService, DETECTER_REASON_INPUT_ID } from "../features/detecter/detecterService.js";
 import { handleExecutionFlowButton } from "../features/execution/executionFlow.js";
+import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
 import { parseCustomId } from "./parseCustomId.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
@@ -113,6 +114,7 @@ export async function handleDetecterButton(
 
 export async function routeButton(interaction: ButtonInteraction, ctx: BotContext): Promise<void> {
   if (await handleExecutionFlowButton(interaction, ctx)) return;
+  if (await handleTimeoutExtendFlowButton(interaction, ctx)) return;
   if (await handleAutoModRaidButton(interaction, ctx)) return;
   if (await handleReminderHubButton(interaction, ctx)) return;
   if (await handleAiHistoryClearButton(interaction, ctx)) return;

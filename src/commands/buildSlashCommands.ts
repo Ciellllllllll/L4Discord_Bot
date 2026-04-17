@@ -40,6 +40,7 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     new SlashCommandBuilder()
       .setName("タイムアウト延長")
       .setDescription("タイムアウト延長の投票フロー")
+      .addUserOption((o) => o.setName("target").setDescription("対象（タイムアウト中のユーザー）").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("disable_emoji")

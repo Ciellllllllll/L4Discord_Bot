@@ -3,13 +3,13 @@ import {
   ButtonBuilder,
   ButtonStyle,
   DiscordAPIError,
+  EmbedBuilder,
   MessageFlags,
-  PollLayoutType,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Guild,
+  type GuildMember,
   type Message,
-  type PartialMessage,
   type TextChannel,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
@@ -20,88 +20,42 @@ import {
   buildExecutionAuditReason,
   clampTimeoutMs,
   EXECUTION_FLOW_KIND,
-  EXECUTION_POLL_DURATION_HOURS,
-  EXEC_APPROVE_PREFIX,
-  EXEC_REJECT_PREFIX,
-  POLL1_LABELS,
-  POLL1_TIE_PRIORITY,
-  POLL2_DURATION_MS,
-  POLL2_LABELS,
-  POLL2_TIE_PRIORITY,
+  EXEC_APPROVAL_PREFIX,
+  EXEC_VOTE_PREFIX,
+  POLL1_KEYS,
+  POLL1_LABEL,
+  POLL2_CHOICE_TO_SECONDS,
+  POLL2_KEYS,
+  POLL2_LABEL,
 } from "./executionConstants.js";
-import type { ExecutionAction, ExecutionFlowState, ExecutionPhase } from "./executionFlow.types.js";
+import type { ExecutionAction, ExecutionFlowState } from "./executionFlow.types.js";
 import { parseExecutionFlowState } from "./executionFlow.types.js";
 
-function pollQuestion(text: string): { text: string } {
-  return { text };
+const voteRefreshLoops = new Map<string, ReturnType<typeof setInterval>>();
+const adminWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearVoteRefresh(flowId: string): void {
+  const id = voteRefreshLoops.get(flowId);
+  if (id) clearInterval(id);
+  voteRefreshLoops.delete(flowId);
 }
 
-function buildPoll1Payload() {
-  return {
-    question: pollQuestion("処刑内容を選んでください"),
-    answers: POLL1_LABELS.map((text) => ({ text })),
-    duration: EXECUTION_POLL_DURATION_HOURS,
-    allowMultiselect: false,
-    layoutType: PollLayoutType.Default,
-  };
+function clearAdminWait(flowId: string): void {
+  const t = adminWaitTimers.get(flowId);
+  if (t) clearTimeout(t);
+  adminWaitTimers.delete(flowId);
 }
 
-function buildPoll2Payload() {
-  return {
-    question: pollQuestion("タイムアウト時間を選んでください"),
-    answers: POLL2_LABELS.map((text) => ({ text })),
-    duration: EXECUTION_POLL_DURATION_HOURS,
-    allowMultiselect: false,
-    layoutType: PollLayoutType.Default,
-  };
-}
-
-export function pickWinningLabel(
-  message: Message,
-  candidateLabels: readonly string[],
-  tieBreakOrder: readonly string[],
-): string | null {
-  const poll = message.poll;
-  if (!poll?.resultsFinalized) return null;
-  const counts = new Map<string, number>();
-  for (const label of candidateLabels) counts.set(label, 0);
-  for (const ans of poll.answers.values()) {
-    const t = String(ans.text ?? "").trim();
-    if (counts.has(t)) counts.set(t, ans.voteCount);
-  }
-  let max = -1;
-  for (const v of counts.values()) {
-    if (v > max) max = v;
-  }
-  for (const label of tieBreakOrder) {
-    if ((counts.get(label) ?? 0) === max) return label;
-  }
-  return candidateLabels[0] ?? null;
+function memberHasRoleId(member: GuildMember, roleId: string): boolean {
+  const id = roleId.trim();
+  if (!id) return false;
+  return member.roles.cache.has(id);
 }
 
 function parsePollRowState(row: { state: unknown }): ExecutionFlowState | null {
   const raw = row.state as unknown;
   const obj = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
   return parseExecutionFlowState(obj);
-}
-
-export async function findOpenExecutionFlowByMessageId(
-  ctx: BotContext,
-  guildId: string,
-  messageId: string,
-): Promise<{ row: { id: string; guild_id: string; status: string; message_id: string | null }; state: ExecutionFlowState } | null> {
-  const row = await ctx.db
-    .selectFrom("polls")
-    .selectAll()
-    .where("guild_id", "=", guildId)
-    .where("kind", "=", EXECUTION_FLOW_KIND)
-    .where("status", "=", "open")
-    .where("message_id", "=", messageId)
-    .executeTakeFirst();
-  if (!row) return null;
-  const state = parsePollRowState(row);
-  if (!state) return null;
-  return { row, state };
 }
 
 export async function findOpenExecutionFlowById(
@@ -121,19 +75,16 @@ export async function findOpenExecutionFlowById(
   return { row, state };
 }
 
-async function saveFlowState(
+async function saveFullState(
   ctx: BotContext,
   flowId: string,
-  patch: Partial<ExecutionFlowState> & { phase?: ExecutionPhase },
+  state: ExecutionFlowState,
   messageId: string | null,
 ): Promise<void> {
-  const cur = await findOpenExecutionFlowById(ctx, flowId);
-  if (!cur) return;
-  const next: ExecutionFlowState = { ...cur.state, ...patch };
   await ctx.db
     .updateTable("polls")
     .set({
-      state: JSON.stringify(next) as unknown as Record<string, unknown>,
+      state: JSON.stringify(state) as unknown as Record<string, unknown>,
       message_id: messageId,
       updated_at: sqliteTimestamp() as unknown as Date,
     })
@@ -157,39 +108,446 @@ export async function deleteFlowMessagesQuietly(
   }
 }
 
-function labelToAction(label: string): ExecutionAction | null {
-  if (label === "タイムアウト") return "timeout";
-  if (label === "キック") return "kick";
-  if (label === "BAN") return "ban";
+function parseExecVote(customId: string): { flowId: string; choice: string } | null {
+  if (!customId.startsWith(EXEC_VOTE_PREFIX)) return null;
+  const rest = customId.slice(EXEC_VOTE_PREFIX.length);
+  const idx = rest.lastIndexOf(":");
+  if (idx <= 0) return null;
+  return { flowId: rest.slice(0, idx), choice: rest.slice(idx + 1) };
+}
+
+function parseExecApproval(customId: string): { flowId: string; action: "approve" | "deny" } | null {
+  if (!customId.startsWith(EXEC_APPROVAL_PREFIX)) return null;
+  const rest = customId.slice(EXEC_APPROVAL_PREFIX.length);
+  const idx = rest.lastIndexOf(":");
+  if (idx <= 0) return null;
+  const action = rest.slice(idx + 1);
+  if (action !== "approve" && action !== "deny") return null;
+  return { flowId: rest.slice(0, idx), action };
+}
+
+function tallyChoices(votes: Record<string, string>, keys: readonly string[]): Record<string, number> {
+  const c: Record<string, number> = {};
+  for (const k of keys) c[k] = 0;
+  for (const v of Object.values(votes)) {
+    if (v in c) c[v] = (c[v] ?? 0) + 1;
+  }
+  return c;
+}
+
+/** PublicExecution.winnerChoice と同様: 唯一の最多票がない場合は null */
+function pickSingleWinner(counts: Record<string, number>, keys: readonly string[]): string | null {
+  let max = -1;
+  const winners: string[] = [];
+  for (const k of keys) {
+    const n = counts[k] ?? 0;
+    if (n > max) {
+      max = n;
+      winners.length = 0;
+      winners.push(k);
+    } else if (n === max && n >= 0) {
+      winners.push(k);
+    }
+  }
+  if (max <= 0 || winners.length !== 1) return null;
+  return winners[0] ?? null;
+}
+
+function choiceToAction1(c: string): ExecutionAction | null {
+  if (c === "1") return "timeout";
+  if (c === "2") return "kick";
+  if (c === "3") return "ban";
   return null;
 }
 
-async function postAdminRequest(
+/** 処刑フロー第1投票（処刑内容）— タイムアウト延長フローと同様に Embed で表記 */
+function buildPoll1Embed(state: ExecutionFlowState, remainingSec: number): EmbedBuilder {
+  const counts = tallyChoices(state.votes_poll1, POLL1_KEYS);
+  const lines = POLL1_KEYS.map((k) => `**${k}.** ${POLL1_LABEL[k]} — ${counts[k] ?? 0} 票`);
+  return new EmbedBuilder()
+    .setTitle("処刑内容の投票")
+    .setDescription(
+      [
+        `対象: <@${state.target_id}>`,
+        "",
+        "**投票先（ボタン 1〜3）**",
+        ...lines,
+        "",
+        `**残り時間**: **${remainingSec}** 秒`,
+      ].join("\n"),
+    )
+    .setColor(0x3498db)
+    .setTimestamp(new Date());
+}
+
+/** 処刑フロー第2投票（タイムアウト時間） */
+function buildPoll2Embed(state: ExecutionFlowState, remainingSec: number): EmbedBuilder {
+  const counts = tallyChoices(state.votes_poll2, POLL2_KEYS);
+  const lines = POLL2_KEYS.map((k) => `**${k}.** ${POLL2_LABEL[k]} — ${counts[k] ?? 0} 票`);
+  return new EmbedBuilder()
+    .setTitle("タイムアウト時間の投票")
+    .setDescription(
+      [
+        `対象: <@${state.target_id}>`,
+        "",
+        "**投票先（ボタン 1〜4）**",
+        ...lines,
+        "",
+        `**残り時間**: **${remainingSec}** 秒`,
+      ].join("\n"),
+    )
+    .setColor(0x9b59b6)
+    .setTimestamp(new Date());
+}
+
+function poll1Rows(flowId: string, disabled: boolean): ActionRowBuilder<ButtonBuilder>[] {
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...POLL1_KEYS.map((k) =>
+      new ButtonBuilder()
+        .setCustomId(`${EXEC_VOTE_PREFIX}${flowId}:${k}`)
+        .setLabel(k)
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled),
+    ),
+  );
+  return [row];
+}
+
+function poll2Rows(flowId: string, disabled: boolean): ActionRowBuilder<ButtonBuilder>[] {
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...POLL2_KEYS.map((k) =>
+      new ButtonBuilder()
+        .setCustomId(`${EXEC_VOTE_PREFIX}${flowId}:${k}`)
+        .setLabel(k)
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled),
+    ),
+  );
+  return [row];
+}
+
+function approvalRows(flowId: string, disabled: boolean): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${EXEC_APPROVAL_PREFIX}${flowId}:approve`)
+        .setLabel("承認")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disabled),
+      new ButtonBuilder()
+        .setCustomId(`${EXEC_APPROVAL_PREFIX}${flowId}:deny`)
+        .setLabel("非承認")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(disabled),
+    ),
+  ];
+}
+
+async function editMessagesStopped(
   ctx: BotContext,
   channel: TextChannel,
+  messageIds: (string | null | undefined)[],
+  heading: string,
+): Promise<void> {
+  const content = `# **${heading}**`;
+  for (const mid of messageIds) {
+    if (!mid) continue;
+    try {
+      const m = await channel.messages.fetch(mid).catch(() => null);
+      if (m) await m.edit({ content, embeds: [], components: [] }).catch(() => undefined);
+    } catch (err) {
+      ctx.log.warn({ err, mid }, "execution: edit stopped message failed");
+    }
+  }
+}
+
+async function abortFlow(
+  ctx: BotContext,
   flowId: string,
-): Promise<Message | null> {
+  state: ExecutionFlowState,
+  heading: string,
+): Promise<void> {
+  clearVoteRefresh(flowId);
+  clearAdminWait(flowId);
+  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
+  if (ch?.isTextBased()) {
+    await editMessagesStopped(ctx, ch, [state.precheck_message_id, state.poll1_message_id, state.poll2_message_id, state.admin_message_id], heading);
+  }
+  await ctx.db
+    .updateTable("polls")
+    .set({
+      status: "cancelled",
+      state: JSON.stringify({ ...state, phase: "cancelled" }) as unknown as Record<string, unknown>,
+      updated_at: sqliteTimestamp() as unknown as Date,
+    })
+    .where("id", "=", flowId)
+    .execute();
+}
+
+function scheduleAdminWait(ctx: BotContext, flowId: string, expectedPhase: "precheck_pending" | "admin_pending"): void {
+  clearAdminWait(flowId);
+  const ms = ctx.config.EXEC_ADMIN_WAIT_SECONDS * 1000;
+  const h = setTimeout(() => {
+    void (async () => {
+      const found = await findOpenExecutionFlowById(ctx, flowId);
+      if (!found || found.state.phase !== expectedPhase || found.state.admin_button_fired) return;
+      ctx.log.info({ flowId, expectedPhase }, "execution: admin wait timeout");
+      await abortFlow(ctx, flowId, found.state, "処刑フロー: 承認がタイムアウトしました");
+    })().catch((err) => ctx.log.error({ err, flowId }, "execution: admin timeout handler failed"));
+  }, ms);
+  adminWaitTimers.set(flowId, h);
+}
+
+function startVoteRefresh(
+  ctx: BotContext,
+  flowId: string,
+  kind: "poll1" | "poll2",
+): void {
+  clearVoteRefresh(flowId);
+  const id = setInterval(() => {
+    void (async () => {
+      const found = await findOpenExecutionFlowById(ctx, flowId);
+      if (!found) {
+        clearVoteRefresh(flowId);
+        return;
+      }
+      const want = kind === "poll1" ? "poll1_pending" : "poll2_pending";
+      if (found.state.phase !== want) {
+        clearVoteRefresh(flowId);
+        return;
+      }
+      const ch = (await ctx.client.channels.fetch(found.state.channel_id).catch(() => null)) as TextChannel | null;
+      if (!ch?.isTextBased()) return;
+      const mid = kind === "poll1" ? found.state.poll1_message_id : found.state.poll2_message_id;
+      if (!mid) return;
+      const m = await ch.messages.fetch(mid).catch(() => null);
+      if (!m) return;
+      const deadline = kind === "poll1" ? found.state.poll1_deadline_ms : found.state.poll2_deadline_ms;
+      if (!deadline) return;
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      const embed =
+        kind === "poll1"
+          ? buildPoll1Embed(found.state, remaining)
+          : buildPoll2Embed(found.state, remaining);
+      await m
+        .edit({
+          content: null,
+          embeds: [embed],
+          components: kind === "poll1" ? poll1Rows(flowId, false) : poll2Rows(flowId, false),
+        })
+        .catch(() => undefined);
+    })().catch(() => undefined);
+  }, 1000);
+  voteRefreshLoops.set(flowId, id);
+}
+
+async function postPrecheckRequest(ctx: BotContext, channel: TextChannel, flowId: string): Promise<Message | null> {
   const adminRoleId = ctx.config.ADMIN_ROLE_ID.trim();
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`${EXEC_APPROVE_PREFIX}${flowId}`)
-      .setLabel("承認")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`${EXEC_REJECT_PREFIX}${flowId}`)
-      .setLabel("非承認")
-      .setStyle(ButtonStyle.Danger),
-  );
   try {
     return await channel.send({
-      content: `<@&${adminRoleId}>\n> 管理者へのお願い。処刑フローを完了するため承認または非承認ボタンを押下して下さい`,
-      components: [row],
+      content: `<@&${adminRoleId}> 対象に処刑者ロールがありません。続行するには管理者の承認が必要です。`,
+      components: approvalRows(flowId, false),
+      allowedMentions: { roles: [adminRoleId] },
+    });
+  } catch (err) {
+    ctx.log.warn({ err, flowId }, "execution: precheck send failed");
+    return null;
+  }
+}
+
+async function postAdminRequest(ctx: BotContext, channel: TextChannel, flowId: string, body: string): Promise<Message | null> {
+  const adminRoleId = ctx.config.ADMIN_ROLE_ID.trim();
+  try {
+    return await channel.send({
+      content: `${body}\n<@&${adminRoleId}>`,
+      components: approvalRows(flowId, false),
       allowedMentions: { roles: [adminRoleId] },
     });
   } catch (err) {
     ctx.log.warn({ err, flowId }, "execution: admin request send failed");
     return null;
   }
+}
+
+async function beginPoll1(ctx: BotContext, flowId: string, state: ExecutionFlowState): Promise<void> {
+  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
+  if (!ch?.isTextBased()) return;
+
+  const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
+  const deadline = Date.now() + voteMs;
+  const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  const embed = buildPoll1Embed({ ...state, poll1_deadline_ms: deadline, votes_poll1: {} }, remaining);
+
+  let msg: Message;
+  try {
+    msg = await ch.send({
+      embeds: [embed],
+      components: poll1Rows(flowId, false),
+      allowedMentions: { users: [state.target_id] },
+    });
+  } catch (err) {
+    ctx.log.error({ err, flowId }, "execution: poll1 send failed");
+    await abortFlow(ctx, flowId, state, "処刑フロー: 投票メッセージの送信に失敗しました");
+    return;
+  }
+
+  const next: ExecutionFlowState = {
+    ...state,
+    phase: "poll1_pending",
+    poll1_message_id: msg.id,
+    poll1_deadline_ms: deadline,
+    votes_poll1: {},
+  };
+  await saveFullState(ctx, flowId, next, msg.id);
+  startVoteRefresh(ctx, flowId, "poll1");
+  setTimeout(() => {
+    void transitionPoll1ToNext(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll1 finalize failed"));
+  }, voteMs);
+}
+
+async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<void> {
+  const found = await findOpenExecutionFlowById(ctx, flowId);
+  if (!found || found.state.phase !== "poll1_pending") return;
+
+  const { state } = found;
+  clearVoteRefresh(flowId);
+
+  const counts = tallyChoices(state.votes_poll1, POLL1_KEYS);
+  const winner = pickSingleWinner(counts, [...POLL1_KEYS]);
+  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
+  if (!ch?.isTextBased()) return;
+
+  if (state.poll1_message_id) {
+    try {
+      const m = await ch.messages.fetch(state.poll1_message_id).catch(() => null);
+      if (m) {
+        const remaining = 0;
+        await m.edit({
+          content: null,
+          embeds: [buildPoll1Embed(state, remaining)],
+          components: poll1Rows(flowId, true),
+        });
+      }
+    } catch {
+      /* noop */
+    }
+  }
+
+  if (winner == null) {
+    await abortFlow(ctx, flowId, state, "処刑フロー: 投票の最多票が確定しませんでした");
+    return;
+  }
+
+  const action = choiceToAction1(winner);
+  if (!action) return;
+
+  if (action === "timeout") {
+    const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
+    const deadline = Date.now() + voteMs;
+    const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    const poll2Embed = buildPoll2Embed(
+      { ...state, poll2_deadline_ms: deadline, votes_poll2: {}, phase: "poll2_pending" },
+      remaining,
+    );
+    let msg: Message;
+    try {
+      msg = await ch.send({
+        embeds: [poll2Embed],
+        components: poll2Rows(flowId, false),
+        allowedMentions: { users: [state.target_id] },
+      });
+    } catch (err) {
+      ctx.log.error({ err, flowId }, "execution: poll2 send failed");
+      await abortFlow(ctx, flowId, state, "処刑フロー: タイムアウト時間投票の送信に失敗しました");
+      return;
+    }
+
+    const next: ExecutionFlowState = {
+      ...state,
+      phase: "poll2_pending",
+      resolved_action: "timeout",
+      poll2_message_id: msg.id,
+      poll2_deadline_ms: deadline,
+      votes_poll2: {},
+    };
+    await saveFullState(ctx, flowId, next, msg.id);
+    startVoteRefresh(ctx, flowId, "poll2");
+    setTimeout(() => {
+      void transitionPoll2ToAdmin(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll2 finalize failed"));
+    }, voteMs);
+    return;
+  }
+
+  const targetName = `<@${state.target_id}>`;
+  const detail = action === "kick" ? "キック" : "BAN";
+  const adminMsg = await postAdminRequest(
+    ctx,
+    ch,
+    flowId,
+    `処刑の最終承認: ${targetName} → ${detail}`,
+  );
+  const next: ExecutionFlowState = {
+    ...state,
+    phase: "admin_pending",
+    resolved_action: action,
+    duration_seconds: null,
+    admin_message_id: adminMsg?.id ?? null,
+  };
+  await saveFullState(ctx, flowId, next, null);
+  scheduleAdminWait(ctx, flowId, "admin_pending");
+}
+
+async function transitionPoll2ToAdmin(ctx: BotContext, flowId: string): Promise<void> {
+  const found = await findOpenExecutionFlowById(ctx, flowId);
+  if (!found || found.state.phase !== "poll2_pending") return;
+
+  const { state } = found;
+  clearVoteRefresh(flowId);
+
+  const counts = tallyChoices(state.votes_poll2, POLL2_KEYS);
+  const winner = pickSingleWinner(counts, [...POLL2_KEYS]);
+  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
+  if (!ch?.isTextBased()) return;
+
+  if (state.poll2_message_id) {
+    try {
+      const m = await ch.messages.fetch(state.poll2_message_id).catch(() => null);
+      if (m) {
+        await m.edit({
+          content: null,
+          embeds: [buildPoll2Embed(state, 0)],
+          components: poll2Rows(flowId, true),
+        });
+      }
+    } catch {
+      /* noop */
+    }
+  }
+
+  if (winner == null) {
+    await abortFlow(ctx, flowId, state, "処刑フロー: タイムアウト時間の最多票が確定しませんでした");
+    return;
+  }
+
+  const sec = POLL2_CHOICE_TO_SECONDS[winner as keyof typeof POLL2_CHOICE_TO_SECONDS];
+  const durationSeconds = sec ?? 60;
+  const label = POLL2_LABEL[winner as keyof typeof POLL2_LABEL] ?? winner;
+
+  const adminMsg = await postAdminRequest(
+    ctx,
+    ch,
+    flowId,
+    `処刑の最終承認: <@${state.target_id}> → タイムアウト（${label}）`,
+  );
+  const next: ExecutionFlowState = {
+    ...state,
+    phase: "admin_pending",
+    resolved_action: "timeout",
+    duration_seconds: durationSeconds,
+    admin_message_id: adminMsg?.id ?? null,
+  };
+  await saveFullState(ctx, flowId, next, null);
+  scheduleAdminWait(ctx, flowId, "admin_pending");
 }
 
 export async function startExecutionFlow(
@@ -204,7 +562,13 @@ export async function startExecutionFlow(
     return;
   }
 
-  let invokerMember;
+  const execCh = ctx.config.EXEC_CHANNEL_ID?.trim();
+  if (execCh && interaction.channelId !== execCh) {
+    await interaction.editReply({ content: "このコマンドは指定チャンネルでのみ使用できます。" });
+    return;
+  }
+
+  let invokerMember: GuildMember;
   try {
     invokerMember = await guild.members.fetch(interaction.user.id);
   } catch {
@@ -218,7 +582,7 @@ export async function startExecutionFlow(
 
   const targetUser = interaction.options.getUser("target", true);
 
-  let targetMember;
+  let targetMember: GuildMember;
   try {
     targetMember = await guild.members.fetch(targetUser.id);
   } catch {
@@ -246,16 +610,24 @@ export async function startExecutionFlow(
   const textChannel = channel as TextChannel;
 
   const flowId = randomUUID();
-  const initialState: ExecutionFlowState = {
-    phase: "poll1_pending",
+  const executorRole = ctx.config.EXECUTOR_ROLE_ID?.trim();
+  const needsPrecheck = Boolean(executorRole && !memberHasRoleId(targetMember, executorRole));
+
+  const baseState: ExecutionFlowState = {
+    phase: needsPrecheck ? "precheck_pending" : "poll1_pending",
     invoker_id: interaction.user.id,
     target_id: targetUser.id,
     channel_id: textChannel.id,
-    poll1_message_id: "",
+    precheck_message_id: null,
+    poll1_message_id: null,
     poll2_message_id: null,
+    votes_poll1: {},
+    votes_poll2: {},
+    poll1_deadline_ms: 0,
+    poll2_deadline_ms: null,
     admin_message_id: null,
     resolved_action: null,
-    duration_ms: null,
+    duration_seconds: null,
     admin_button_fired: false,
   };
 
@@ -268,163 +640,134 @@ export async function startExecutionFlow(
       message_id: null,
       kind: EXECUTION_FLOW_KIND,
       status: "open",
-      state: JSON.stringify(initialState) as unknown as Record<string, unknown>,
+      state: JSON.stringify(baseState) as unknown as Record<string, unknown>,
       ends_at: null,
       created_at: sqliteTimestamp() as unknown as Date,
       updated_at: sqliteTimestamp() as unknown as Date,
     })
     .execute();
 
-  let pollMsg: Message;
-  try {
-    pollMsg = await textChannel.send({
-      content: `<@${targetUser.id}> への処刑投票です。`,
-      poll: buildPoll1Payload(),
-      allowedMentions: { users: [targetUser.id] },
-    });
-  } catch (err) {
-    ctx.log.error({ err, flowId }, "execution: poll1 send failed");
-    await ctx.db.deleteFrom("polls").where("id", "=", flowId).execute();
-    await interaction.editReply({ content: "投票メッセージの送信に失敗しました。" });
+  if (needsPrecheck) {
+    const pre = await postPrecheckRequest(ctx, textChannel, flowId);
+    const st: ExecutionFlowState = {
+      ...baseState,
+      precheck_message_id: pre?.id ?? null,
+    };
+    await saveFullState(ctx, flowId, st, null);
+    scheduleAdminWait(ctx, flowId, "precheck_pending");
+    await interaction.editReply({ content: "管理者の事前承認を待っています。" });
     return;
   }
 
-  const nextState: ExecutionFlowState = {
-    ...initialState,
-    poll1_message_id: pollMsg.id,
-  };
-  await ctx.db
-    .updateTable("polls")
-    .set({
-      message_id: pollMsg.id,
-      state: JSON.stringify(nextState) as unknown as Record<string, unknown>,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .where("id", "=", flowId)
-    .execute();
-
+  await beginPoll1(ctx, flowId, baseState);
   await interaction.editReply({ content: "処刑投票を開始しました。" });
 }
 
-export async function onExecutionMessagePollMaybeFinalized(
-  oldMessage: Message | PartialMessage,
-  newMessage: Message | PartialMessage,
-  ctx: BotContext,
-): Promise<void> {
-  let newM = newMessage;
-  if (newM.partial) {
-    try {
-      newM = await newM.fetch();
-    } catch {
-      return;
-    }
-  }
-  const botId = ctx.client.user?.id;
-  if (!botId || newM.author.id !== botId) return;
-  if (newM.guildId !== ctx.config.GUILD_ID) return;
+async function handleVote(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+  const parsed = parseExecVote(interaction.customId);
+  if (!parsed) return false;
 
-  let oldM = oldMessage;
-  if (oldM.partial) {
-    try {
-      oldM = await oldM.fetch();
-    } catch {
-      return;
-    }
+  if (interaction.user.bot) {
+    await interaction.reply({ content: "BOT は投票できません。", flags: MessageFlags.Ephemeral });
+    return true;
   }
 
-  if (oldM.poll?.resultsFinalized === true) return;
-  if (!newM.poll?.resultsFinalized) {
-    try {
-      newM = await newM.fetch(true);
-    } catch {
-      return;
-    }
+  const { flowId, choice } = parsed;
+  const found = await findOpenExecutionFlowById(ctx, flowId);
+  if (!found) {
+    await interaction.reply({ content: "この投票は終了しているか、無効です。", flags: MessageFlags.Ephemeral });
+    return true;
   }
-  if (!newM.poll?.resultsFinalized) return;
 
-  const found = await findOpenExecutionFlowByMessageId(ctx, newM.guildId!, newM.id);
-  if (!found) return;
+  const { state } = found;
+  if (interaction.channelId !== state.channel_id || interaction.guildId !== found.row.guild_id) {
+    await interaction.reply({ content: "このチャンネルでは投票できません。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
 
-  const { row, state } = found;
-  if (state.admin_button_fired) return;
-
-  if (state.phase === "poll1_pending" && state.poll1_message_id === newM.id) {
-    const winner = pickWinningLabel(newM, POLL1_LABELS as unknown as string[], POLL1_TIE_PRIORITY);
-    if (!winner) {
-      ctx.log.warn({ flowId: row.id }, "execution: poll1 no winner");
-      return;
+  if (state.phase === "poll1_pending") {
+    if (!POLL1_KEYS.includes(choice as (typeof POLL1_KEYS)[number])) {
+      await interaction.reply({ content: "無効な選択です。", flags: MessageFlags.Ephemeral });
+      return true;
     }
-    const action = labelToAction(winner);
-    if (!action) return;
+    if (Date.now() > state.poll1_deadline_ms) {
+      await interaction.reply({ content: "締切を過ぎています。", flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    const prev = state.votes_poll1[interaction.user.id];
+    const votes = { ...state.votes_poll1, [interaction.user.id]: choice } as ExecutionFlowState["votes_poll1"];
+    const next: ExecutionFlowState = { ...state, votes_poll1: votes };
+    await saveFullState(ctx, flowId, next, state.poll1_message_id);
 
-    const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
-    if (!ch?.isTextBased()) return;
+    const label = POLL1_LABEL[choice as keyof typeof POLL1_LABEL];
+    const text =
+      prev === undefined
+        ? "投票しました。"
+        : prev === choice
+          ? `既に投票先は ${label} です。`
+          : `投票先を ${label} に変更しました。`;
+    await interaction.reply({ content: text, flags: MessageFlags.Ephemeral });
 
-    if (action === "timeout") {
-      let poll2: Message;
+    const ch = interaction.channel;
+    if (ch?.isTextBased() && !ch.isDMBased() && state.poll1_message_id) {
       try {
-        poll2 = await ch.send({
-          content: `<@${state.target_id}> のタイムアウト時間を選んでください。`,
-          poll: buildPoll2Payload(),
-          allowedMentions: { users: [state.target_id] },
+        const m = await (ch as TextChannel).messages.fetch(state.poll1_message_id);
+        const deadline = state.poll1_deadline_ms;
+        const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        await m.edit({
+          content: null,
+          embeds: [buildPoll1Embed(next, remaining)],
+          components: poll1Rows(flowId, false),
         });
       } catch (err) {
-        ctx.log.error({ err, flowId: row.id }, "execution: poll2 send failed");
-        return;
+        ctx.log.warn({ err, flowId }, "execution: poll1 edit failed");
       }
-      await saveFlowState(
-        ctx,
-        row.id,
-        {
-          phase: "poll2_pending",
-          resolved_action: "timeout",
-          poll2_message_id: poll2.id,
-        },
-        poll2.id,
-      );
-      ctx.log.info({ flowId: row.id }, "execution: transitioned poll1 -> poll2");
-      return;
     }
-
-    const adminMsg = await postAdminRequest(ctx, ch, row.id);
-    await saveFlowState(
-      ctx,
-      row.id,
-      {
-        phase: "admin_pending",
-        resolved_action: action,
-        duration_ms: null,
-        admin_message_id: adminMsg?.id ?? null,
-      },
-      null,
-    );
-    ctx.log.info({ flowId: row.id, action }, "execution: transitioned poll1 -> admin (kick/ban)");
-    return;
+    return true;
   }
 
-  if (state.phase === "poll2_pending" && state.poll2_message_id === newM.id) {
-    const winner = pickWinningLabel(newM, POLL2_LABELS as unknown as string[], POLL2_TIE_PRIORITY);
-    if (!winner) return;
-    const rawMs = POLL2_DURATION_MS[winner];
-    const durationMs = rawMs != null ? clampTimeoutMs(rawMs) : clampTimeoutMs(60_000);
+  if (state.phase === "poll2_pending") {
+    if (!POLL2_KEYS.includes(choice as (typeof POLL2_KEYS)[number])) {
+      await interaction.reply({ content: "無効な選択です。", flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    if (!state.poll2_deadline_ms || Date.now() > state.poll2_deadline_ms) {
+      await interaction.reply({ content: "締切を過ぎています。", flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    const prev = state.votes_poll2[interaction.user.id];
+    const votes = { ...state.votes_poll2, [interaction.user.id]: choice } as ExecutionFlowState["votes_poll2"];
+    const next: ExecutionFlowState = { ...state, votes_poll2: votes };
+    await saveFullState(ctx, flowId, next, state.poll2_message_id);
 
-    const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
-    if (!ch?.isTextBased()) return;
+    const label = POLL2_LABEL[choice as keyof typeof POLL2_LABEL];
+    const text =
+      prev === undefined
+        ? "投票しました。"
+        : prev === choice
+          ? `既に投票先は ${label} です。`
+          : `投票先を ${label} に変更しました。`;
+    await interaction.reply({ content: text, flags: MessageFlags.Ephemeral });
 
-    const adminMsg = await postAdminRequest(ctx, ch, row.id);
-    await saveFlowState(
-      ctx,
-      row.id,
-      {
-        phase: "admin_pending",
-        resolved_action: "timeout",
-        duration_ms: durationMs,
-        admin_message_id: adminMsg?.id ?? null,
-      },
-      null,
-    );
-    ctx.log.info({ flowId: row.id, durationMs }, "execution: transitioned poll2 -> admin");
+    const ch = interaction.channel;
+    if (ch?.isTextBased() && !ch.isDMBased() && state.poll2_message_id) {
+      try {
+        const m = await (ch as TextChannel).messages.fetch(state.poll2_message_id);
+        const remaining = Math.max(0, Math.ceil((state.poll2_deadline_ms - Date.now()) / 1000));
+        await m.edit({
+          content: null,
+          embeds: [buildPoll2Embed(next, remaining)],
+          components: poll2Rows(flowId, false),
+        });
+      } catch (err) {
+        ctx.log.warn({ err, flowId }, "execution: poll2 edit failed");
+      }
+    }
+    return true;
   }
+
+  await interaction.reply({ content: "この投票は終了しています。", flags: MessageFlags.Ephemeral });
+  return true;
 }
 
 function actionLabelJa(action: ExecutionAction): string {
@@ -433,9 +776,8 @@ function actionLabelJa(action: ExecutionAction): string {
   return "BAN";
 }
 
-function durationLabelFromMs(ms: number | null): string {
-  if (ms == null) return "";
-  const sec = Math.floor(ms / 1000);
+function durationLabelFromSeconds(sec: number | null): string {
+  if (sec == null) return "";
   if (sec < 120) return `${sec}秒`;
   if (sec < 3600) return `${Math.floor(sec / 60)}分`;
   if (sec < 86400) return `${Math.floor(sec / 3600)}時間`;
@@ -443,15 +785,28 @@ function durationLabelFromMs(ms: number | null): string {
   return `${Math.floor(sec / (86400 * 7))}週間`;
 }
 
+/** 監査・キック/BAN/タイムアウト理由・Detecter 通知に渡す日本語の処罰内容（BOT が自動生成） */
+function buildPunishmentDetailJa(state: ExecutionFlowState): string {
+  const act = state.resolved_action;
+  if (!act) return "処罰";
+  if (act === "timeout") {
+    const sec = state.duration_seconds;
+    if (sec == null) return "タイムアウト";
+    return `タイムアウト（${durationLabelFromSeconds(sec)}）`;
+  }
+  if (act === "kick") return "キック";
+  return "BAN";
+}
+
 async function carryOutPunishment(
   guild: Guild,
   targetId: string,
   action: ExecutionAction,
-  durationMs: number | null,
+  durationSeconds: number | null,
   reason: string,
   ctx: BotContext,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  let member;
+  let member: GuildMember;
   try {
     member = await guild.members.fetch(targetId);
   } catch {
@@ -460,7 +815,8 @@ async function carryOutPunishment(
 
   try {
     if (action === "timeout") {
-      const ms = clampTimeoutMs(durationMs ?? 60_000);
+      const sec = durationSeconds ?? 60;
+      const ms = clampTimeoutMs(sec * 1000);
       await member.timeout(ms, reason);
     } else if (action === "kick") {
       await member.kick(reason);
@@ -477,25 +833,50 @@ async function carryOutPunishment(
   }
 }
 
-export async function handleExecutionFlowButton(
-  interaction: ButtonInteraction,
-  ctx: BotContext,
-): Promise<boolean> {
-  const id = interaction.customId;
-  const approve = id.startsWith(EXEC_APPROVE_PREFIX);
-  const reject = id.startsWith(EXEC_REJECT_PREFIX);
-  if (!approve && !reject) return false;
+async function handleApproval(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+  const parsed = parseExecApproval(interaction.customId);
+  if (!parsed) return false;
 
-  const flowId = id.slice((approve ? EXEC_APPROVE_PREFIX : EXEC_REJECT_PREFIX).length);
-  if (!flowId) return false;
-
+  const { flowId, action } = parsed;
   const found = await findOpenExecutionFlowById(ctx, flowId);
-  if (!found || found.row.status !== "open") {
+  if (!found) {
     await interaction.reply({ content: "このフローは期限切れか、既に処理済みです。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
   const { row, state } = found;
+  const guild = interaction.guild;
+  if (!guild || interaction.channelId !== state.channel_id || interaction.guildId !== row.guild_id) {
+    await interaction.reply({ content: "このチャンネルでは操作できません。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
+
+  let operatorMember: GuildMember;
+  try {
+    operatorMember = await guild.members.fetch(interaction.user.id);
+  } catch {
+    await interaction.reply({ content: "メンバー情報を取得できませんでした。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
+
+  if (!isAdmin(operatorMember, ctx.config)) {
+    await interaction.reply({ content: "管理者のみ操作できます。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
+
+  if (state.phase === "precheck_pending") {
+    await interaction.update({ components: approvalRows(flowId, true) }).catch(() => undefined);
+    clearAdminWait(flowId);
+    if (action === "deny") {
+      await abortFlow(ctx, flowId, state, "処刑フロー: 事前承認が拒否されました");
+      return true;
+    }
+    const next: ExecutionFlowState = { ...state, phase: "poll1_pending", precheck_message_id: state.precheck_message_id };
+    await saveFullState(ctx, flowId, next, null);
+    await beginPoll1(ctx, flowId, next);
+    return true;
+  }
+
   if (state.phase !== "admin_pending") {
     await interaction.reply({ content: "このフローはこの操作の段階ではありません。", flags: MessageFlags.Ephemeral });
     return true;
@@ -505,102 +886,54 @@ export async function handleExecutionFlowButton(
     return true;
   }
 
-  const guildForMember = interaction.guild;
-  if (!guildForMember) {
-    await interaction.reply({ content: "サーバー内でのみ操作できます。", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-  let operatorMember;
-  try {
-    operatorMember = await guildForMember.members.fetch(interaction.user.id);
-  } catch {
-    await interaction.reply({ content: "メンバー情報を取得できませんでした。", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-  if (!isAdmin(operatorMember, ctx.config)) {
-    await interaction.reply({ content: "管理者のみ操作できます。", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-
-  if (interaction.channelId !== state.channel_id || interaction.guildId !== row.guild_id) {
-    await interaction.reply({ content: "このチャンネルでは操作できません。", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-
-  await interaction.deferUpdate();
+  await interaction.update({ components: approvalRows(flowId, true) }).catch(() => undefined);
+  clearAdminWait(flowId);
 
   const approverId = interaction.user.id;
+  const textChannel = interaction.channel as TextChannel;
 
-  const guild = interaction.guild;
-  if (!guild) return true;
-
-  const ch = interaction.channel;
-  if (!ch?.isTextBased() || ch.isDMBased()) return true;
-  const textChannel = ch as TextChannel;
-
-  const idsToDelete = [state.poll1_message_id, state.poll2_message_id, state.admin_message_id].filter(
+  const idsToDelete = [state.precheck_message_id, state.poll1_message_id, state.poll2_message_id, state.admin_message_id].filter(
     (x): x is string => Boolean(x),
   );
 
-  if (reject) {
+  const nextFired: ExecutionFlowState = { ...state, admin_button_fired: true };
+
+  if (action === "deny") {
     try {
       await textChannel.send({ content: "処刑が非承認されたため、中止します" });
     } catch (err) {
       ctx.log.warn({ err, flowId }, "execution: abort message failed");
     }
-
     await deleteFlowMessagesQuietly(ctx, textChannel, idsToDelete, "reject");
-
     await ctx.db
       .updateTable("polls")
       .set({
         status: "cancelled",
-        state: JSON.stringify({
-          ...state,
-          phase: "cancelled",
-          admin_button_fired: true,
-        }) as unknown as Record<string, unknown>,
+        state: JSON.stringify({ ...nextFired, phase: "cancelled" }) as unknown as Record<string, unknown>,
         updated_at: sqliteTimestamp() as unknown as Date,
       })
       .where("id", "=", flowId)
       .execute();
-
-    ctx.log.info({ flowId, approverId }, "execution: rejected");
+    ctx.log.info({ flowId, approverId }, "execution: final deny");
     return true;
   }
 
-  const action = state.resolved_action;
-  if (!action) {
+  const act = state.resolved_action;
+  if (!act) {
     await ctx.db
       .updateTable("polls")
-      .set({
-        status: "cancelled",
-        updated_at: sqliteTimestamp() as unknown as Date,
-      })
+      .set({ status: "cancelled", updated_at: sqliteTimestamp() as unknown as Date })
       .where("id", "=", flowId)
       .execute();
     return true;
   }
 
-  if (state.admin_message_id) {
-    try {
-      const adm = await textChannel.messages.fetch(state.admin_message_id).catch(() => null);
-      if (adm) {
-        await adm.edit({
-          content: `<@${approverId}> が承認しました。`,
-          components: [],
-        });
-      }
-    } catch {
-      /* noop */
-    }
-  }
+  const reason = buildExecutionAuditReason(approverId, buildPunishmentDetailJa(state));
+  const durationSec = state.duration_seconds;
+  const result = await carryOutPunishment(guild, state.target_id, act, durationSec, reason, ctx);
 
-  const reason = buildExecutionAuditReason(approverId);
-  const result = await carryOutPunishment(guild, state.target_id, action, state.duration_ms, reason, ctx);
-
-  const actionJa = actionLabelJa(action);
-  const durJa = action === "timeout" ? `（${durationLabelFromMs(state.duration_ms)}）` : "";
+  const actionJa = actionLabelJa(act);
+  const durJa = act === "timeout" ? `（${durationLabelFromSeconds(durationSec)}）` : "";
 
   if (result.ok) {
     const line = `# <@${state.target_id}> を **${actionJa}${durJa}** で処刑しました`;
@@ -614,9 +947,7 @@ export async function handleExecutionFlowButton(
     }
   } else {
     try {
-      await textChannel.send({
-        content: `処刑の実行に失敗しました: ${result.message}`,
-      });
+      await textChannel.send({ content: `処刑の実行に失敗しました: ${result.message}` });
     } catch (err) {
       ctx.log.warn({ err, flowId }, "execution: error message failed");
     }
@@ -628,16 +959,25 @@ export async function handleExecutionFlowButton(
     .updateTable("polls")
     .set({
       status: "completed",
-      state: JSON.stringify({
-        ...state,
-        phase: "completed",
-        admin_button_fired: true,
-      }) as unknown as Record<string, unknown>,
+      state: JSON.stringify({ ...nextFired, phase: "completed" }) as unknown as Record<string, unknown>,
       updated_at: sqliteTimestamp() as unknown as Date,
     })
     .where("id", "=", flowId)
     .execute();
 
-  ctx.log.info({ flowId, approverId, action, ok: result.ok }, "execution: approved and finished");
+  ctx.log.info({ flowId, approverId, act, ok: result.ok }, "execution: approved");
   return true;
+}
+
+export async function handleExecutionFlowButton(
+  interaction: ButtonInteraction,
+  ctx: BotContext,
+): Promise<boolean> {
+  if (interaction.customId.startsWith(EXEC_VOTE_PREFIX)) {
+    return handleVote(interaction, ctx);
+  }
+  if (interaction.customId.startsWith(EXEC_APPROVAL_PREFIX)) {
+    return handleApproval(interaction, ctx);
+  }
+  return false;
 }

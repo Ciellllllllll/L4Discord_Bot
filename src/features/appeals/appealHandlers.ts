@@ -9,6 +9,7 @@ import {
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
+import { cancelPendingRepliesByAppeal } from "../modmail/modmailStaffFlow.js";
 import {
   APPEAL_REASON_FIELD,
   APPEAL_START_PREFIX,
@@ -20,6 +21,7 @@ import {
 } from "./appealPending.js";
 import {
   applyAppealApproveRemoveTimeout,
+  buildAppealReviewEmbed,
   buildThreadJumpRows,
   clearAppealStartButton,
   closeAppealReviewThread,
@@ -271,14 +273,36 @@ export async function handleAppealReviewButton(interaction: ButtonInteraction, c
         status: "hold",
         reviewer_id: interaction.user.id,
         review_note: `${note} (hold)`,
+        hold_thread_id: holdThreadResult.thread.id,
       });
+
+      const fresh = await getAppealById(ctx, appealId);
+      if (!fresh) {
+        await respondReviewEphemeral(interaction, "申請の更新に失敗しました。");
+        return true;
+      }
+
+      const applicant = await interaction.client.users.fetch(fresh.user_id).catch(() => null);
+      const requester = applicant
+        ? formatUserRequesterInfo(applicant, fresh.guild_id)
+        : {
+            tag: fresh.user_id,
+            displayName: fresh.user_id,
+            userId: fresh.user_id,
+            guildId: fresh.guild_id,
+          };
 
       const jumpRows = buildThreadJumpRows(
         interaction.guildId || reviewContext.guildId || appeal.guild_id,
         holdThreadResult.thread.id,
       );
-      await interaction.message?.edit({ components: jumpRows }).catch(() => undefined);
-      await notifyAppealUserResult(ctx, appeal, "hold", "審査は保留となり、スタッフが継続審査します。");
+      await interaction.message
+        ?.edit({
+          embeds: [buildAppealReviewEmbed(fresh, requester)],
+          components: jumpRows,
+        })
+        .catch(() => undefined);
+      await notifyAppealUserResult(ctx, fresh, "hold", "審査は保留となり、スタッフが継続審査します。");
       await respondReviewEphemeral(interaction, `保留に変更しました。審査スレッド: <#${holdThreadResult.thread.id}>`);
       return true;
     }
@@ -305,14 +329,37 @@ export async function handleAppealReviewButton(interaction: ButtonInteraction, c
       }
     }
 
+    await cancelPendingRepliesByAppeal(ctx, appealId);
+
     await patchAppeal(ctx, appealId, {
       status: nextStatus,
       reviewer_id: interaction.user.id,
       review_note: note,
     });
 
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
-    await notifyAppealUserResult(ctx, appeal, nextStatus, note);
+    const fresh = await getAppealById(ctx, appealId);
+    if (!fresh) {
+      await respondReviewEphemeral(interaction, "申請の更新に失敗しました。");
+      return true;
+    }
+
+    const applicant = await interaction.client.users.fetch(fresh.user_id).catch(() => null);
+    const requester = applicant
+      ? formatUserRequesterInfo(applicant, fresh.guild_id)
+      : {
+          tag: fresh.user_id,
+          displayName: fresh.user_id,
+          userId: fresh.user_id,
+          guildId: fresh.guild_id,
+        };
+
+    await interaction.message
+      ?.edit({
+        embeds: [buildAppealReviewEmbed(fresh, requester)],
+        components: [],
+      })
+      .catch(() => undefined);
+    await notifyAppealUserResult(ctx, fresh, nextStatus, note);
     if (isThreadPanel && interaction.channel?.isThread()) {
       await closeAppealReviewThread(interaction.channel, `appeal ${appeal.code} ${nextStatus}`);
     }

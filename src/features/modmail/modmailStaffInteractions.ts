@@ -8,6 +8,7 @@ import {
   type ModalSubmitInteraction,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { getAppealById, relayUserPayloadToAppealHoldThread } from "../appeals/appealService.js";
 import {
   type AttachmentMeta,
   pseudoMessageFromUploads,
@@ -314,7 +315,13 @@ async function handleUserAttachmentButton(interaction: ButtonInteraction, ctx: B
     return true;
   }
   const ticket = await getModmailTicketRow(ctx, ticketId);
-  if (!ticket || ticket.status !== "open" || ticket.user_id !== parsed.partB) {
+  const appeal =
+    ticket && ticket.status === "open" && ticket.user_id === parsed.partB
+      ? null
+      : await getAppealById(ctx, ticketId);
+  const appealOk = appeal && appeal.status === "hold" && appeal.user_id === parsed.partB;
+  const ticketOk = ticket && ticket.status === "open" && ticket.user_id === parsed.partB;
+  if (!ticketOk && !appealOk) {
     await replyEphemeral(interaction, "このチケットには返信できません。");
     return true;
   }
@@ -344,7 +351,13 @@ async function handleUserAttachmentModal(interaction: ModalSubmitInteraction, ct
     return true;
   }
   const ticket = await getModmailTicketRow(ctx, parsed.partA);
-  if (!ticket || ticket.status !== "open" || ticket.user_id !== parsed.partB) {
+  const appeal =
+    ticket && ticket.status === "open" && ticket.user_id === parsed.partB
+      ? null
+      : await getAppealById(ctx, parsed.partA);
+  const appealOk = appeal && appeal.status === "hold" && appeal.user_id === parsed.partB;
+  const ticketOk = ticket && ticket.status === "open" && ticket.user_id === parsed.partB;
+  if (!ticketOk && !appealOk) {
     await replyEphemeral(interaction, "このチケットには返信できません。");
     return true;
   }
@@ -354,7 +367,11 @@ async function handleUserAttachmentModal(interaction: ModalSubmitInteraction, ct
     await replyEphemeral(interaction, "有効な添付がありません。");
     return true;
   }
-  await relayUserPayloadToThread(ctx, ticket, "User Reply Attachment", "(添付)", meta);
+  if (ticketOk && ticket) {
+    await relayUserPayloadToThread(ctx, ticket, "User Reply Attachment", "(添付)", meta);
+  } else if (appealOk && appeal) {
+    await relayUserPayloadToAppealHoldThread(ctx, appeal, "User Reply Attachment", "(添付)", meta);
+  }
   userAttachmentFired.add(key);
   await replyEphemeral(interaction, "添付を送信しました。");
   return true;
@@ -373,7 +390,13 @@ async function handleUserReplyButton(interaction: ButtonInteraction, ctx: BotCon
     return true;
   }
   const ticket = await getModmailTicketRow(ctx, parsed.partA);
-  if (!ticket || ticket.status !== "open" || ticket.user_id !== parsed.partB) {
+  const appeal =
+    ticket && ticket.status === "open" && ticket.user_id === parsed.partB
+      ? null
+      : await getAppealById(ctx, parsed.partA);
+  const appealOk = appeal && appeal.status === "hold" && appeal.user_id === parsed.partB;
+  const ticketOk = ticket && ticket.status === "open" && ticket.user_id === parsed.partB;
+  if (!ticketOk && !appealOk) {
     await replyEphemeral(interaction, "このチケットは返信できません。");
     return true;
   }
@@ -426,7 +449,13 @@ async function handleUserReplyModal(interaction: ModalSubmitInteraction, ctx: Bo
   ).catch(() => undefined);
 
   const ticket = await getModmailTicketRow(ctx, parsed.partA);
-  if (!ticket || ticket.status !== "open" || ticket.user_id !== parsed.partB) {
+  const appeal =
+    ticket && ticket.status === "open" && ticket.user_id === parsed.partB
+      ? null
+      : await getAppealById(ctx, parsed.partA);
+  const appealOk = appeal && appeal.status === "hold" && appeal.user_id === parsed.partB;
+  const ticketOk = ticket && ticket.status === "open" && ticket.user_id === parsed.partB;
+  if (!ticketOk && !appealOk) {
     await interaction.editReply({ content: "このチケットは返信できません。" }).catch(() => undefined);
     return true;
   }
@@ -439,14 +468,22 @@ async function handleUserReplyModal(interaction: ModalSubmitInteraction, ctx: Bo
     uploaded = null;
   }
 
-  if (uploaded && uploaded.size > 0) {
-    const pseudo = pseudoMessageFromUploads(interaction.user.id, uploaded, body);
-    await relayUserPayloadToThread(ctx, ticket, "User Reply Attachment", pseudo.content, pseudo.attachments);
-    await interaction.editReply({ content: "返信を送信しました。" }).catch(() => undefined);
-  } else {
-    await relayUserPayloadToThread(ctx, ticket, "User Reply", body, []);
-    await interaction.editReply({ content: "返信を送信しました。" }).catch(() => undefined);
+  if (ticketOk && ticket) {
+    if (uploaded && uploaded.size > 0) {
+      const pseudo = pseudoMessageFromUploads(interaction.user.id, uploaded, body);
+      await relayUserPayloadToThread(ctx, ticket, "User Reply Attachment", pseudo.content, pseudo.attachments);
+    } else {
+      await relayUserPayloadToThread(ctx, ticket, "User Reply", body, []);
+    }
+  } else if (appealOk && appeal) {
+    if (uploaded && uploaded.size > 0) {
+      const pseudo = pseudoMessageFromUploads(interaction.user.id, uploaded, body);
+      await relayUserPayloadToAppealHoldThread(ctx, appeal, "User Reply Attachment", pseudo.content, pseudo.attachments);
+    } else {
+      await relayUserPayloadToAppealHoldThread(ctx, appeal, "User Reply", body, []);
+    }
   }
+  await interaction.editReply({ content: "返信を送信しました。" }).catch(() => undefined);
   return true;
 }
 

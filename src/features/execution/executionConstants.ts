@@ -1,36 +1,51 @@
 /** DB `polls.kind` に保存する識別子 */
 export const EXECUTION_FLOW_KIND = "execution_flow";
 
-/** Discord Poll の duration（時間）。API 上限に合わせて 1〜168 程度で運用 */
-export const EXECUTION_POLL_DURATION_HOURS = 24;
+/** DiscordBOTv2 PublicExecution.js の exec_vote: と同型 */
+export const EXEC_VOTE_PREFIX = "exec_vote:";
+
+/** DiscordBOTv2 の exec_approval: と同型（approve / deny） */
+export const EXEC_APPROVAL_PREFIX = "exec_approval:";
 
 export const EXECUTION_REASON_BASE = "/処刑による処罰";
 
-export function buildExecutionAuditReason(approverUserId: string): string {
+/**
+ * 監査ログ・Detecter のユーザー向け「理由」に載る文言（BOT が自動生成）。
+ * `approved_by=` は Detecter の実行者解決用（変更しないこと）。
+ */
+export function buildExecutionAuditReason(approverUserId: string, detailJa: string): string {
+  const text = `${EXECUTION_REASON_BASE}（${detailJa}）。公開処刑フローに基づき管理者が承認。`;
   const suffix = ` approved_by=${approverUserId}`;
-  const full = `${EXECUTION_REASON_BASE}${suffix}`;
+  const full = `${text}${suffix}`;
   const max = 512;
   if (full.length <= max) return full;
-  return full.slice(0, max);
+  const keep = max - suffix.length;
+  return `${text.slice(0, Math.max(0, keep))}${suffix}`;
 }
 
-/** Poll 第1段: 表示ラベル（voteCount 照合・同票ブレーク用） */
-export const POLL1_LABELS = ["タイムアウト", "キック", "BAN"] as const;
-/** 同票時: 先に列挙された候補を優先 */
-export const POLL1_TIE_PRIORITY: readonly string[] = [...POLL1_LABELS];
+/** 第1投票: ボタン表示は 1,2,3（PublicExecution の Action Vote と同じ構造） */
+export const POLL1_KEYS = ["1", "2", "3"] as const;
+export const POLL1_LABEL: Record<(typeof POLL1_KEYS)[number], string> = {
+  "1": "タイムアウト",
+  "2": "キック",
+  "3": "BAN",
+};
 
-/** Poll 第2段 */
-export const POLL2_LABELS = ["60秒", "5分", "1時間", "1日", "1週間"] as const;
-/** 同票時: 短い duration を優先（配列先頭ほど短い） */
-export const POLL2_TIE_PRIORITY: readonly string[] = [...POLL2_LABELS];
+/** 第2投票: v2 と同様 60s / 1h / 1d / 1w（4択・ボタンは 1〜4） */
+export const POLL2_KEYS = ["1", "2", "3", "4"] as const;
+export const POLL2_LABEL: Record<(typeof POLL2_KEYS)[number], string> = {
+  "1": "60秒",
+  "2": "1時間",
+  "3": "1日",
+  "4": "1週間",
+};
 
-/** ラベル → ミリ秒（Discord タイムアウト上限 28 日で clamp 前） */
-export const POLL2_DURATION_MS: Record<string, number> = {
-  "60秒": 60_000,
-  "5分": 5 * 60_000,
-  "1時間": 60 * 60_000,
-  "1日": 24 * 60 * 60_000,
-  "1週間": 7 * 24 * 60 * 60_000,
+/** v2 mapping と同じ秒数 */
+export const POLL2_CHOICE_TO_SECONDS: Record<(typeof POLL2_KEYS)[number], number> = {
+  "1": 60,
+  "2": 3600,
+  "3": 86400,
+  "4": 604800,
 };
 
 /** Discord GuildMember.timeout 上限（28 日） */
@@ -40,6 +55,3 @@ export function clampTimeoutMs(ms: number): number {
   if (!Number.isFinite(ms) || ms <= 0) return 60_000;
   return Math.min(ms, DISCORD_TIMEOUT_MAX_MS);
 }
-
-export const EXEC_APPROVE_PREFIX = "exec:approve:";
-export const EXEC_REJECT_PREFIX = "exec:reject:";

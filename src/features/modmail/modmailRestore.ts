@@ -5,7 +5,7 @@ import {
   setReplyConfirmMessageId,
   type ModmailReplyRow,
 } from "./modmailRepliesDb.js";
-import { confirmReplyText } from "./modmailStaffFlow.js";
+import { confirmReplyTextResolved } from "./modmailStaffFlow.js";
 import {
   buildModmailCloseRow,
   buildModmailConfirmRow,
@@ -51,9 +51,10 @@ export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
       msg = await thread.messages.fetch(reply.confirm_message_id).catch(() => null);
     }
     if (!msg) {
+      const confirmBody = await confirmReplyTextResolved(ctx, reply);
       const sent = await thread
         .send({
-          content: confirmReplyText(reply),
+          content: confirmBody,
           components: [buildModmailConfirmRow(reply.id, reply.author_staff_id)],
           allowedMentions: { parse: [] },
         })
@@ -66,9 +67,10 @@ export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
       !messageHasButtonCustomId(msg, (id) => id === rejectId) ||
       !messageHasButtonCustomId(msg, (id) => id.startsWith(attachPrefix));
     if (needsFix) {
+      const confirmBody = await confirmReplyTextResolved(ctx, reply);
       await msg
         .edit({
-          content: confirmReplyText(reply),
+          content: confirmBody,
           components: [buildModmailConfirmRow(reply.id, reply.author_staff_id)],
         })
         .catch(() => undefined);

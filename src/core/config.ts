@@ -75,6 +75,18 @@ const envSchema = z.object({
 
   TICKET_DATABASE_PATH: z.string().min(1).default("data/ticket.db"),
   ADMIN_ROLE_ID: z.string().min(1),
+  /** 処刑フロー: 各投票の秒数（DiscordBOTv2 の EXEC_VOTE_SECONDS 相当、既定 20） */
+  EXEC_VOTE_SECONDS: z.coerce.number().int().min(5).max(86_400).default(20),
+  /** 処刑フロー: 管理者承認の待ち秒数（既定 600） */
+  EXEC_ADMIN_WAIT_SECONDS: z.coerce.number().int().min(30).max(86_400).default(600),
+  /** 未設定・空ならどのチャンネルでも可。設定時はそのテキストチャンネルのみ /処刑・/タイムアウト延長 の起動可 */
+  EXEC_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  /** タイムアウト延長フロー: 投票・承認メッセージの投稿先（未設定時はコマンド実行チャンネル） */
+  TIMEOUT_EXTEND_VOTE_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  /** タイムアウト延長フロー: 管理者承認の待ち秒数（DiscordBOTv2 の ADMIN_WAIT_SECONDS 相当、既定 120） */
+  TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS: z.coerce.number().int().min(30).max(86_400).default(120),
+  /** 未設定・空なら事前チェックなし。設定時、対象がこのロールを持たないと管理者事前承認が必要（DiscordBOTv2 互換） */
+  EXECUTOR_ROLE_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
     // 未設定時は releaseVersions の BOT_SEMVER（.env は任意上書き）
 
   BOT_VERSION: z.preprocess(

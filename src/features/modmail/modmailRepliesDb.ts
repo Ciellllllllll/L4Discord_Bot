@@ -19,6 +19,7 @@ export const REPLY_STATUS = {
 export type ModmailReplyRow = {
   id: string;
   ticket_id: string;
+  appeal_id: string | null;
   guild_id: string;
   user_id: string;
   thread_id: string;
@@ -92,9 +93,20 @@ export async function pendingRepliesByTicket(ctx: BotContext, ticketId: string):
   return rows.map((r) => asReplyRow(r as Record<string, unknown>));
 }
 
+export async function pendingRepliesByAppealId(ctx: BotContext, appealId: string): Promise<ModmailReplyRow[]> {
+  const rows = await ctx.ticketDb
+    .selectFrom("modmail_replies")
+    .selectAll()
+    .where("appeal_id", "=", appealId)
+    .where("status", "=", REPLY_STATUS.PENDING)
+    .execute();
+  return rows.map((r) => asReplyRow(r as Record<string, unknown>));
+}
+
 export async function createReplyRow(ctx: BotContext, input: {
   id: string;
   ticket_id: string;
+  appeal_id?: string | null;
   guild_id: string;
   user_id: string;
   thread_id: string;
@@ -110,6 +122,7 @@ export async function createReplyRow(ctx: BotContext, input: {
     .values({
       id: input.id,
       ticket_id: input.ticket_id,
+      appeal_id: input.appeal_id ?? null,
       guild_id: input.guild_id,
       user_id: input.user_id,
       thread_id: input.thread_id,

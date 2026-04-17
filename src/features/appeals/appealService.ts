@@ -16,6 +16,11 @@ import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import type { AppealsRow } from "../../core/db/types.js";
 import {
+  attachmentMetaToJson,
+  buildForwardDmFiles,
+  type AttachmentMeta,
+} from "../modmail/modmailAttachmentUtils.js";
+import {
   APPEAL_REVIEW_PREFIX,
   APPEAL_REVIEW_THREAD_PREFIX,
   resolveAppealReviewChannelId,
@@ -25,6 +30,49 @@ import type { PendingAppealStartCtx } from "./appealPending.js";
 function safeText(value: unknown, fallback = "-"): string {
   const t = value === null || value === undefined ? "" : String(value).trim();
   return t || fallback;
+}
+
+/** 審査メッセージ・モーダル周りの表示用（承認・却下後は更新しない） */
+export function appealStatusLabel(status: string): string {
+  if (status === "pending") return "審査待ち";
+  if (status === "hold") return "保留中";
+  if (status === "approved") return "承認済み";
+  if (status === "rejected") return "却下";
+  return safeText(status, "-");
+}
+
+export function buildAppealReviewEmbed(
+  appeal: AppealsRow,
+  requester: { tag: string; displayName: string; userId: string; guildId: string },
+): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle(`異議申し立て ${appeal.code}`)
+    .setDescription("以下の内容を確認し、ボタンで審査してください。")
+    .setColor(0xe67e22)
+    .addFields(
+      { name: "申請者", value: `${requester.displayName} (${requester.tag})`, inline: false },
+      { name: "状態", value: appealStatusLabel(appeal.status), inline: true },
+      { name: "処罰タイプ", value: safeText(appeal.punishment_type, "-"), inline: true },
+      {
+        name: "終了時刻",
+        value: appeal.timeout_end ? `<t:${appeal.timeout_end}:F>` : "-",
+        inline: true,
+      },
+      {
+        name: "処罰理由",
+        value: safeText(appeal.punishment_reason, "-").slice(0, 1000),
+        inline: false,
+      },
+      {
+        name: "申請理由",
+        value: safeText(appeal.appeal_reason, "-").slice(0, 1000),
+        inline: false,
+      },
+    )
+    .setFooter({
+      text: `appeal_id=${appeal.id} user_id=${requester.userId} guild_id=${requester.guildId}`,
+    })
+    .setTimestamp(new Date());
 }
 
 export function parseAppealReviewCustomId(customId: string): {
@@ -135,6 +183,17 @@ export async function getAppealById(ctx: BotContext, appealId: string): Promise<
   return row;
 }
 
+/** 保留審査スレッド内で !reply するためのルックアップ */
+export async function getAppealHoldByThreadId(ctx: BotContext, threadId: string): Promise<AppealsRow | undefined> {
+  const row = await ctx.ticketDb
+    .selectFrom("appeals")
+    .selectAll()
+    .where("hold_thread_id", "=", threadId)
+    .where("status", "=", "hold")
+    .executeTakeFirst();
+  return row;
+}
+
 export async function patchAppeal(
   ctx: BotContext,
   appealId: string,
@@ -143,6 +202,7 @@ export async function patchAppeal(
     reviewer_id: string | null;
     review_note: string | null;
     review_message_id: string | null;
+    hold_thread_id: string | null;
   }>,
 ): Promise<void> {
   await ctx.ticketDb
@@ -184,33 +244,7 @@ export async function sendAppealReviewMessage(
     return null;
   }
 
-  const embed = new EmbedBuilder()
-    .setTitle(`異議申し立て ${appeal.code}`)
-    .setDescription("以下の内容を確認し、ボタンで審査してください。")
-    .setColor(0xe67e22)
-    .addFields(
-      { name: "申請者", value: `${requester.displayName} (${requester.tag})`, inline: false },
-      { name: "処罰タイプ", value: safeText(appeal.punishment_type, "-"), inline: true },
-      {
-        name: "終了時刻",
-        value: appeal.timeout_end ? `<t:${appeal.timeout_end}:F>` : "-",
-        inline: true,
-      },
-      {
-        name: "処罰理由",
-        value: safeText(appeal.punishment_reason, "-").slice(0, 1000),
-        inline: false,
-      },
-      {
-        name: "申請理由",
-        value: safeText(appeal.appeal_reason, "-").slice(0, 1000),
-        inline: false,
-      },
-    )
-    .setFooter({
-      text: `appeal_id=${appeal.id} user_id=${requester.userId} guild_id=${requester.guildId}`,
-    })
-    .setTimestamp(new Date());
+  const embed = buildAppealReviewEmbed(appeal, requester);
 
   const rows = buildAppealReviewRows(appeal.id);
   const sent = await (channel as TextChannel).send({ embeds: [embed], components: rows });
@@ -355,6 +389,7 @@ export async function createAppealHoldThread(
     .setColor(0xf1c40f)
     .addFields(
       { name: "申請者", value: `<@${reviewContext.userId || appeal.user_id}>`, inline: false },
+      { name: "状態", value: appealStatusLabel("hold"), inline: true },
       { name: "処罰タイプ", value: safeText(appeal.punishment_type, "-"), inline: true },
       {
         name: "終了時刻",
@@ -407,4 +442,62 @@ export function formatUserRequesterInfo(user: User, guildId: string): {
     userId: user.id,
     guildId,
   };
+}
+
+function trimMaxLocal(text: string, n: number): string {
+  const s = text.trim();
+  if (s.length <= n) return s;
+  return `${s.slice(0, n - 1)}…`;
+}
+
+/** 保留スレッドへユーザー返信を転送（Modmail の relay と同様） */
+export async function relayUserPayloadToAppealHoldThread(
+  ctx: BotContext,
+  appeal: AppealsRow,
+  kind: "User Reply" | "User Reply Attachment",
+  body: string,
+  attach: AttachmentMeta[],
+): Promise<void> {
+  const threadId = appeal.hold_thread_id;
+  if (!threadId) return;
+  const guild = await ctx.client.guilds.fetch(appeal.guild_id).catch(() => null);
+  if (!guild) return;
+  const thread = await guild.channels.fetch(threadId).catch(() => null);
+  if (!thread || !thread.isTextBased()) return;
+  const relayCh = thread as TextChannel | NewsChannel | ThreadChannel;
+  const cleaned = trimMaxLocal(body.trim() || "(本文なし)", 4000);
+  const embed = new EmbedBuilder()
+    .setTitle(kind)
+    .setDescription(cleaned)
+    .setColor(0x3498db)
+    .setTimestamp(new Date());
+  try {
+    await relayCh.send({ embeds: [embed], allowedMentions: { parse: [] } });
+  } catch (e) {
+    ctx.log.warn({ err: e, appealId: appeal.id }, "appeal hold relay failed");
+    return;
+  }
+  if (attach.length > 0) {
+    const fwd = await buildForwardDmFiles(attachmentMetaToJson(attach));
+    if (fwd.files.length > 0) {
+      await relayCh.send({ files: fwd.files, allowedMentions: { parse: [] } }).catch(() => undefined);
+    }
+    if (fwd.failed.length > 0) {
+      const lines = ["添付の一部転送に失敗しました。", ...fwd.failed.slice(0, 8).map((u) => `- ${u}`)];
+      await sendLongAppealRelay(relayCh, lines.join("\n")).catch(() => undefined);
+    }
+  }
+}
+
+async function sendLongAppealRelay(
+  ch: TextChannel | NewsChannel | ThreadChannel,
+  text: string,
+): Promise<void> {
+  const n = 1900;
+  let left = text.trim();
+  while (left.length > 0) {
+    const chunk = left.length <= n ? left : left.slice(0, n);
+    await ch.send({ content: chunk || " ", allowedMentions: { parse: [] } }).catch(() => undefined);
+    left = left.length <= n ? "" : left.slice(n).replace(/^\n+/, "");
+  }
 }

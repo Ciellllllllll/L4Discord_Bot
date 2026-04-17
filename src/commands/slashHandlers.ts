@@ -19,6 +19,7 @@ import { AiQueryService, readAiBasePromptFiles } from "../features/ai/aiQuerySer
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
+import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
 import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 const Q_COOLDOWN_MS = 15_000;
 const STUB = "この機能は準備中です。";
@@ -274,36 +275,9 @@ async function handleExecutionSlash(
 async function handlePollSlash(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
-  member: GuildMember | null,
+  _member: GuildMember | null,
 ): Promise<void> {
-  if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
-    return;
-  }
-  const guildId = interaction.guildId!;
-  const channelId = interaction.channelId!;
-  const kind = "timeout_extend";
-  const state: Record<string, unknown> = { created_by: interaction.user.id };
-  const id = randomUUID();
-  await ctx.db
-    .insertInto("polls")
-    .values({
-      id,
-      guild_id: guildId,
-      channel_id: channelId,
-      message_id: null,
-      kind,
-      status: "open",
-      state: JSON.stringify(state) as unknown as Record<string, unknown>,
-      ends_at: null,
-      created_at: sqliteTimestamp() as unknown as Date,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .execute();
-  await interaction.reply({
-    content: `投票レコードを作成しました（\`${kind}\` / id: \`${id.slice(0, 8)}\`）。`,
-    flags: MessageFlags.Ephemeral,
-  });
+  await startTimeoutExtendFlow(interaction, ctx);
 }
 
 async function handleDisableEmoji(
