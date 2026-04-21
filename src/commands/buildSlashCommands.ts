@@ -1,4 +1,5 @@
 import {
+  PermissionFlagsBits,
   SlashCommandBuilder,
   type RESTPostAPIApplicationCommandsJSONBody,
 } from "discord.js";
@@ -30,26 +31,38 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
           ),
       )
       .toJSON(),
-    new SlashCommandBuilder().setName("create_werewolfgame").setDescription("人狼募集開始").toJSON(),
-    new SlashCommandBuilder().setName("end_werewolfgame").setDescription("人狼募集終了").toJSON(),
+    new SlashCommandBuilder()
+      .setName("create_werewolfgame")
+      .setDescription("人狼募集開始")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("end_werewolfgame")
+      .setDescription("人狼募集終了")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
     new SlashCommandBuilder()
       .setName("処刑")
       .setDescription("処刑投票フローを開始")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("target").setDescription("対象").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("タイムアウト延長")
       .setDescription("タイムアウト延長の投票フロー")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("target").setDescription("対象（タイムアウト中のユーザー）").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("disable_emoji")
       .setDescription("対象ユーザーの絵文字利用を制限")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("user").setDescription("対象").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("enable_emoji")
       .setDescription("絵文字制限を解除")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("user").setDescription("対象").setRequired(true))
       .toJSON(),
 
@@ -63,6 +76,7 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     new SlashCommandBuilder()
       .setName("mute")
       .setDescription("このチャンネル・スレッドでの川柳機能をオフにします")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .toJSON(),
   ];
 }

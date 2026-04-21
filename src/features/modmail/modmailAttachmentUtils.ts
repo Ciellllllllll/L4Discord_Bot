@@ -10,6 +10,7 @@ export type AttachmentMeta = {
 
 const MAX_FORWARD = 8;
 const MAX_BYTES = 8 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 45_000;
 
 function trimMax(text: string, n: number): string {
   const s = text.trim();
@@ -108,8 +109,12 @@ export async function buildForwardDmFiles(rawJson: string): Promise<{
   const failed: string[] = [];
   for (const [idx, item] of items.entries()) {
     try {
-      const response = await fetch(item.url);
+      const response = await fetch(item.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`http_${response.status}`);
+      const contentLength = response.headers.get("content-length");
+      if (contentLength && Number.isFinite(Number(contentLength)) && Number(contentLength) > MAX_BYTES) {
+        throw new Error("file_too_large");
+      }
       const arrayBuffer = await response.arrayBuffer();
       const size = arrayBuffer.byteLength;
       if (!Number.isFinite(size) || size <= 0) throw new Error("empty_file");

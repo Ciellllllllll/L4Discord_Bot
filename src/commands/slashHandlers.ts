@@ -22,6 +22,7 @@ import { startExecutionFlow } from "../features/execution/executionFlow.js";
 import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
 import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 const Q_COOLDOWN_MS = 15_000;
+const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
 
 function metaFor(name: string) {
@@ -87,7 +88,7 @@ export async function handleSlashCommand(
     case "stamp_ranking":
       return handleStampRanking(interaction, ctx);
     case "mute":
-      return handleSenryuMute(interaction, ctx);
+      return handleSenryuMute(interaction, ctx, member);
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
@@ -126,7 +127,12 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
     markAiUse(interaction.user.id);
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek q failed");
-    await interaction.editReply({ content: `エラー: ${String(e)}`, embeds: [], components: [] });
+    await interaction.editReply({
+      content: Q_FAILED_MESSAGE,
+      embeds: [],
+      components: [],
+      allowedMentions: { parse: [] },
+    });
   }
 }
 
@@ -347,7 +353,15 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
   await interaction.reply({ content: lines.join("\n").slice(0, 2000), flags: MessageFlags.Ephemeral });
 }
 
-async function handleSenryuMute(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+async function handleSenryuMute(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!member || !isAdmin(member, ctx.config)) {
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
+    return;
+  }
   const channelId = interaction.channelId;
   muteChannelForSenryu(channelId);
   ctx.log.info(

@@ -56,6 +56,12 @@ function sanitizePromptFileUserName(userName: string): string {
   return cleaned;
 }
 
+function sanitizePromptFileUserId(userId: string): string {
+  const trimmed = safeStrip(userId);
+  if (/^\d+$/.test(trimmed)) return trimmed;
+  return sanitizePromptFileUserName(trimmed || "user");
+}
+
 function asChatMessage(role: "system" | "user" | "assistant", content: string): ChatMessage {
   return { role, content };
 }
@@ -89,7 +95,12 @@ export class AiQueryService {
     return `user_${userId}`;
   }
 
-  private userPromptPath(userName: string): string {
+  private userPromptPath(userId: string): string {
+    const fileName = `${sanitizePromptFileUserId(userId)}_prompt.txt`;
+    return path.join(path.resolve(this.ctx.config.USER_PROMPT_DIR), fileName);
+  }
+
+  private legacyUserPromptPath(userName: string): string {
     const fileName = `${sanitizePromptFileUserName(userName)}_prompt.txt`;
     return path.join(path.resolve(this.ctx.config.USER_PROMPT_DIR), fileName);
   }
@@ -98,12 +109,17 @@ export class AiQueryService {
     this.refreshBasePromptFromFile();
     const uid = String(userId);
     const resolvedUserName = this.resolveUserName(uid, userName);
-    const nextPath = this.userPromptPath(resolvedUserName);
+    const nextPath = this.userPromptPath(uid);
     const prevPath = this.userPromptPaths.get(uid);
+    const legacyPath = this.legacyUserPromptPath(resolvedUserName);
 
     if (prevPath && prevPath !== nextPath && fs.existsSync(prevPath) && !fs.existsSync(nextPath)) {
       try {
         fs.copyFileSync(prevPath, nextPath);
+      } catch {}
+    } else if (legacyPath !== nextPath && fs.existsSync(legacyPath) && !fs.existsSync(nextPath)) {
+      try {
+        fs.copyFileSync(legacyPath, nextPath);
       } catch {}
     }
 
@@ -135,15 +151,14 @@ export class AiQueryService {
     } catch {}
   }
 
-    // `/change_prompt` のモーダル送信からのみ呼ぶ。
+  // `/change_prompt` のモーダル送信からのみ呼ぶ。
   // ベース prompt のコピーや `ensureUserPromptFile` は使わず、本文をそのまま UTF-8 で書き換える。
 
-  replaceUserPromptFromChangePromptCommand(userId: string, userName: string, fullPromptText: string): void {
+  replaceUserPromptFromChangePromptCommand(userId: string, _userName: string, fullPromptText: string): void {
     const uid = String(userId);
-    const resolvedUserName = this.resolveUserName(uid, userName);
     const dir = path.resolve(this.ctx.config.USER_PROMPT_DIR);
     fs.mkdirSync(dir, { recursive: true });
-    const p = this.userPromptPath(resolvedUserName);
+    const p = this.userPromptPath(uid);
     const text = safeStrip(fullPromptText);
     if (!text) {
       return;
@@ -343,6 +358,7 @@ export class AiQueryService {
     const text = safeStrip(interaction.options.getString("text", true));
     const userId = interaction.user.id;
     const userName = interaction.user.username;
+    const noMentions = { parse: [] as const };
 
     const replyQuestion = async (answer: string) => {
       const embed = new EmbedBuilder()
@@ -358,15 +374,15 @@ export class AiQueryService {
           .setLabel("この会話履歴を削除")
           .setStyle(ButtonStyle.Secondary),
       );
-      await interaction.editReply({ embeds: [embed], components: [row] });
+      await interaction.editReply({ embeds: [embed], components: [row], allowedMentions: noMentions });
     };
 
     const replyCommand = async (userMessage: string, embeds?: EmbedBuilder[]) => {
       const safe = userMessage.slice(0, 4000);
       if (embeds && embeds.length > 0) {
-        await interaction.editReply({ embeds: embeds.slice(0, 10), components: [] });
+        await interaction.editReply({ embeds: embeds.slice(0, 10), components: [], allowedMentions: noMentions });
       } else {
-        await interaction.editReply({ content: safe.slice(0, 2000), components: [] });
+        await interaction.editReply({ content: safe.slice(0, 2000), components: [], allowedMentions: noMentions });
       }
     };
 
@@ -410,7 +426,7 @@ export class AiQueryService {
     await replyCommand(execResult.userMessage, execResult.embeds);
   }
 
-    // メンション／Bot 返信時（CHAT_MONITOR_ENABLED）
+  // メンション／Bot 返信時（CHAT_MONITOR_ENABLED）
 
   async routeMonitorMessage(message: Message, text: string): Promise<void> {
     const guild = message.guild;

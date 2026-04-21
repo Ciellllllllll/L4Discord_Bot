@@ -8,6 +8,7 @@ import type { Message, PartialMessage } from "discord.js";
 import type pino from "pino";
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_FETCH_TIMEOUT_MS = 45_000;
 // 動画・一般ファイルの「再送信」しきい値（バイト）。画像の Embed 表示は別扱い（最大はアーカイブ上限まで）。
 
 export const BOT_RESEND_MAX_BYTES = 8 * 1024 * 1024;
@@ -117,6 +118,7 @@ export async function archiveMessageAttachmentsFromDiscord(
     try {
       const res = await fetch(url, {
         headers: { "User-Agent": "L4DiscordBot/1.0 (message log archive)" },
+        signal: AbortSignal.timeout(ATTACHMENT_FETCH_TIMEOUT_MS),
       });
       if (!res.ok) {
         log.warn({ guildId, messageId, attachmentId, status: res.status }, "attachment archive fetch failed");
