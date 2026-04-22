@@ -23,6 +23,7 @@ import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessa
 import {
   buildVcCreatorMainEmbed,
   buildVcCreatorMainRows,
+  buildVcRenameModalCustomId,
   VC_NAME_MODAL_PREFIX,
 } from "./vcCreatorUi.js";
 import {
@@ -87,6 +88,14 @@ export const vcCreatorErrText = {
 
 export type VcCreatorErrorKey = keyof typeof vcCreatorErrText;
 
+export const vcRenameErrText = {
+  not_temporary_vc: "現在接続中のVCは変更対象ではありません。",
+  invalid_name_length: "変更後VC名は2〜30文字で入力してください。",
+  api_error: "VC名の変更に失敗しました。しばらくしてからもう一度お試しください。",
+} as const;
+
+export type VcRenameErrorKey = keyof typeof vcRenameErrText;
+
 export class VcTemporaryChannelManager {
   private readonly activeVcs = new Map<string, ActiveVcMeta>();
   private sweepTimer: NodeJS.Timeout | undefined;
@@ -108,6 +117,10 @@ export class VcTemporaryChannelManager {
   stopSweep(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = undefined;
+  }
+
+  isTrackedTemporaryVc(channelId: string): boolean {
+    return this.activeVcs.has(channelId);
   }
 
   onVoiceStateUpdate(before: VoiceState, after: VoiceState): void {
@@ -265,6 +278,39 @@ export class VcTemporaryChannelManager {
       return { ok: false, error: "api_error" };
     }
   }
+
+  async renameTemporaryVc(
+    channelId: string,
+    opts: { name: string; actorUserId: string; actorTag: string },
+  ): Promise<
+    | { ok: true; channelId: string; name: string }
+    | { ok: false; error: VcRenameErrorKey }
+  > {
+    if (!this.activeVcs.has(channelId)) {
+      return { ok: false, error: "not_temporary_vc" };
+    }
+
+    const vcName = String(opts.name || "").trim();
+    if (vcName.length < 2 || vcName.length > 30) {
+      return { ok: false, error: "invalid_name_length" };
+    }
+
+    const ch =
+      (this.client.channels.cache.get(channelId) as VoiceBasedChannel | undefined) ??
+      ((await this.client.channels.fetch(channelId).catch(() => null)) as VoiceBasedChannel | null);
+    if (!ch || ch.type !== ChannelType.GuildVoice) {
+      this.removeTracking(channelId);
+      return { ok: false, error: "not_temporary_vc" };
+    }
+
+    try {
+      await ch.setName(vcName, `一時VC 名称変更者: ${opts.actorTag || opts.actorUserId}`);
+      return { ok: true, channelId: ch.id, name: vcName };
+    } catch (err) {
+      this.log.warn({ err, channelId, vcName }, "renameTemporaryVc API error");
+      return { ok: false, error: "api_error" };
+    }
+  }
 }
 
 export function buildVcNameModal(genre: string): ModalBuilder {
@@ -280,6 +326,35 @@ export function buildVcNameModal(genre: string): ModalBuilder {
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMinLength(2)
+          .setMaxLength(30),
+      ),
+    );
+}
+
+export function buildVcRenameModal(channelId: string, genre: string, beforeName: string): ModalBuilder {
+  const prefix = `[${genre}]:`;
+  return new ModalBuilder()
+    .setCustomId(buildVcRenameModalCustomId(channelId, genre))
+    .setTitle("VC名変更")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("vc_name_before_display")
+          .setLabel("変更前VC名（確認用）")
+          .setStyle(TextInputStyle.Short)
+          .setValue(beforeName.slice(0, 30))
+          .setRequired(false)
+          .setMaxLength(30),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("vc_name_after_input")
+          .setLabel("変更後VC名")
+          .setStyle(TextInputStyle.Short)
+          .setValue(prefix)
+          .setPlaceholder(`${prefix}雑談VC`)
+          .setRequired(true)
+          .setMinLength(Math.min(prefix.length, 30))
           .setMaxLength(30),
       ),
     );

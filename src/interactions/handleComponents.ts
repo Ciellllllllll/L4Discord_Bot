@@ -21,6 +21,7 @@ import {
   handleVcCreateModal,
   handleVcCreatorButton,
   handleVcGenreSelect,
+  handleVcRenameModal,
 } from "../features/vc/vcInteractionHandlers.js";
 import {
   handleReactionRoleButton,
@@ -165,6 +166,7 @@ export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotCo
   if (await handleAppealSubmitModal(interaction, ctx)) return;
   if (await routeModmailStaffAndUserInteractions(interaction, ctx)) return;
   if (await handleDetecterModal(interaction, ctx)) return;
+  if (await handleVcRenameModal(interaction, ctx)) return;
   if (await handleVcCreateModal(interaction, ctx)) return;
 }
 
