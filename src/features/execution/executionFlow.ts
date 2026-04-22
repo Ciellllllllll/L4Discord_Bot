@@ -34,10 +34,37 @@ import { parseExecutionFlowState } from "./executionFlow.types.js";
 
 const adminWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+type OpenExecutionFlowRow = {
+  id: string;
+  guild_id: string;
+  status: string;
+  message_id: string | null;
+  state: unknown;
+  updated_at: Date;
+};
+
 function clearAdminWait(flowId: string): void {
   const t = adminWaitTimers.get(flowId);
   if (t) clearTimeout(t);
   adminWaitTimers.delete(flowId);
+}
+
+function schedulePoll1Finalize(ctx: BotContext, flowId: string, delayMs: number): void {
+  setTimeout(() => {
+    void transitionPoll1ToNext(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll1 finalize failed"));
+  }, Math.max(0, delayMs));
+}
+
+function schedulePoll2Finalize(ctx: BotContext, flowId: string, delayMs: number): void {
+  setTimeout(() => {
+    void transitionPoll2ToAdmin(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll2 finalize failed"));
+  }, Math.max(0, delayMs));
+}
+
+function adminWaitDeadlineMs(updatedAt: Date, waitSeconds: number): number {
+  const updatedAtMs = new Date(updatedAt).getTime();
+  const base = Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now();
+  return base + waitSeconds * 1000;
 }
 
 function memberHasRoleId(member: GuildMember, roleId: string): boolean {
@@ -55,10 +82,10 @@ function parsePollRowState(row: { state: unknown }): ExecutionFlowState | null {
 export async function findOpenExecutionFlowById(
   ctx: BotContext,
   flowId: string,
-): Promise<{ row: { id: string; guild_id: string; status: string; message_id: string | null }; state: ExecutionFlowState } | null> {
+): Promise<{ row: OpenExecutionFlowRow; state: ExecutionFlowState } | null> {
   const row = await ctx.db
     .selectFrom("polls")
-    .selectAll()
+    .select(["id", "guild_id", "status", "message_id", "state", "updated_at"])
     .where("id", "=", flowId)
     .where("kind", "=", EXECUTION_FLOW_KIND)
     .where("status", "=", "open")
@@ -277,9 +304,13 @@ async function abortFlow(
     .execute();
 }
 
-function scheduleAdminWait(ctx: BotContext, flowId: string, expectedPhase: "precheck_pending" | "admin_pending"): void {
+function scheduleAdminWait(
+  ctx: BotContext,
+  flowId: string,
+  expectedPhase: "precheck_pending" | "admin_pending",
+  delayMs = ctx.config.EXEC_ADMIN_WAIT_SECONDS * 1000,
+): void {
   clearAdminWait(flowId);
-  const ms = ctx.config.EXEC_ADMIN_WAIT_SECONDS * 1000;
   const h = setTimeout(() => {
     void (async () => {
       const found = await findOpenExecutionFlowById(ctx, flowId);
@@ -287,8 +318,84 @@ function scheduleAdminWait(ctx: BotContext, flowId: string, expectedPhase: "prec
       ctx.log.info({ flowId, expectedPhase }, "execution: admin wait timeout");
       await abortFlow(ctx, flowId, found.state, "処刑フロー: 承認がタイムアウトしました");
     })().catch((err) => ctx.log.error({ err, flowId }, "execution: admin timeout handler failed"));
-  }, ms);
+  }, Math.max(0, delayMs));
   adminWaitTimers.set(flowId, h);
+}
+
+async function listOpenExecutionFlows(ctx: BotContext): Promise<OpenExecutionFlowRow[]> {
+  return ctx.db
+    .selectFrom("polls")
+    .select(["id", "guild_id", "status", "message_id", "state", "updated_at"])
+    .where("kind", "=", EXECUTION_FLOW_KIND)
+    .where("status", "=", "open")
+    .execute() as Promise<OpenExecutionFlowRow[]>;
+}
+
+async function cancelMalformedExecutionFlow(ctx: BotContext, flowId: string): Promise<void> {
+  await ctx.db
+    .updateTable("polls")
+    .set({
+      status: "cancelled",
+      updated_at: sqliteTimestamp() as unknown as Date,
+    })
+    .where("id", "=", flowId)
+    .execute();
+}
+
+export async function reconcileExecutionFlows(ctx: BotContext): Promise<void> {
+  const rows = await listOpenExecutionFlows(ctx);
+  const now = Date.now();
+
+  for (const row of rows) {
+    const state = parsePollRowState(row);
+    if (!state) {
+      ctx.log.warn({ flowId: row.id }, "execution: cancelling malformed open flow");
+      await cancelMalformedExecutionFlow(ctx, row.id);
+      continue;
+    }
+
+    if (state.phase === "completed" || state.phase === "cancelled") {
+      await ctx.db
+        .updateTable("polls")
+        .set({
+          status: state.phase === "completed" ? "completed" : "cancelled",
+          updated_at: sqliteTimestamp() as unknown as Date,
+        })
+        .where("id", "=", row.id)
+        .execute();
+      continue;
+    }
+
+    if (state.phase === "precheck_pending" || state.phase === "admin_pending") {
+      const waitDeadlineMs = adminWaitDeadlineMs(row.updated_at, ctx.config.EXEC_ADMIN_WAIT_SECONDS);
+      const remainingMs = waitDeadlineMs - now;
+      if (remainingMs <= 0) {
+        await abortFlow(ctx, row.id, state, "蜃ｦ蛻代ヵ繝ｭ繝ｼ: 再起動後の復元時に期限切れを検出");
+        continue;
+      }
+      scheduleAdminWait(ctx, row.id, state.phase, remainingMs);
+      continue;
+    }
+
+    if (state.phase === "poll1_pending") {
+      const remainingMs = state.poll1_deadline_ms - now;
+      if (remainingMs <= 0) {
+        await transitionPoll1ToNext(ctx, row.id);
+        continue;
+      }
+      schedulePoll1Finalize(ctx, row.id, remainingMs);
+      continue;
+    }
+
+    if (state.phase === "poll2_pending") {
+      const remainingMs = (state.poll2_deadline_ms ?? 0) - now;
+      if (remainingMs <= 0) {
+        await transitionPoll2ToAdmin(ctx, row.id);
+        continue;
+      }
+      schedulePoll2Finalize(ctx, row.id, remainingMs);
+    }
+  }
 }
 
 async function postPrecheckRequest(ctx: BotContext, channel: TextChannel, flowId: string): Promise<Message | null> {
@@ -348,9 +455,7 @@ async function beginPoll1(ctx: BotContext, flowId: string, state: ExecutionFlowS
     votes_poll1: {},
   };
   await saveFullState(ctx, flowId, next, msg.id);
-  setTimeout(() => {
-    void transitionPoll1ToNext(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll1 finalize failed"));
-  }, voteMs);
+  schedulePoll1Finalize(ctx, flowId, voteMs);
 }
 
 async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<void> {
@@ -416,9 +521,7 @@ async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<v
       votes_poll2: {},
     };
     await saveFullState(ctx, flowId, next, msg.id);
-    setTimeout(() => {
-      void transitionPoll2ToAdmin(ctx, flowId).catch((err) => ctx.log.error({ err, flowId }, "execution: poll2 finalize failed"));
-    }, voteMs);
+    schedulePoll2Finalize(ctx, flowId, voteMs);
     return;
   }
 

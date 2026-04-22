@@ -32,6 +32,11 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       )
       .toJSON(),
     new SlashCommandBuilder()
+      .setName("member_count_setup")
+      .setDescription("メンバー数表示用のカテゴリとVCチャンネルを作成します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName("create_werewolfgame")
       .setDescription("人狼募集開始")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -67,6 +72,7 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
 
     new SlashCommandBuilder().setName("stamp_rank").setDescription("スタンプランキング").toJSON(),
+    new SlashCommandBuilder().setName("stamp_count").setDescription("スタンプ使用回数を表示").toJSON(),
 
     new SlashCommandBuilder()
       .setName("change_prompt")

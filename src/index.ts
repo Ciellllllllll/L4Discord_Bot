@@ -66,6 +66,8 @@ import { copyAutomodFromGuildSettingsIfMissing } from "./features/moderation/cop
 import { ensureAutomoderationSchema } from "./features/moderation/automodSchema.js";
 import { copyTicketDataFromMainToTicketDb } from "./features/tickets/copyTicketDataFromMain.js";
 import { ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js";
+import { reconcileExecutionFlows } from "./features/execution/executionFlow.js";
+import { reconcileTimeoutExtendFlows } from "./features/execution/timeoutExtendFlow.js";
 import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
@@ -264,6 +266,18 @@ async function main(): Promise<void> {
         log.info({ guildId: g.id }, "modmail UI restore on startup completed");
       } catch (err) {
         log.warn({ err, guildId: g.id }, "modmail UI restore on startup failed");
+      }
+      try {
+        await reconcileExecutionFlows(ctx);
+        log.info({ guildId: g.id }, "execution flows reconciled at startup");
+      } catch (err) {
+        log.error({ err, guildId: g.id }, "execution flow reconcile at startup failed");
+      }
+      try {
+        await reconcileTimeoutExtendFlows(ctx);
+        log.info({ guildId: g.id }, "timeout-extend flows reconciled at startup");
+      } catch (err) {
+        log.error({ err, guildId: g.id }, "timeout-extend flow reconcile at startup failed");
       }
       try {
         reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);

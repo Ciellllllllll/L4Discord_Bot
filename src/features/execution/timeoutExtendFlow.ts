@@ -34,6 +34,15 @@ const teAdminWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** `${guildId}:${targetId}` — 同一対象の重複開始防止 */
 const activeTeTargets = new Set<string>();
 
+type OpenTimeoutExtendFlowRow = {
+  id: string;
+  guild_id: string;
+  status: string;
+  message_id: string | null;
+  state: unknown;
+  updated_at: Date;
+};
+
 function teLockKey(guildId: string, targetId: string): string {
   return `${guildId}:${targetId}`;
 }
@@ -48,6 +57,28 @@ function clearTeAdminWait(flowId: string): void {
   teAdminWaitTimers.delete(flowId);
 }
 
+function scheduleTePoll1Finalize(ctx: BotContext, flowId: string, guildId: string, delayMs: number): void {
+  setTimeout(() => {
+    void transitionTePoll1ToNext(ctx, flowId, guildId).catch((err) =>
+      ctx.log.error({ err, flowId }, "timeoutExtend: poll1 finalize failed"),
+    );
+  }, Math.max(0, delayMs));
+}
+
+function scheduleTePoll2Finalize(ctx: BotContext, flowId: string, guildId: string, delayMs: number): void {
+  setTimeout(() => {
+    void transitionTePoll2ToAdmin(ctx, flowId, guildId).catch((err) =>
+      ctx.log.error({ err, flowId }, "timeoutExtend: poll2 finalize failed"),
+    );
+  }, Math.max(0, delayMs));
+}
+
+function teAdminWaitDeadlineMs(updatedAt: Date, waitSeconds: number): number {
+  const updatedAtMs = new Date(updatedAt).getTime();
+  const base = Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now();
+  return base + waitSeconds * 1000;
+}
+
 function parsePollRowState(row: { state: unknown }): TimeoutExtendFlowState | null {
   const raw = row.state as unknown;
   const obj = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
@@ -57,10 +88,10 @@ function parsePollRowState(row: { state: unknown }): TimeoutExtendFlowState | nu
 export async function findOpenTimeoutExtendFlowById(
   ctx: BotContext,
   flowId: string,
-): Promise<{ row: { id: string; guild_id: string; status: string; message_id: string | null }; state: TimeoutExtendFlowState } | null> {
+): Promise<{ row: OpenTimeoutExtendFlowRow; state: TimeoutExtendFlowState } | null> {
   const row = await ctx.db
     .selectFrom("polls")
-    .selectAll()
+    .select(["id", "guild_id", "status", "message_id", "state", "updated_at"])
     .where("id", "=", flowId)
     .where("kind", "=", TIMEOUT_EXTEND_FLOW_KIND)
     .where("status", "=", "open")
@@ -278,9 +309,13 @@ async function abortTeFlow(
     .execute();
 }
 
-function scheduleTeAdminWait(ctx: BotContext, flowId: string, guildId: string): void {
+function scheduleTeAdminWait(
+  ctx: BotContext,
+  flowId: string,
+  guildId: string,
+  delayMs = ctx.config.TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS * 1000,
+): void {
   clearTeAdminWait(flowId);
-  const ms = ctx.config.TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS * 1000;
   const h = setTimeout(() => {
     void (async () => {
       const found = await findOpenTimeoutExtendFlowById(ctx, flowId);
@@ -288,8 +323,87 @@ function scheduleTeAdminWait(ctx: BotContext, flowId: string, guildId: string): 
       ctx.log.info({ flowId }, "timeoutExtend: admin wait timeout");
       await abortTeFlow(ctx, flowId, guildId, found.state, "タイムアウト延長フロー: 承認がタイムアウトしました");
     })().catch((err) => ctx.log.error({ err, flowId }, "timeoutExtend: admin timeout handler failed"));
-  }, ms);
+  }, Math.max(0, delayMs));
   teAdminWaitTimers.set(flowId, h);
+}
+
+async function listOpenTimeoutExtendFlows(ctx: BotContext): Promise<OpenTimeoutExtendFlowRow[]> {
+  return ctx.db
+    .selectFrom("polls")
+    .select(["id", "guild_id", "status", "message_id", "state", "updated_at"])
+    .where("kind", "=", TIMEOUT_EXTEND_FLOW_KIND)
+    .where("status", "=", "open")
+    .execute() as Promise<OpenTimeoutExtendFlowRow[]>;
+}
+
+async function cancelMalformedTimeoutExtendFlow(ctx: BotContext, flowId: string): Promise<void> {
+  await ctx.db
+    .updateTable("polls")
+    .set({
+      status: "cancelled",
+      updated_at: sqliteTimestamp() as unknown as Date,
+    })
+    .where("id", "=", flowId)
+    .execute();
+}
+
+export async function reconcileTimeoutExtendFlows(ctx: BotContext): Promise<void> {
+  const rows = await listOpenTimeoutExtendFlows(ctx);
+  const now = Date.now();
+  activeTeTargets.clear();
+
+  for (const row of rows) {
+    const state = parsePollRowState(row);
+    if (!state) {
+      ctx.log.warn({ flowId: row.id }, "timeoutExtend: cancelling malformed open flow");
+      await cancelMalformedTimeoutExtendFlow(ctx, row.id);
+      continue;
+    }
+
+    if (state.phase === "completed" || state.phase === "cancelled") {
+      await ctx.db
+        .updateTable("polls")
+        .set({
+          status: state.phase === "completed" ? "completed" : "cancelled",
+          updated_at: sqliteTimestamp() as unknown as Date,
+        })
+        .where("id", "=", row.id)
+        .execute();
+      continue;
+    }
+
+    activeTeTargets.add(teLockKey(row.guild_id, state.target_id));
+
+    if (state.phase === "admin_pending") {
+      const waitDeadlineMs = teAdminWaitDeadlineMs(row.updated_at, ctx.config.TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS);
+      const remainingMs = waitDeadlineMs - now;
+      if (remainingMs <= 0) {
+        await abortTeFlow(ctx, row.id, row.guild_id, state, "繧ｿ繧､繝繧｢繧ｦ繝亥ｻｶ髟ｷ繝輔Ο繝ｼ: 再起動後の復元時に期限切れを検出");
+        continue;
+      }
+      scheduleTeAdminWait(ctx, row.id, row.guild_id, remainingMs);
+      continue;
+    }
+
+    if (state.phase === "poll1_pending") {
+      const remainingMs = state.poll1_deadline_ms - now;
+      if (remainingMs <= 0) {
+        await transitionTePoll1ToNext(ctx, row.id, row.guild_id);
+        continue;
+      }
+      scheduleTePoll1Finalize(ctx, row.id, row.guild_id, remainingMs);
+      continue;
+    }
+
+    if (state.phase === "poll2_pending") {
+      const remainingMs = (state.poll2_deadline_ms ?? 0) - now;
+      if (remainingMs <= 0) {
+        await transitionTePoll2ToAdmin(ctx, row.id, row.guild_id);
+        continue;
+      }
+      scheduleTePoll2Finalize(ctx, row.id, row.guild_id, remainingMs);
+    }
+  }
 }
 
 async function postTeAdminRequest(ctx: BotContext, channel: TextChannel, flowId: string, body: string): Promise<Message | null> {
@@ -341,11 +455,7 @@ async function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, st
     votes_poll1: {},
   };
   await saveTeFullState(ctx, flowId, next, msg.id);
-  setTimeout(() => {
-    void transitionTePoll1ToNext(ctx, flowId, guildId).catch((err) =>
-      ctx.log.error({ err, flowId }, "timeoutExtend: poll1 finalize failed"),
-    );
-  }, voteMs);
+  scheduleTePoll1Finalize(ctx, flowId, guildId, voteMs);
 }
 
 async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId: string): Promise<void> {
@@ -432,11 +542,7 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
     votes_poll2: {},
   };
   await saveTeFullState(ctx, flowId, next, msg.id);
-  setTimeout(() => {
-    void transitionTePoll2ToAdmin(ctx, flowId, guildId).catch((err) =>
-      ctx.log.error({ err, flowId }, "timeoutExtend: poll2 finalize failed"),
-    );
-  }, voteMs);
+  scheduleTePoll2Finalize(ctx, flowId, guildId, voteMs);
 }
 
 async function transitionTePoll2ToAdmin(ctx: BotContext, flowId: string, guildId: string): Promise<void> {

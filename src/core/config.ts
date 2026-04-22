@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { DEPLOY_GUILD_ID, DEPLOY_OWNER_ID } from "./deployConstants.js";
 import { BOT_SEMVER } from "./releaseVersions.js";
 
 // 未設定・空は true（DiscordBOTv2 / AI_Query 互換）
@@ -52,6 +51,8 @@ function assertValidIanaTimeZone(tz: string): void {
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
+  GUILD_ID: z.string().min(1),
+  OWNER_ID: z.string().min(1),
     // ターミナルに pino の DEBUG を出すか。
   // 未設定時は NODE_ENV に従い、production 以外は debug、production は info。
 
@@ -221,7 +222,7 @@ const envSchema = z.object({
 });
 
 type ParsedEnvConfig = z.infer<typeof envSchema>;
-export type AppConfig = ParsedEnvConfig & { GUILD_ID: string; OWNER_ID: string };
+export type AppConfig = ParsedEnvConfig;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const envWithLogDefaults = {
@@ -238,15 +239,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     const msg = parsed.error.flatten().fieldErrors;
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
-  const guildId = DEPLOY_GUILD_ID.trim();
-  const ownerId = DEPLOY_OWNER_ID.trim();
+  const data = parsed.data;
+  const guildId = data.GUILD_ID.trim();
+  const ownerId = data.OWNER_ID.trim();
   if (!guildId) {
-    throw new Error("src/core/deployConstants.ts の DEPLOY_GUILD_ID を設定してください");
+    throw new Error("GUILD_ID を設定してください");
   }
   if (!ownerId) {
-    throw new Error("src/core/deployConstants.ts の DEPLOY_OWNER_ID を設定してください");
+    throw new Error("OWNER_ID を設定してください");
   }
-  const data = parsed.data;
   assertValidIanaTimeZone(data.VC_TIME_RANKING_TIMEZONE);
   const repoRoot = findPackageJsonDir(fileURLToPath(import.meta.url));
   const R = (p: string) => (isAbsolute(p) ? p : join(repoRoot, p));

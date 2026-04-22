@@ -85,7 +85,7 @@ export async function handleSlashCommand(
       return handleEnableEmoji(interaction, ctx, member);
     case "stamp_count":
       return handleStampCount(interaction, ctx);
-    case "stamp_ranking":
+    case "stamp_rank":
       return handleStampRanking(interaction, ctx);
     case "mute":
       return handleSenryuMute(interaction, ctx, member);
