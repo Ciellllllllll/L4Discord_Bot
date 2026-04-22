@@ -9,6 +9,7 @@ import {
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { getAppealById, getAppealHoldByThreadId } from "../appeals/appealService.js";
 import {
   attachmentMetaToJson,
   buildForwardDmFiles,
@@ -21,8 +22,10 @@ import {
   appendReplyAttachmentsMeta,
   createReplyRow,
   pendingReplyByTicket,
+  pendingRepliesByAppealId,
   pendingRepliesBySource,
   pendingRepliesByTicket,
+  type ModmailReplyRow,
   REPLY_STATUS,
   replyById,
   setReplyConfirmMessageId,
@@ -86,17 +89,30 @@ export function confirmReplyText(reply: {
   ticket_id: string;
   author_staff_id: string;
   created_at: Date;
+  appeal_code?: string | null;
 }): string {
   const preview = trimMax(reply.fixed_reply_body || "", 1200) || "(本文なし)";
   const n = parseAttachmentMetadata(reply.attachment_metadata).length;
+  const destLabel = reply.appeal_code
+    ? `異議申し立て ${reply.appeal_code}`
+    : `チケット ${ticketDisplayCode(reply.ticket_id)}`;
   return [
     "このメッセージをユーザーへ送信しますか？",
-    `送信先チケット: ${ticketDisplayCode(reply.ticket_id)}`,
+    `送信先: ${destLabel}`,
     `送信本文: ${preview}`,
     `添付ファイル: ${n} 件`,
     `!reply 実行スタッフID: ${reply.author_staff_id}`,
     `作成日時: <t:${Math.floor(new Date(reply.created_at).getTime() / 1000)}:F>`,
   ].join("\n");
+}
+
+export async function confirmReplyTextResolved(ctx: BotContext, reply: ModmailReplyRow): Promise<string> {
+  let appealCode: string | undefined;
+  if (reply.appeal_id) {
+    const a = await getAppealById(ctx, reply.appeal_id);
+    appealCode = a?.code;
+  }
+  return confirmReplyText({ ...reply, appeal_code: appealCode });
 }
 
 export async function editModmailConfirmMessage(
@@ -167,6 +183,21 @@ export async function cancelPendingRepliesByTicket(
   }
 }
 
+export async function cancelPendingRepliesByAppeal(ctx: BotContext, appealId: string): Promise<void> {
+  const rows = await pendingRepliesByAppealId(ctx, appealId);
+  const at = sqliteTimestamp();
+  for (const row of rows) {
+    clearStaffAttachmentSessionsByReply(row.id);
+    const ok = await updateReplyStatus(ctx, row.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
+      cancelled_at: at,
+      cancel_reason: "appeal_resolved",
+    });
+    if (ok === 0) continue;
+    await editModmailConfirmMessage(ctx, row, "異議申し立てが終了したためキャンセルされました。");
+    void logModmailEvent(ctx, "REPLY_CANCELLED_APPEAL_RESOLVED", { reply_id: row.id, appeal_id: appealId });
+  }
+}
+
 export async function approveModmailReply(
   ctx: BotContext,
   replyId: string,
@@ -177,6 +208,67 @@ export async function approveModmailReply(
   if (reply) clearStaffAttachmentSessionsByReply(reply.id);
   if (!reply) return { ok: false, message: "返信予約が見つかりません。" };
   if (reply.status !== REPLY_STATUS.PENDING) return { ok: false, message: "この返信予約は既に処理済みです。" };
+
+  if (reply.appeal_id) {
+    const appeal = await getAppealById(ctx, reply.appeal_id);
+    if (!appeal || appeal.status !== "hold") {
+      const at = sqliteTimestamp();
+      await updateReplyStatus(ctx, reply.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
+        cancelled_at: at,
+        cancel_reason: "appeal_not_hold",
+      });
+      await editModmailConfirmMessage(ctx, reply, "保留審査が終了しているため承認できません。", confirmInteractionMessage);
+      return { ok: false, message: "この異議申し立ては保留中ではありません。" };
+    }
+
+    const at = sqliteTimestamp();
+    const ok = await updateReplyStatus(ctx, reply.id, REPLY_STATUS.PENDING, REPLY_STATUS.APPROVED_SENT, {
+      approver_staff_id: staffId,
+      approved_at: at,
+      sent_at: at,
+    });
+    if (ok === 0) return { ok: false, message: "この返信予約は既に処理済みです。" };
+
+    void logModmailEvent(ctx, "REPLY_APPROVED", { reply_id: reply.id, appeal_id: appeal.id });
+
+    let dmErr: unknown = null;
+    try {
+      const user = await ctx.client.users.fetch(appeal.user_id);
+      const forwarded = await buildForwardDmFiles(reply.attachment_metadata);
+      const failedNote =
+        forwarded.failed.length > 0
+          ? `\n\n一部の添付は直接転送できなかったためリンクを共有します:\n${forwarded.failed.slice(0, 5).join("\n")}`
+          : "";
+      await user.send({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("Modmail 返信")
+            .setDescription(`${reply.fixed_reply_body || "(本文なし)"}${failedNote}`)
+            .setColor(0x3498db)
+            .setTimestamp(new Date()),
+        ],
+        components: [buildModmailUserReplyRow(appeal.id, appeal.user_id)],
+        files: forwarded.files,
+      });
+    } catch (e) {
+      dmErr = e;
+    }
+
+    if (dmErr) {
+      const ft = sqliteTimestamp();
+      await updateReplyStatus(ctx, reply.id, REPLY_STATUS.APPROVED_SENT, REPLY_STATUS.FAILED, {
+        failed_at: ft,
+        failure_reason: String(dmErr),
+      });
+      await editModmailConfirmMessage(ctx, reply, "送信失敗", confirmInteractionMessage);
+      void logModmailEvent(ctx, "REPLY_SEND_FAILED", { reply_id: reply.id, err: String(dmErr) });
+      return { ok: false, message: "ユーザーへの DM 送信に失敗しました。" };
+    }
+
+    await editModmailConfirmMessage(ctx, reply, "送信済み", confirmInteractionMessage);
+    void logModmailEvent(ctx, "REPLY_SENT", { reply_id: reply.id, appeal_id: appeal.id });
+    return { ok: true, message: "送信しました。" };
+  }
 
   const ticket = await getModmailTicketRow(ctx, reply.ticket_id);
   if (!ticket || ticket.status !== "open") {
@@ -343,9 +435,9 @@ export async function handleModmailStaffReplyCommand(message: Message, ctx: BotC
   if (!message.content.trim().startsWith(MODMAIL_REPLY_COMMAND)) return false;
 
   const ticket = await getOpenModmailByThreadId(ctx, message.channel.id);
-  if (!ticket) {
-    await message.reply({ content: "このスレッドは Modmail チケットではありません。" }).catch(() => undefined);
-    return true;
+  const appealHold = ticket ? undefined : await getAppealHoldByThreadId(ctx, message.channel.id);
+  if (!ticket && !appealHold) {
+    return false;
   }
 
   const staff = await isModmailStaff(message.guild, message.author.id, message.member, ctx);
@@ -360,9 +452,11 @@ export async function handleModmailStaffReplyCommand(message: Message, ctx: BotC
     return true;
   }
 
-  const pending = await pendingReplyByTicket(ctx, ticket.id);
+  const pending = ticket
+    ? await pendingReplyByTicket(ctx, ticket.id)
+    : await pendingReplyByTicket(ctx, appealHold!.id);
   if (pending) {
-    await message.reply({ content: "このチケットには承認待ちの返信予約があります。" }).catch(() => undefined);
+    await message.reply({ content: "このスレッドには承認待ちの返信予約があります。" }).catch(() => undefined);
     return true;
   }
 
@@ -371,10 +465,11 @@ export async function handleModmailStaffReplyCommand(message: Message, ctx: BotC
   const ts = sqliteTimestamp();
   await createReplyRow(ctx, {
     id: replyId,
-    ticket_id: ticket.id,
-    guild_id: ticket.guild_id,
-    user_id: ticket.user_id,
-    thread_id: ticket.thread_id!,
+    ticket_id: ticket ? ticket.id : appealHold!.id,
+    appeal_id: appealHold ? appealHold.id : null,
+    guild_id: ticket ? ticket.guild_id : appealHold!.guild_id,
+    user_id: ticket ? ticket.user_id : appealHold!.user_id,
+    thread_id: message.channel.id,
     source_message_id: message.id,
     author_staff_id: message.author.id,
     content: message.content,
@@ -389,13 +484,18 @@ export async function handleModmailStaffReplyCommand(message: Message, ctx: BotC
   }
 
   try {
+    const confirmBody = await confirmReplyTextResolved(ctx, reply);
     const confirm = await message.channel.send({
-      content: confirmReplyText(reply),
+      content: confirmBody,
       components: [buildModmailConfirmRow(reply.id, message.author.id)],
       allowedMentions: { parse: [] },
     });
     await setReplyConfirmMessageId(ctx, reply.id, confirm.id);
-    void logModmailEvent(ctx, "REPLY_CREATED", { reply_id: reply.id, ticket_id: ticket.id });
+    void logModmailEvent(ctx, "REPLY_CREATED", {
+      reply_id: reply.id,
+      ticket_id: reply.ticket_id,
+      appeal_id: reply.appeal_id ?? undefined,
+    });
   } catch (e) {
     ctx.log.warn({ err: e }, "modmail confirm message failed");
     await updateReplyStatus(ctx, reply.id, REPLY_STATUS.PENDING, REPLY_STATUS.FAILED, {
@@ -416,11 +516,13 @@ export async function routeModmailGuildThreadMessage(message: Message, ctx: BotC
   }
   if (!message.channel?.isThread()) return false;
   const ticket = await getOpenModmailByThreadId(ctx, message.channel.id);
-  if (!ticket) return false;
+  const appealHold = ticket ? undefined : await getAppealHoldByThreadId(ctx, message.channel.id);
+  if (!ticket && !appealHold) return false;
   const staff = await isModmailStaff(message.guild, message.author.id, message.member, ctx);
   if (!staff) return false;
   void logModmailEvent(ctx, "STAFF_NORMAL_MESSAGE", {
-    ticket_id: ticket.id,
+    ticket_id: ticket?.id,
+    appeal_id: appealHold?.id,
     author_staff_id: message.author.id,
     content: message.content?.slice(0, 500),
   });

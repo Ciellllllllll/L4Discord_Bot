@@ -1,11 +1,13 @@
 import {
   ActionRowBuilder,
+  MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
   type ButtonInteraction,
+  type InteractionReplyOptions,
   type ModalSubmitInteraction,
   type StringSelectMenuInteraction,
 } from "discord.js";
@@ -53,7 +55,7 @@ async function replyEphemeral(
   content: string,
   components?: ActionRowBuilder<StringSelectMenuBuilder>[],
 ): Promise<void> {
-  const payload = { content, ephemeral: true as const, components };
+  const payload: InteractionReplyOptions = { content, flags: MessageFlags.Ephemeral, components };
   if (interaction.replied || interaction.deferred) {
     await interaction.followUp(payload).catch(() => undefined);
     return;
@@ -350,7 +352,11 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
       await insertEntry(ctx.db, interaction.guild.id, entry);
       await replyEphemeral(interaction, `リアクションロールを作成しました。entry_id=${entry.entryId}`);
     } catch (err) {
-      await replyEphemeral(interaction, `作成失敗: ${String(err)}`);
+      ctx.log.warn(
+        { err, guildId: interaction.guild.id, userId: interaction.user.id },
+        "reaction role create failed",
+      );
+      await replyEphemeral(interaction, "作成に失敗しました。対象チャンネル、Bot の権限、ロール階層を確認してください。");
     }
     return true;
   }
@@ -402,7 +408,11 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
       await updateEntryRow(ctx.db, interaction.guild.id, entry);
       await replyEphemeral(interaction, "更新しました。");
     } catch (err) {
-      await replyEphemeral(interaction, `更新失敗: ${String(err)}`);
+      ctx.log.warn(
+        { err, guildId: interaction.guild.id, userId: interaction.user.id, entryId },
+        "reaction role update failed",
+      );
+      await replyEphemeral(interaction, "更新に失敗しました。対象チャンネル、Bot の権限、ロール階層を確認してください。");
     }
     return true;
   }

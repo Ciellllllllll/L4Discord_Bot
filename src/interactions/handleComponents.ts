@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  MessageFlags,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -20,6 +21,7 @@ import {
   handleVcCreateModal,
   handleVcCreatorButton,
   handleVcGenreSelect,
+  handleVcRenameModal,
 } from "../features/vc/vcInteractionHandlers.js";
 import {
   handleReactionRoleButton,
@@ -48,6 +50,8 @@ import {
   handleAppealSubmitModal,
 } from "../features/appeals/appealHandlers.js";
 import { getDetecterService, DETECTER_REASON_INPUT_ID } from "../features/detecter/detecterService.js";
+import { handleExecutionFlowButton } from "../features/execution/executionFlow.js";
+import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
 import { parseCustomId } from "./parseCustomId.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
@@ -66,15 +70,15 @@ export async function handleDetecterButton(
     const svc = getDetecterService(ctx);
     const event = svc.getPendingEvent(parsed.shortId);
     if (!event) {
-      await interaction.reply({ content: "このイベントは期限切れか、既に処理済みです。", ephemeral: true });
+      await interaction.reply({ content: "このイベントは期限切れか、既に処理済みです。", flags: MessageFlags.Ephemeral });
       return true;
     }
     if (event.reasonButtonFired) {
-      await interaction.reply({ content: "この理由入力は既に処理済みです。", ephemeral: true });
+      await interaction.reply({ content: "この理由入力は既に処理済みです。", flags: MessageFlags.Ephemeral });
       return true;
     }
     if (interaction.user.id !== event.actorUserId) {
-      await interaction.reply({ content: "処罰を実行したユーザーのみこのボタンを使用できます。", ephemeral: true });
+      await interaction.reply({ content: "処罰を実行したユーザーのみこのボタンを使用できます。", flags: MessageFlags.Ephemeral });
       return true;
     }
     const modal = new ModalBuilder()
@@ -98,7 +102,7 @@ export async function handleDetecterButton(
         await interaction
           .reply({
             content: "モーダルを表示できませんでした。しばらくしてから再度お試しください。",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           })
           .catch(() => undefined);
       }
@@ -110,6 +114,8 @@ export async function handleDetecterButton(
 }
 
 export async function routeButton(interaction: ButtonInteraction, ctx: BotContext): Promise<void> {
+  if (await handleExecutionFlowButton(interaction, ctx)) return;
+  if (await handleTimeoutExtendFlowButton(interaction, ctx)) return;
   if (await handleAutoModRaidButton(interaction, ctx)) return;
   if (await handleReminderHubButton(interaction, ctx)) return;
   if (await handleAiHistoryClearButton(interaction, ctx)) return;
@@ -134,12 +140,18 @@ export async function handleDetecterModal(
 
   if (parsed.action === "reasonModalPrompt") {
     const reason = interaction.fields.getTextInputValue(DETECTER_REASON_INPUT_ID);
-    const result = await getDetecterService(ctx).submitModeratorReason(
-      interaction.user.id,
-      parsed.shortId,
-      reason,
-    );
-    await interaction.reply({ content: result.message, ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const result = await getDetecterService(ctx).submitModeratorReason(
+        interaction.user.id,
+        parsed.shortId,
+        reason,
+      );
+      await interaction.editReply({ content: result.message });
+    } catch (err) {
+      ctx.log.error({ err }, "detecter: reason modal submit failed");
+      await interaction.editReply({ content: "処理中にエラーが発生しました。" }).catch(() => undefined);
+    }
     return true;
   }
 
@@ -154,6 +166,7 @@ export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotCo
   if (await handleAppealSubmitModal(interaction, ctx)) return;
   if (await routeModmailStaffAndUserInteractions(interaction, ctx)) return;
   if (await handleDetecterModal(interaction, ctx)) return;
+  if (await handleVcRenameModal(interaction, ctx)) return;
   if (await handleVcCreateModal(interaction, ctx)) return;
 }
 

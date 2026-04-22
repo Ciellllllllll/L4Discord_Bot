@@ -55,13 +55,15 @@ CREATE TABLE IF NOT EXISTS appeals (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   reviewer_id TEXT,
   review_note TEXT,
-  review_message_id TEXT
+  review_message_id TEXT,
+  hold_thread_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_appeals_guild_user_created ON appeals (guild_id, user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS modmail_replies (
   id TEXT PRIMARY KEY NOT NULL,
   ticket_id TEXT NOT NULL,
+  appeal_id TEXT,
   guild_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
   thread_id TEXT NOT NULL,
@@ -97,4 +99,15 @@ CREATE TABLE IF NOT EXISTS modmail_events (
 );
 CREATE INDEX IF NOT EXISTS idx_modmail_events_type_created ON modmail_events (event_type, created_at);
 `);
+
+  for (const stmt of [
+    "ALTER TABLE appeals ADD COLUMN hold_thread_id TEXT",
+    "ALTER TABLE modmail_replies ADD COLUMN appeal_id TEXT",
+  ]) {
+    try {
+      db.exec(stmt);
+    } catch {
+      /* 列が既にある */
+    }
+  }
 }

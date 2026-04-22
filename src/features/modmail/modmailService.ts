@@ -15,6 +15,7 @@ import {
   attachmentMetaToJson,
   buildForwardDmFiles,
   type AttachmentMeta,
+  serializeAttachmentsFromMessage,
 } from "./modmailAttachmentUtils.js";
 import { resolveModmailParentChannelId } from "./modmailConstants.js";
 import { logModmailEvent } from "./modmailEventsLog.js";
@@ -794,6 +795,16 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
 
   const open = await anyOpenModmailByUser(ctx, message.author.id);
   if (open) {
+    if (hasAttach) {
+      await relayUserPayloadToThread(
+        ctx,
+        open,
+        "User DM 受信",
+        message.content?.trim() ?? "",
+        serializeAttachmentsFromMessage(message),
+      );
+      return true;
+    }
     await relayUserDmToThread(ctx, open, message, false);
     return true;
   }
@@ -816,7 +827,15 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
     return true;
   }
 
-  const created = await createFromFirstDm(ctx, intake.guild_id, message);
+  const created = hasAttach
+    ? await createFromFirstDmWithAttachments(
+        ctx,
+        intake.guild_id,
+        message.author.id,
+        message.content?.trim() ?? "",
+        serializeAttachmentsFromMessage(message),
+      )
+    : await createFromFirstDm(ctx, intake.guild_id, message);
   if (!created) {
     await message.author
       .send({

@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { DEPLOY_GUILD_ID, DEPLOY_OWNER_ID } from "./deployConstants.js";
 import { BOT_SEMVER } from "./releaseVersions.js";
 
 // 未設定・空は true（DiscordBOTv2 / AI_Query 互換）
@@ -52,6 +51,8 @@ function assertValidIanaTimeZone(tz: string): void {
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
+  GUILD_ID: z.string().min(1),
+  OWNER_ID: z.string().min(1),
     // ターミナルに pino の DEBUG を出すか。
   // 未設定時は NODE_ENV に従い、production 以外は debug、production は info。
 
@@ -75,6 +76,18 @@ const envSchema = z.object({
 
   TICKET_DATABASE_PATH: z.string().min(1).default("data/ticket.db"),
   ADMIN_ROLE_ID: z.string().min(1),
+  /** 処刑フロー: 各投票の秒数（DiscordBOTv2 の EXEC_VOTE_SECONDS 相当、既定 20） */
+  EXEC_VOTE_SECONDS: z.coerce.number().int().min(5).max(86_400).default(20),
+  /** 処刑フロー: 管理者承認の待ち秒数（既定 600） */
+  EXEC_ADMIN_WAIT_SECONDS: z.coerce.number().int().min(30).max(86_400).default(600),
+  /** 未設定・空ならどのチャンネルでも可。設定時はそのテキストチャンネルのみ /処刑・/タイムアウト延長 の起動可 */
+  EXEC_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  /** タイムアウト延長フロー: 投票・承認メッセージの投稿先（未設定時はコマンド実行チャンネル） */
+  TIMEOUT_EXTEND_VOTE_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  /** タイムアウト延長フロー: 管理者承認の待ち秒数（DiscordBOTv2 の ADMIN_WAIT_SECONDS 相当、既定 120） */
+  TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS: z.coerce.number().int().min(30).max(86_400).default(120),
+  /** 未設定・空なら事前チェックなし。設定時、対象がこのロールを持たないと管理者事前承認が必要（DiscordBOTv2 互換） */
+  EXECUTOR_ROLE_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
     // 未設定時は releaseVersions の BOT_SEMVER（.env は任意上書き）
 
   BOT_VERSION: z.preprocess(
@@ -179,6 +192,15 @@ const envSchema = z.object({
 
   SENRYU_AUTO_MUTE_ON_PERMISSION_ERROR: z.preprocess(envFlagTrueByDefault, z.boolean()),
   SENRYU_MAX_CONTENT_LENGTH: z.coerce.number().int().min(1).max(4000).default(2000),
+    // 各句のモーラ数を ±1 まで許容（0=厳密 5/7/5、1=雑談向けに取りこぼし減）
+
+  SENRYU_MORA_TOLERANCE: z.coerce.number().int().min(0).max(1).default(0),
+    // 複数候補があるときスコア最小の1件を選ぶ（先頭候補より全体の 5/7/5 近さを優先）
+
+  SENRYU_BEST_CANDIDATE: z.preprocess(envFlagFalseByDefault, z.boolean()),
+    // go-haiku 相当（js-haiku）の find(5-7-5) と候補が一致する場合のみ採用（未設定・空は false）
+
+  SENRYU_JS_HAIKU_VERIFY_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
     // 川柳検出後に DeepSeek で候補を審査（未設定・空は false）
 
   SENRYU_AI_REVIEW_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
@@ -200,7 +222,7 @@ const envSchema = z.object({
 });
 
 type ParsedEnvConfig = z.infer<typeof envSchema>;
-export type AppConfig = ParsedEnvConfig & { GUILD_ID: string; OWNER_ID: string };
+export type AppConfig = ParsedEnvConfig;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const envWithLogDefaults = {
@@ -217,15 +239,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     const msg = parsed.error.flatten().fieldErrors;
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
-  const guildId = DEPLOY_GUILD_ID.trim();
-  const ownerId = DEPLOY_OWNER_ID.trim();
+  const data = parsed.data;
+  const guildId = data.GUILD_ID.trim();
+  const ownerId = data.OWNER_ID.trim();
   if (!guildId) {
-    throw new Error("src/core/deployConstants.ts の DEPLOY_GUILD_ID を設定してください");
+    throw new Error("GUILD_ID を設定してください");
   }
   if (!ownerId) {
-    throw new Error("src/core/deployConstants.ts の DEPLOY_OWNER_ID を設定してください");
+    throw new Error("OWNER_ID を設定してください");
   }
-  const data = parsed.data;
   assertValidIanaTimeZone(data.VC_TIME_RANKING_TIMEZONE);
   const repoRoot = findPackageJsonDir(fileURLToPath(import.meta.url));
   const R = (p: string) => (isAbsolute(p) ? p : join(repoRoot, p));

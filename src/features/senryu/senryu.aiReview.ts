@@ -52,17 +52,51 @@ export function formatKuromojiSpanForAiReview(tokens: KuromojiToken[], candidate
   ].join("\n");
 }
 
+export function formatSenryuMorphemeTableForAiReview(tokens: KuromojiToken[], candidate: SenryuCandidate): string {
+  const { start, end } = candidate.tokenSpan;
+  const slice = tokens.slice(Math.max(0, start), Math.min(tokens.length, end));
+  const lines = slice.map((t) => {
+    const r = resolveReading(t);
+    const reading = r ?? (t.reading.trim() || t.surface);
+    const pos = t.pos[0] ?? "*";
+    return `${t.surface}\t${reading}\t${pos}`;
+  });
+  return ["形態素（表層形<TAB>読み/表記<TAB>品詞大分類）:", ...lines].join("\n");
+}
+
+export function buildSenryuAiReviewUserBlock(
+  contextExcerpt: string,
+  tokens: KuromojiToken[],
+  candidate: SenryuCandidate,
+): string {
+  return [
+    "周辺文脈（正規化テキストの抜粋。Discord等の雑談の一部です）:",
+    contextExcerpt,
+    "",
+    "検出した三拍子:",
+    `上句: ${candidate.kamigo}`,
+    `中句: ${candidate.nakashichi}`,
+    `下句: ${candidate.shimogo}`,
+    "",
+    formatSenryuMorphemeTableForAiReview(tokens, candidate),
+  ].join("\n");
+}
+
 function buildSenryuReviewSystemPrompt(): string {
   return [
-    "あなたは日本語川柳（5-7-5）の最終フィルタです。",
-    "入力は形態素解析器 kuromoji の結果のみです（読みは参考。機械的な5-7-5と人間の感覚は一致しないことがあります）。",
+    "あなたは、Discord 等の雑談・業務メッセージの中から「5・7・5 に近い三拍子」を拾うためのフィルタです。",
+    "伝統的な川柳の鑑定（季語・切字・各句の百科的完結）は求めません。",
+    "川柳鑑定時は一度漢字等をすべてひらがなに崩し、5・7・5のリズムにできるだけノッているかの確認をして下さい。",
+    "「っ」「ゃ」「ゅ」「ょ」などの小さい音は時として0文字として扱われる場合もあります。ひらがなに分解した際に0文字の可能性がないかしっかりとチェックして下さい。",
     "",
-    "次の場合は verdict を reject にしてください:",
-    "- 意味のない記号・数字・英単語の羅列、明らかなノイズ",
-    "- 不自然な途中切れで無理やり5-7-5に見せている",
-    "- 川柳・短文として成立していないと判断できる",
+    "入力の「上句・中句・下句」と形態素は、機械的な候補です。口語・カタカナ・業務用語はそのまま前提です。",
     "",
-    "自然な短文・俳句調・口語的な川柳であれば accept でもよいです。",
+    "verdict は原則 accept にしてください。reject にしてよいのは次のような明らかなケースに限定します:",
+    "- 記号・数字・英単語の羅列など、明らかなノイズやスパム",
+    "- 三拍子として日本語がほとんど成立せず、読み物として意味が通らない",
+    "- 川柳を声に出して詠んだ際明らかにリズムが狂う語数5・9・5等の場合はrejectして下さい",
+    "",
+    "取りこぼしを減らすため、迷った場合や微妙な場合は必ず accept にしてください。",
     "",
     "出力は1行の JSON のみ。前後に説明やマークダウン禁止。",
     '{"verdict":"accept"} または {"verdict":"reject"}',

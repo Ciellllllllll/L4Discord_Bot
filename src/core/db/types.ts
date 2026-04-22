@@ -63,6 +63,7 @@ export interface AppealsRow {
   reviewer_id: string | null;
   review_note: string | null;
   review_message_id: string | null;
+  hold_thread_id: string | null;
 }
 
 export interface ModmailThreadsRow {
@@ -81,6 +82,7 @@ export interface ModmailThreadsRow {
 export interface ModmailRepliesRow {
   id: string;
   ticket_id: string;
+  appeal_id: string | null;
   guild_id: string;
   user_id: string;
   thread_id: string;

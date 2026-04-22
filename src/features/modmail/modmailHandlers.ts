@@ -10,7 +10,7 @@ export async function handleUserPanelModmailStart(
   ctx: BotContext,
 ): Promise<void> {
   if (!interaction.guildId) {
-    await interaction.reply({ content: "ギルド内でのみ利用できます。", ephemeral: true });
+    await interaction.reply({ content: "ギルド内でのみ利用できます。", flags: MessageFlags.Ephemeral });
     return;
   }
   const guildId = interaction.guildId;
@@ -18,7 +18,10 @@ export async function handleUserPanelModmailStart(
 
   const open = await openModmailByGuildUser(ctx, guildId, uid);
   if (open) {
-    await interaction.reply({ content: "現在対応中のチケットがあります。新規作成はできません。", ephemeral: true });
+    await interaction.reply({
+      content: "現在対応中のチケットがあります。新規作成はできません。",
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 

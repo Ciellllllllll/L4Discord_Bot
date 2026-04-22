@@ -6,6 +6,7 @@ if (process.platform === "win32") {
     execSync("cmd /c chcp 65001>nul", { stdio: "ignore", windowsHide: true });
   } catch {}
 }
+import { MessageFlags } from "discord.js";
 import { createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
 import { startPresenceRotation } from "./bot/presence.js";
@@ -65,6 +66,8 @@ import { copyAutomodFromGuildSettingsIfMissing } from "./features/moderation/cop
 import { ensureAutomoderationSchema } from "./features/moderation/automodSchema.js";
 import { copyTicketDataFromMainToTicketDb } from "./features/tickets/copyTicketDataFromMain.js";
 import { ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js";
+import { reconcileExecutionFlows } from "./features/execution/executionFlow.js";
+import { reconcileTimeoutExtendFlows } from "./features/execution/timeoutExtendFlow.js";
 import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
@@ -265,6 +268,18 @@ async function main(): Promise<void> {
         log.warn({ err, guildId: g.id }, "modmail UI restore on startup failed");
       }
       try {
+        await reconcileExecutionFlows(ctx);
+        log.info({ guildId: g.id }, "execution flows reconciled at startup");
+      } catch (err) {
+        log.error({ err, guildId: g.id }, "execution flow reconcile at startup failed");
+      }
+      try {
+        await reconcileTimeoutExtendFlows(ctx);
+        log.info({ guildId: g.id }, "timeout-extend flows reconciled at startup");
+      } catch (err) {
+        log.error({ err, guildId: g.id }, "timeout-extend flow reconcile at startup failed");
+      }
+      try {
         reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);
         log.info({ guildId: g.id }, "vc_time sessions reconciled at startup");
       } catch (err) {
@@ -349,7 +364,9 @@ async function main(): Promise<void> {
         "interaction handler error",
       );
       if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: "エラーが発生しました。", ephemeral: true }).catch(() => undefined);
+        await interaction
+          .reply({ content: "エラーが発生しました。", flags: MessageFlags.Ephemeral })
+          .catch(() => undefined);
       }
     }
   });
@@ -389,8 +406,9 @@ async function main(): Promise<void> {
     }
   });
 
-  client.on("messageUpdate", async (_old, message) => {
+  client.on("messageUpdate", async (_oldMessage, newMessage) => {
     try {
+      const message = newMessage;
       if (!message.guildId || message.author?.bot) return;
       if (message.guildId !== config.GUILD_ID) return;
       const s = await getGuildSettingsData(db, message.guildId);

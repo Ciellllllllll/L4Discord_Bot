@@ -1,6 +1,7 @@
 import {
   ChannelType,
   EmbedBuilder,
+  MessageFlags,
   type ChatInputCommandInteraction,
   type GuildMember,
   PermissionFlagsBits,
@@ -17,7 +18,11 @@ import { deepseekChat } from "../features/ai/deepseek.js";
 import { AiQueryService, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
+import { startExecutionFlow } from "../features/execution/executionFlow.js";
+import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
+import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 const Q_COOLDOWN_MS = 15_000;
+const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
 
 function metaFor(name: string) {
@@ -28,7 +33,7 @@ async function ensureVersion(interaction: ChatInputCommandInteraction, ctx: BotC
   const m = metaFor(interaction.commandName);
   if (!m) return true;
   if (!isVersionAllowed(ctx.config.BOT_VERSION, m.introducedIn)) {
-    await interaction.reply({ content: versionBlockedMessage(), ephemeral: true });
+    await interaction.reply({ content: versionBlockedMessage(), flags: MessageFlags.Ephemeral });
     return false;
   }
   return true;
@@ -43,7 +48,7 @@ export async function handleSlashCommand(
       { command: interaction.commandName, guildId: interaction.guildId, expectedGuildId: ctx.config.GUILD_ID },
       "slash command rejected (wrong guild)",
     );
-    await interaction.reply({ content: "このサーバーでは利用できません。", ephemeral: true });
+    await interaction.reply({ content: "このサーバーでは利用できません。", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -71,6 +76,7 @@ export async function handleSlashCommand(
     case "end_werewolfgame":
       return handleWerewolfEnd(interaction, ctx, member);
     case "処刑":
+      return handleExecutionSlash(interaction, ctx, member);
     case "タイムアウト延長":
       return handlePollSlash(interaction, ctx, member);
     case "disable_emoji":
@@ -79,11 +85,13 @@ export async function handleSlashCommand(
       return handleEnableEmoji(interaction, ctx, member);
     case "stamp_count":
       return handleStampCount(interaction, ctx);
-    case "stamp_ranking":
+    case "stamp_rank":
       return handleStampRanking(interaction, ctx);
+    case "mute":
+      return handleSenryuMute(interaction, ctx, member);
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
-      await interaction.reply({ content: STUB, ephemeral: true });
+      await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -95,7 +103,7 @@ async function handleChangePrompt(interaction: ChatInputCommandInteraction, _ctx
       await interaction
         .reply({
           content: "モーダルを表示できませんでした。しばらくしてから再度お試しください。",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         })
         .catch(() => undefined);
     }
@@ -105,11 +113,11 @@ async function handleChangePrompt(interaction: ChatInputCommandInteraction, _ctx
 async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
   const raw = interaction.options.getString("text", true).trim();
   if (!raw) {
-    await interaction.reply({ content: "質問内容が空です。", ephemeral: true });
+    await interaction.reply({ content: "質問内容が空です。", flags: MessageFlags.Ephemeral });
     return;
   }
   if (!canUseAi(interaction.user.id, Q_COOLDOWN_MS)) {
-    await interaction.reply({ content: "少し待ってから再度お試しください。", ephemeral: true });
+    await interaction.reply({ content: "少し待ってから再度お試しください。", flags: MessageFlags.Ephemeral });
     return;
   }
   await interaction.deferReply();
@@ -119,12 +127,17 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
     markAiUse(interaction.user.id);
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek q failed");
-    await interaction.editReply({ content: `エラー: ${String(e)}`, embeds: [], components: [] });
+    await interaction.editReply({
+      content: Q_FAILED_MESSAGE,
+      embeds: [],
+      components: [],
+      allowedMentions: { parse: [] },
+    });
   }
 }
 
 async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     const { resolved } = readAiBasePromptFiles(ctx.config);
     const { ms } = await deepseekChat(ctx.config, [
@@ -144,15 +157,15 @@ async function handleMemberCountSetup(
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", ephemeral: true });
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
   const guild = interaction.guild;
   if (!guild?.members.me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
-    await interaction.reply({ content: "BOTにチャンネル管理権限が必要です。", ephemeral: true });
+    await interaction.reply({ content: "BOTにチャンネル管理権限が必要です。", flags: MessageFlags.Ephemeral });
     return;
   }
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const name = "Member Count";
   const cat = await guild.channels.create({
     name,
@@ -204,13 +217,13 @@ async function handleWerewolfCreate(
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", ephemeral: true });
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
   const guildId = interaction.guildId!;
   const channelId = interaction.channelId;
   if (!channelId) {
-    await interaction.reply({ content: "チャンネルが不明です。", ephemeral: true });
+    await interaction.reply({ content: "チャンネルが不明です。", flags: MessageFlags.Ephemeral });
     return;
   }
   const id = randomUUID();
@@ -229,7 +242,6 @@ async function handleWerewolfCreate(
     .execute();
   await interaction.reply({
     content: `人狼募集を開始しました（ロビー）。ゲームID: \`${id.slice(0, 8)}\` / <#${channelId}>`,
-    ephemeral: false,
   });
 }
 
@@ -239,7 +251,7 @@ async function handleWerewolfEnd(
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", ephemeral: true });
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
   const guildId = interaction.guildId!;
@@ -254,47 +266,24 @@ async function handleWerewolfEnd(
   const n = Number(r.numUpdatedRows ?? 0);
   await interaction.reply({
     content: n > 0 ? "このチャンネルの人狼募集を終了しました。" : "終了対象のゲームがありません。",
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
+}
+
+async function handleExecutionSlash(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  _member: GuildMember | null,
+): Promise<void> {
+  await startExecutionFlow(interaction, ctx);
 }
 
 async function handlePollSlash(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
-  member: GuildMember | null,
+  _member: GuildMember | null,
 ): Promise<void> {
-  if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", ephemeral: true });
-    return;
-  }
-  const guildId = interaction.guildId!;
-  const channelId = interaction.channelId!;
-  const kind = interaction.commandName === "処刑" ? "execution" : "timeout_extend";
-  let state: Record<string, unknown> = { created_by: interaction.user.id };
-  if (kind === "execution") {
-    const target = interaction.options.getUser("target", true);
-    state = { ...state, target_id: target.id };
-  }
-  const id = randomUUID();
-  await ctx.db
-    .insertInto("polls")
-    .values({
-      id,
-      guild_id: guildId,
-      channel_id: channelId,
-      message_id: null,
-      kind,
-      status: "open",
-      state: JSON.stringify(state) as unknown as Record<string, unknown>,
-      ends_at: null,
-      created_at: sqliteTimestamp() as unknown as Date,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .execute();
-  await interaction.reply({
-    content: `投票レコードを作成しました（\`${kind}\` / id: \`${id.slice(0, 8)}\`）。`,
-    ephemeral: true,
-  });
+  await startTimeoutExtendFlow(interaction, ctx);
 }
 
 async function handleDisableEmoji(
@@ -303,7 +292,7 @@ async function handleDisableEmoji(
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", ephemeral: true });
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
   const target = interaction.options.getUser("user", true);
@@ -312,7 +301,7 @@ async function handleDisableEmoji(
   const ids = new Set(cur.emoji_restricted_user_ids ?? []);
   ids.add(target.id);
   await upsertGuildSettingsData(ctx.db, guildId, { emoji_restricted_user_ids: [...ids] });
-  await interaction.reply({ content: `絵文字制限を付与: ${target.tag}`, ephemeral: true });
+  await interaction.reply({ content: `絵文字制限を付与: ${target.tag}`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleEnableEmoji(
@@ -321,7 +310,7 @@ async function handleEnableEmoji(
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", ephemeral: true });
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
   const target = interaction.options.getUser("user", true);
@@ -330,7 +319,7 @@ async function handleEnableEmoji(
   const ids = new Set(cur.emoji_restricted_user_ids ?? []);
   ids.delete(target.id);
   await upsertGuildSettingsData(ctx.db, guildId, { emoji_restricted_user_ids: [...ids] });
-  await interaction.reply({ content: `絵文字制限を解除: ${target.tag}`, ephemeral: true });
+  await interaction.reply({ content: `絵文字制限を解除: ${target.tag}`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleStampCount(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
@@ -343,7 +332,7 @@ async function handleStampCount(interaction: ChatInputCommandInteraction, ctx: B
     .where("user_id", "=", user.id)
     .execute();
   const total = rows.reduce((acc, r) => acc + Number(r.count), 0);
-  await interaction.reply({ content: `<@${user.id}> のスタンプ利用合計: **${total}**`, ephemeral: true });
+  await interaction.reply({ content: `<@${user.id}> のスタンプ利用合計: **${total}**`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
@@ -357,9 +346,31 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
     .limit(15)
     .execute();
   if (rows.length === 0) {
-    await interaction.reply({ content: "まだデータがありません。", ephemeral: true });
+    await interaction.reply({ content: "まだデータがありません。", flags: MessageFlags.Ephemeral });
     return;
   }
   const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> — ${r.total}`);
-  await interaction.reply({ content: lines.join("\n").slice(0, 2000), ephemeral: true });
+  await interaction.reply({ content: lines.join("\n").slice(0, 2000), flags: MessageFlags.Ephemeral });
+}
+
+async function handleSenryuMute(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!member || !isAdmin(member, ctx.config)) {
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const channelId = interaction.channelId;
+  muteChannelForSenryu(channelId);
+  ctx.log.info(
+    { channelId, userId: interaction.user.id, command: "mute" },
+    "senryu: channel muted via slash command",
+  );
+  await interaction.reply({
+    content:
+      "このチャンネルでの川柳検出をオフにしました。メッセージの川柳は検出・返信されません。（親フォーラム／テキストチャンネルをミュートした場合は、その下のスレッドでも検出がスキップされます）",
+    flags: MessageFlags.Ephemeral,
+  });
 }

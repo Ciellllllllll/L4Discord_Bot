@@ -132,7 +132,7 @@ export async function handleChangePromptModalSubmit(
   } catch (e) {
     ctx.log.error({ err: e }, "change_prompt write failed");
     await interaction
-      .editReply({ content: `プロンプトの保存に失敗しました: ${String(e)}` })
+      .editReply({ content: "プロンプトの保存に失敗しました。しばらくしてから再度お試しください。" })
       .catch(() => undefined);
   }
 

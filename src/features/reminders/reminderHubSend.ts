@@ -14,7 +14,7 @@ export function buildReminderHubPublicEmbed(
   const meta = EVENT_META[ev];
   const t = titleLine.trim() || meta.label;
   const b = bodyText.trim();
-  const desc = [`## ${t}`, b ? `### **${b}**` : ""]
+  const desc = [`## ${t}`, b ? `### ${b}` : ""]
     .filter((line) => line.length > 0)
     .join("\n")
     .slice(0, 4096);

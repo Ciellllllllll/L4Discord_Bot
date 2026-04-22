@@ -97,6 +97,8 @@ export type AuditLookupResult = {
   actorId: string;
   actorDisplay: string;
   reason: string;
+  /** 監査ログの reason が空でなく、モデレーターが入力したとみなせる場合 */
+  hasExplicitAuditReason: boolean;
   auditId: string;
   createdAt: Date;
     // MemberUpdate 監査の communication_disabled_until 新値（ゲートウェイで member が欠ける場合の補完用）
@@ -285,10 +287,14 @@ export class DetecterService {
             }
           }
 
+          const rawReason = entry.reason;
+          const hasExplicitAuditReason = rawReason != null && String(rawReason).trim() !== "";
+
           return {
             actorId: normalizeSnowflake(actor?.id ?? ""),
             actorDisplay: userDisplayName(actor),
             reason: safeText(entry.reason, cfg.DETECTER_DEFAULT_REASON_TEXT),
+            hasExplicitAuditReason,
             auditId,
             createdAt,
             communicationDisabledUntilFromAudit,
@@ -392,6 +398,7 @@ export class DetecterService {
         { name: "対象ユーザー", value: `${event.targetDisplay} (\`${event.targetUserId}\`)`, inline: false },
         { name: "処罰種別", value: formatPunishmentType(event.punishmentType), inline: false },
         { name: "監査ログ上の理由", value: safeText(reasonText, cfg.DETECTER_DEFAULT_REASON_TEXT), inline: false },
+        { name: "状態", value: buildDetecterStatusDisplayText(event, cfg).slice(0, 1024), inline: false },
       )
       .setFooter({ text: `event_id=${event.eventId}` });
 
@@ -421,6 +428,62 @@ export class DetecterService {
 
     const updatedEmbed = this.buildReasonPromptEmbed(event, reasonText);
     await message.edit({ embeds: [updatedEmbed], components: [] }).catch(() => undefined);
+  }
+
+  /** 監査ログに理由がある場合：ボタンなし・メンションは通知なし。対象者 DM は insertIncidentAndDmTarget 側。 */
+  private async sendAuditReasonLoggedNotice(event: PunishmentEvent): Promise<boolean> {
+    const guild = this.ctx.client.guilds.cache.get(event.guildId);
+    if (!guild) return false;
+
+    const promptChannel = await this.resolveLoggerChannel(guild);
+    if (!promptChannel) {
+      this.ctx.log.warn(
+        { guildId: event.guildId, channelId: this.resolveReasonPromptChannelId() },
+        "detecter: mod log / logger channel not found (audit reason path)",
+      );
+      return false;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle("処罰の記録（監査ログに理由あり）")
+      .setDescription("監査ログに理由が入力されているため、理由入力ボタンは表示していません。対象ユーザーへ異議申し立て案内を送信しました。")
+      .setColor(0x27ae60)
+      .setTimestamp(new Date())
+      .addFields(
+        { name: "実行者", value: `${event.actorDisplay} (\`${event.actorUserId}\`)`, inline: false },
+        { name: "サーバー", value: `${event.guildName} (${event.guildId})`, inline: false },
+        { name: "対象ユーザー", value: `${event.targetDisplay} (\`${event.targetUserId}\`)`, inline: false },
+        { name: "処罰種別", value: formatPunishmentType(event.punishmentType), inline: false },
+        { name: "監査ログ上の理由", value: safeText(event.detectedReason, this.ctx.config.DETECTER_DEFAULT_REASON_TEXT), inline: false },
+        {
+          name: "状態",
+          value: buildDetecterStatusDisplayText(event, this.ctx.config).slice(0, 1024),
+          inline: false,
+        },
+      )
+      .setFooter({ text: `event_id=${event.eventId}` });
+
+    if (event.punishmentType === "timeout") {
+      embed.addFields({
+        name: "タイムアウト終了日時",
+        value: fmtDt(new Date(event.timeoutEnd * 1000)),
+        inline: false,
+      });
+    }
+
+    const content = `<@${event.actorUserId}>さん。<@${event.targetUserId}> への処罰について、監査ログに理由が記録されています。`;
+
+    try {
+      await promptChannel.send({
+        content,
+        embeds: [embed],
+        allowedMentions: { parse: [] },
+      });
+      return true;
+    } catch (err) {
+      this.ctx.log.warn({ err }, "detecter: failed to send audit-reason notice");
+      return false;
+    }
   }
 
   private async sendReasonPrompt(event: PunishmentEvent): Promise<boolean> {
@@ -594,6 +657,7 @@ export class DetecterService {
 
     const auditActorId = auditResult ? normalizeSnowflake(auditResult.actorId) : "";
     const auditReason = auditResult?.reason ?? cfg.DETECTER_DEFAULT_REASON_TEXT;
+    const hasExplicitAuditReason = auditResult?.hasExplicitAuditReason ?? false;
 
     const actor = await this.resolveActorForPrompt({
       guild,
@@ -635,6 +699,12 @@ export class DetecterService {
     };
 
     if (actor.actorId && actor.strictActor) {
+      if (hasExplicitAuditReason) {
+        await this.sendAuditReasonLoggedNotice(event);
+        await this.insertIncidentAndDmTarget(event, event.detectedReason);
+        return;
+      }
+
       this.pendingEvents.set(eventId, event);
       const sent = await this.sendReasonPrompt(event);
       if (!sent) {
@@ -762,5 +832,18 @@ export class DetecterService {
       this.ctx.log.error({ err }, "detecter: guildMemberUpdate");
     }
   }
+}
+
+/** 理由プロンプト Embed の「状態」欄（開いた時点のスナップショット） */
+export function buildDetecterStatusDisplayText(
+  event: PunishmentEvent,
+  cfg: { DETECTER_DEFAULT_REASON_TEXT: string },
+): string {
+  const r = safeText(event.detectedReason, cfg.DETECTER_DEFAULT_REASON_TEXT);
+  const auditLine =
+    r === cfg.DETECTER_DEFAULT_REASON_TEXT
+      ? "未入力（下の「理由」欄に入力してください）"
+      : `参照: ${r.slice(0, 500)}`;
+  return ["審査待ち：モデレーターによる理由入力待ち", `監査ログの理由：${auditLine}`].join("\n");
 }
 

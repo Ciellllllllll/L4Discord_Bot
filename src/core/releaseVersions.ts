@@ -1,7 +1,4 @@
-// リリース版の単一ソース（DB / JSON ファイルではなく TypeScript）。
-// 起動時にログ・スラッシュ同期・機能ゲート・常設 UI で参照される。
-
-export const BOT_SEMVER = "2.0.1";
+export const BOT_SEMVER = "2.0.2";
 
 // スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER
 
@@ -9,14 +6,17 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   q: "0.1.0",
   ping: "0.1.0",
   vc_rank: "0.1.0",
+  member_count_setup: "0.1.0",
   create_werewolfgame: "2.1.0",
   end_werewolfgame: "2.1.0",
   処刑: "0.1.0",
   タイムアウト延長: "0.1.0",
   disable_emoji: "0.1.0",
   enable_emoji: "0.1.0",
+  stamp_count: "0.1.0",
   stamp_rank: "0.1.0",
   change_prompt: "2.0.1",
+  mute: "2.0.1",
 };
 
 // プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER
@@ -37,7 +37,7 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
 // レイアウト変更時はここだけ上げると次回起動で編集反映される。
 
 export const PERMANENT_UI_VERSION: Record<string, string> = {
-  vc_creator: "1.0.0",
+  vc_creator: "1.1.0",
   reaction_role_admin: "1.0.0",
   message_log_panel: "1.0.0",
   user_contact_panel: "1.0.0",

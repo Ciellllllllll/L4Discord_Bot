@@ -1,5 +1,3 @@
-const SYMBOL_REPLACE_PATTERN = /[\[\]［］「」『』、。？！]/g;
-
 // 半角カタカナ → 全角（U+FF61–FF9F ブロック）
 
 export function toFullWidthKana(text: string): string {
@@ -19,5 +17,7 @@ export function toFullWidthKana(text: string): string {
 export function normalizeSenryuText(content: string): string {
   const nfc = content.normalize("NFC");
   const kana = toFullWidthKana(nfc);
-  return kana.replace(SYMBOL_REPLACE_PATTERN, " ");
+  // 句読点・括弧・空白等を「空白1文字」にしない（kuromoji が読み無しの「空白」トークンを出し 5-7-5 検出が途切れるため）。
+  // ASCII 読点（, . 等）は名詞扱いで誤分割されることもあるので、解析前にまとめて除去する。
+  return kana.replace(/[\p{P}\p{Z}\p{Cf}]+/gu, "");
 }
