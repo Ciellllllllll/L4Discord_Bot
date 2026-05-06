@@ -32,5 +32,5 @@ jobs:
             npm ci
             npm run build
 
-            systemctl restart l4-discordbot
-            systemctl status l4-discordbot --no-pager
+            sudo /bin/systemctl restart l4-discordbot
+            sudo /bin/systemctl status l4-discordbot --no-pager
