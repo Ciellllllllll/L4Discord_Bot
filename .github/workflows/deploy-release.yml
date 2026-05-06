@@ -14,14 +14,6 @@ jobs:
       cancel-in-progress: true
 
     steps:
-      - name: Check secrets are present
-        run: |
-          test -n "${{ secrets.VPS_HOST }}" || (echo "VPS_HOST is empty" && exit 1)
-          test -n "${{ secrets.VPS_USER }}" || (echo "VPS_USER is empty" && exit 1)
-          test -n "${{ secrets.VPS_PORT }}" || (echo "VPS_PORT is empty" && exit 1)
-          test -n "${{ secrets.VPS_SSH_KEY }}" || (echo "VPS_SSH_KEY is empty" && exit 1)
-          echo "Secrets are present"
-
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -40,5 +32,5 @@ jobs:
             npm ci
             npm run build
 
-            systemctl restart l4-discordbot
-            systemctl status l4-discordbot --no-pager
+            sudo /bin/systemctl restart l4-discordbot
+            sudo /bin/systemctl status l4-discordbot --no-pager
