@@ -21,6 +21,7 @@ import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
 import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
 import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
+import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -30,6 +31,7 @@ function metaFor(name: string) {
 }
 
 async function ensureVersion(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<boolean> {
+  if (ctx.config.BOT_PROFILE === "debug") return true;
   const m = metaFor(interaction.commandName);
   if (!m) return true;
   if (!isVersionAllowed(ctx.config.BOT_VERSION, m.introducedIn)) {
@@ -87,6 +89,8 @@ export async function handleSlashCommand(
       return handleStampCount(interaction, ctx);
     case "stamp_rank":
       return handleStampRanking(interaction, ctx);
+    case "ticket_users":
+      return handleTicketUsers(interaction, ctx, member);
     case "mute":
       return handleSenryuMute(interaction, ctx, member);
     default:
@@ -351,6 +355,44 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
   }
   const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> — ${r.total}`);
   await interaction.reply({ content: lines.join("\n").slice(0, 2000), flags: MessageFlags.Ephemeral });
+}
+
+async function handleTicketUsers(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!member || !isAdmin(member, ctx.config)) {
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const limit = interaction.options.getInteger("limit") ?? 15;
+  const rows = await listTicketUsageSummaries(ctx, interaction.guildId!, limit);
+  if (rows.length === 0) {
+    await interaction.reply({
+      content: "Ticket 利用データがありません。",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const lines = rows.map((row, i) => {
+    const lastUsedAt = row.lastUsedAt ? `<t:${Math.floor(new Date(row.lastUsedAt).getTime() / 1000)}:R>` : "-";
+    return [
+      `${i + 1}. <@${row.userId}>`,
+      `total=${row.totalCount}`,
+      `modmail=${row.modmailCount}`,
+      `appeal=${row.appealCount}`,
+      `last=${lastUsedAt}`,
+    ].join(" / ");
+  });
+
+  await interaction.reply({
+    content: lines.join("\n").slice(0, 2000),
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
 }
 
 async function handleSenryuMute(

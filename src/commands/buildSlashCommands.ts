@@ -75,6 +75,20 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     new SlashCommandBuilder().setName("stamp_count").setDescription("スタンプ使用回数を表示").toJSON(),
 
     new SlashCommandBuilder()
+      .setName("ticket_users")
+      .setDescription("Ticket 利用者を既存データから集計します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addIntegerOption((o) =>
+        o
+          .setName("limit")
+          .setDescription("表示件数")
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(25),
+      )
+      .toJSON(),
+
+    new SlashCommandBuilder()
       .setName("change_prompt")
       .setDescription("自分用の AI システムプロンプトを書き換えます")
       .toJSON(),

@@ -48,7 +48,108 @@ function assertValidIanaTimeZone(tz: string): void {
   }
 }
 
+const botProfiles = ["production", "debug"] as const;
+type BotProfile = (typeof botProfiles)[number];
+
+const profileOverridableKeys = [
+  "DISCORD_TOKEN",
+  "DISCORD_CLIENT_ID",
+  "GUILD_ID",
+  "OWNER_ID",
+  "ADMIN_ROLE_ID",
+  "EXEC_CHANNEL_ID",
+  "TIMEOUT_EXTEND_VOTE_CHANNEL_ID",
+  "EXECUTOR_ROLE_ID",
+  "MOD_LOG_CHANNEL_ID",
+  "LOGGER_CHANNEL_ID",
+  "LOG_CHANNEL_ID",
+  "MODMAIL_LOG_CHANNEL_ID",
+  "APPEAL_REVIEW_CHANNEL_ID",
+  "DETECTER_FALLBACK_CHANNEL_ID",
+  "VC_CREATE_CATEGORY_ID",
+  "REACTION_ROLE_UI_CHANNEL_ID",
+  "REACTION_ROLE_OUTPUT_CHANNEL_ID",
+  "DEEPSEEK_API_KEY",
+  "DEEPSEEK_API_BASE",
+  "DEEPSEEK_MODEL",
+  "DATABASE_PATH",
+  "MESSAGE_LOG_DB_PATH",
+  "LOG_DB_PATH",
+  "MESSAGE_ATTACHMENT_STORE_DB_PATH",
+  "MESSAGE_ATTACHMENT_FILES_DIR",
+  "TICKET_DATABASE_PATH",
+  "VC_TIME_DATABASE_PATH",
+  "AI_HISTORY_DATABASE_PATH",
+  "AUTOMODERATION_DATABASE_PATH",
+  "REMINDER_DATABASE_PATH",
+  "REMINDER_DB_PATH",
+  "PROMPT_FILE_PATH",
+  "USER_PROMPT_DIR",
+  "COLD_LAUGH_STORE_PATH",
+  "SENRYU_KUROMOJI_DICT_PATH",
+] as const;
+
+function normalizeBotProfile(v: unknown): BotProfile {
+  const s = String(v || "production").trim().toLowerCase();
+  if (s === "prod") return "production";
+  if (s === "dev" || s === "development") return "debug";
+  if (botProfiles.includes(s as BotProfile)) return s as BotProfile;
+  throw new Error(`Invalid PROFILE/BOT_PROFILE: ${String(v)}. Use "production" or "debug".`);
+}
+
+function resolveBotProfile(env: NodeJS.ProcessEnv): BotProfile {
+  if (env.PROFILE || env.BOT_PROFILE || env.APP_ENV) {
+    return normalizeBotProfile(env.PROFILE || env.BOT_PROFILE || env.APP_ENV);
+  }
+  if (env.NODE_ENV === "development") return "debug";
+  return "production";
+}
+
+function profilePrefix(profile: BotProfile): "PRODUCTION" | "DEBUG" {
+  return profile === "production" ? "PRODUCTION" : "DEBUG";
+}
+
+function profileDataDefaults(profile: BotProfile): Record<string, string> {
+  const base = `data/${profile}`;
+  return {
+    DATABASE_PATH: `${base}/l4discord.sqlite`,
+    MESSAGE_LOG_DB_PATH: `${base}/message.db`,
+    MESSAGE_ATTACHMENT_STORE_DB_PATH: `${base}/message_attachment_store.db`,
+    MESSAGE_ATTACHMENT_FILES_DIR: `${base}/message_log_attachments`,
+    TICKET_DATABASE_PATH: `${base}/ticket.db`,
+    VC_TIME_DATABASE_PATH: `${base}/vc_time.db`,
+    AI_HISTORY_DATABASE_PATH: `${base}/AI_History.db`,
+    AUTOMODERATION_DATABASE_PATH: `${base}/Automoderation.db`,
+    REMINDER_DATABASE_PATH: `${base}/reminder.db`,
+    USER_PROMPT_DIR: `${base}/AI/prompt/user`,
+    COLD_LAUGH_STORE_PATH: `${base}/server/json/cold_laugh_counts.json`,
+  };
+}
+
+function applyProfileOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const profile = resolveBotProfile(env);
+  const prefix = profilePrefix(profile);
+  const next: NodeJS.ProcessEnv = {
+    ...profileDataDefaults(profile),
+    ...env,
+    PROFILE: profile,
+    BOT_PROFILE: profile,
+  };
+
+  for (const key of profileOverridableKeys) {
+    const prefixedKey = `${prefix}_${key}`;
+    const suffixedKey = `${key}_${prefix}`;
+    const value = env[prefixedKey] ?? env[suffixedKey];
+    if (value !== undefined) {
+      next[key] = value;
+    }
+  }
+
+  return next;
+}
+
 const envSchema = z.object({
+  BOT_PROFILE: z.enum(botProfiles).default("production"),
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
   GUILD_ID: z.string().min(1),
@@ -94,7 +195,7 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined ? BOT_SEMVER : v),
     z.string().min(1),
   ),
-  DEEPSEEK_API_KEY: z.string().min(1),
+  DEEPSEEK_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
   DEEPSEEK_API_BASE: z.preprocess(
     (v) => (v === "" || v === undefined ? undefined : v),
     z.string().url().optional(),
@@ -225,14 +326,17 @@ type ParsedEnvConfig = z.infer<typeof envSchema>;
 export type AppConfig = ParsedEnvConfig;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const profiledEnv = applyProfileOverrides(env);
   const envWithLogDefaults = {
-    ...env,
+    ...profiledEnv,
     MESSAGE_LOG_DB_PATH:
-      env.MESSAGE_LOG_DB_PATH ||
-      env.LOG_DB_PATH ||
-      "data/message.db",
+      profiledEnv.MESSAGE_LOG_DB_PATH ||
+      profiledEnv.LOG_DB_PATH ||
+      profileDataDefaults(resolveBotProfile(profiledEnv)).MESSAGE_LOG_DB_PATH,
     REMINDER_DATABASE_PATH:
-      env.REMINDER_DATABASE_PATH || env.REMINDER_DB_PATH || "data/reminder.db",
+      profiledEnv.REMINDER_DATABASE_PATH ||
+      profiledEnv.REMINDER_DB_PATH ||
+      profileDataDefaults(resolveBotProfile(profiledEnv)).REMINDER_DATABASE_PATH,
   };
   const parsed = envSchema.safeParse(envWithLogDefaults);
   if (!parsed.success) {
@@ -240,8 +344,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
   const data = parsed.data;
+  const discordToken = data.DISCORD_TOKEN.trim();
   const guildId = data.GUILD_ID.trim();
   const ownerId = data.OWNER_ID.trim();
+  if (!discordToken) {
+    throw new Error("DISCORD_TOKEN is empty. Set the bot token from Discord Developer Portal > Bot > Token.");
+  }
+  if (/^(Bot|Bearer)\s+/i.test(discordToken)) {
+    throw new Error("DISCORD_TOKEN must be the raw bot token only. Remove the 'Bot ' or 'Bearer ' prefix.");
+  }
   if (!guildId) {
     throw new Error("GUILD_ID を設定してください");
   }
@@ -253,6 +364,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const R = (p: string) => (isAbsolute(p) ? p : join(repoRoot, p));
   return {
     ...data,
+    DISCORD_TOKEN: discordToken,
     GUILD_ID: guildId,
     OWNER_ID: ownerId,
     DATABASE_PATH: R(data.DATABASE_PATH),

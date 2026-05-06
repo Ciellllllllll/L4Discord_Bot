@@ -88,6 +88,7 @@ async function main(): Promise<void> {
   const log = createLogger(config);
   log.info(
     {
+      botProfile: config.BOT_PROFILE,
       effectiveBotVersion: config.BOT_VERSION,
       guildId: config.GUILD_ID,
       databasePath: config.DATABASE_PATH,
@@ -524,7 +525,17 @@ async function main(): Promise<void> {
   );
 
   log.info("connecting to Discord (login)…");
-  await client.login(config.DISCORD_TOKEN);
+  try {
+    await client.login(config.DISCORD_TOKEN);
+  } catch (err) {
+    if (err instanceof Error && (err as { code?: unknown }).code === "TokenInvalid") {
+      throw new Error(
+        "DISCORD_TOKEN was rejected by Discord. Regenerate the bot token in Discord Developer Portal > Bot > Reset Token, paste only the raw token into .env, then restart the bot.",
+        { cause: err },
+      );
+    }
+    throw err;
+  }
   log.info("discord login call returned (awaiting clientReady for full readiness)");
 
   const shutdown = async () => {

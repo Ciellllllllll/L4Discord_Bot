@@ -9,6 +9,11 @@ import { runNologToggleAndBuildEmbed } from "../features/messageLog/messageLogNo
 
 const PREFIX = "!";
 
+function isPrefixVersionAllowed(ctx: BotContext, botVersion: string, command: string): boolean {
+  if (ctx.config.BOT_PROFILE === "debug") return true;
+  return isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION[command] ?? "0.0.0");
+}
+
 export async function handlePrefixMessage(message: Message, ctx: BotContext): Promise<boolean> {
   if (message.author.bot) return false;
   if (!message.guildId || message.guildId !== ctx.config.GUILD_ID) return false;
@@ -20,7 +25,7 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   const botVersion = ctx.config.BOT_VERSION ?? BOT_SEMVER;
 
   if (lower === "setup") {
-    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.setup ?? "0.0.0")) {
+    if (!isPrefixVersionAllowed(ctx, botVersion, "setup")) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: "setup", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
@@ -44,7 +49,7 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   }
 
   if (lower === "nolog") {
-    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.nolog ?? "0.0.0")) {
+    if (!isPrefixVersionAllowed(ctx, botVersion, "nolog")) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: "nolog", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
@@ -88,7 +93,7 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   }
 
   if (lower === "reload") {
-    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.reload ?? "0.0.0")) {
+    if (!isPrefixVersionAllowed(ctx, botVersion, "reload")) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: "reload", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
@@ -114,7 +119,7 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   }
 
   if (["start", "kill", "guard", "see"].includes(lower)) {
-    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION[lower] ?? "0.0.0")) {
+    if (!isPrefixVersionAllowed(ctx, botVersion, lower)) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: lower, userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
@@ -125,7 +130,7 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   }
 
   if (lower === "reply") {
-    if (!isVersionAllowed(botVersion, PREFIX_COMMAND_MIN_BOT_VERSION.reply ?? "0.0.0")) {
+    if (!isPrefixVersionAllowed(ctx, botVersion, "reply")) {
       await message.reply(versionBlockedMessage());
       ctx.log.info({ command: "reply", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
       return true;
