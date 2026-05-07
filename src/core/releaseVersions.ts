@@ -1,4 +1,4 @@
-export const BOT_SEMVER = "2.0.2";
+export const BOT_SEMVER = "2.0.4";
 
 // スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER
 

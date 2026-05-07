@@ -3,16 +3,21 @@ import type { Client, VoiceState } from "discord.js";
 import { snowflakeToBigInt } from "../../core/snowflake.js";
 
 function closeOpenSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint): void {
-  const row = sqlite
+  const rows = sqlite
     .prepare(
-      `SELECT id, started_at FROM sessions WHERE guild_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`,
+      `SELECT id, started_at FROM sessions WHERE guild_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY id`,
     )
-    .get(gid, uid) as { id: number; started_at: string } | undefined;
-  if (!row) return;
-  const end = new Date().toISOString();
-  const startMs = Date.parse(row.started_at);
-  const dur = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
-  sqlite.prepare(`UPDATE sessions SET ended_at = ?, duration_sec = ? WHERE id = ?`).run(end, dur, row.id);
+    .all(gid, uid) as { id: number; started_at: string }[];
+  if (rows.length === 0) return;
+  const now = new Date();
+  const end = now.toISOString();
+  const endMs = now.getTime();
+  const update = sqlite.prepare(`UPDATE sessions SET ended_at = ?, duration_sec = ? WHERE id = ?`);
+  for (const row of rows) {
+    const startMs = Date.parse(row.started_at);
+    const dur = Number.isFinite(startMs) ? Math.max(0, Math.floor((endMs - startMs) / 1000)) : 0;
+    update.run(end, dur, row.id);
+  }
 }
 
 function startSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint, channelId: string): void {
