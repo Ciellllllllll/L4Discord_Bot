@@ -28,7 +28,7 @@ export function buildUserContactPanelPayload(): MessageCreateOptions {
   const embed = new EmbedBuilder()
     .setTitle("サポート・お問い合わせ")
     .setDescription(
-      "「Modmailを始める」で DM に案内が届きます。DM の「チケットを作成」でタイトル・詳細・添付を入力するか、メッセージを送るとスタッフ側にチケットが作成されます。",
+      "「Modmailを始める」で DM に案内が届きます。DM の「チケットを作成」からタイトル・詳細・添付を入力すると、スタッフ側にチケットが作成されます。",
     )
     .setColor(0x57f287);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(

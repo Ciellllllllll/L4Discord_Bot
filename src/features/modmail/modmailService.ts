@@ -817,7 +817,7 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
           new EmbedBuilder()
             .setTitle("Modmail のご案内")
             .setDescription(
-              "サーバー内の「Modmailを始める」から DM 案内を受け取り、「チケットを作成」またはメッセージ送信で相談を開始してください。",
+              "サーバー内の「Modmailを始める」から DM 案内を受け取り、「チケットを作成」ボタンから相談を開始してください。",
             )
             .setColor(0xe67e22)
             .setTimestamp(new Date()),
@@ -827,28 +827,19 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
     return true;
   }
 
-  const created = hasAttach
-    ? await createFromFirstDmWithAttachments(
-        ctx,
-        intake.guild_id,
-        message.author.id,
-        message.content?.trim() ?? "",
-        serializeAttachmentsFromMessage(message),
-      )
-    : await createFromFirstDm(ctx, intake.guild_id, message);
-  if (!created) {
-    await message.author
-      .send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("送信失敗")
-            .setDescription("チケットの作成に失敗しました。サーバーで受付からやり直してください。")
-            .setColor(0xe74c3c)
-            .setTimestamp(new Date()),
-        ],
-      })
-      .catch(() => undefined);
-  }
+  await message.author
+    .send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("Modmail 受付待機中")
+          .setDescription(
+            "まだチケットは作成されていません。先ほど送信した Modmail 受付メッセージの「チケットを作成」ボタンから内容を入力してください。",
+          )
+          .setColor(0xe67e22)
+          .setTimestamp(new Date()),
+      ],
+    })
+    .catch(() => undefined);
   return true;
 }
 
@@ -861,7 +852,7 @@ export async function sendModmailStartDm(user: User, rows: unknown[]): Promise<v
           [
             "Modmail 受付です。",
             "下の「チケットを作成」ボタンからタイトル・詳細・任意の添付を入力すると、スタッフ側にチケットが作成されます。",
-            "テキストのみ先に送りたい場合は、この DM にメッセージを送っても構いません（最初のメッセージで受付が始まります）。",
+            "チケット作成前の通常メッセージはスタッフ側に送信されません。",
           ].join("\n"),
         )
         .setColor(0x3498db)
