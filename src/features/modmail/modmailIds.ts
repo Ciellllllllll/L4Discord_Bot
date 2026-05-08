@@ -13,6 +13,7 @@ export const MM_IDS = {
   REPLY_ATTACHMENT_MODAL_PREFIX: "mm_rattm:",
   USER_REPLY_PREFIX: "mm_urep:",
   USER_REPLY_MODAL_PREFIX: "mm_urepm:",
+  INTAKE_CANCEL_PREFIX: "mm_intake_cancel:",
     // DM 受付: チケット作成モーダルへ（DiscordBOTv2 `modmail_ticket_start:` 相当）
 
   TICKET_START_PREFIX: "mm_tktstart:",
@@ -27,6 +28,7 @@ export const MM_IDS = {
 } as const;
 
 export const MODMAIL_REPLY_COMMAND = "!reply";
+export const MODMAIL_USER_SEND_COMMAND = "!send";
 
 export function makeModmailNonce(): string {
   return randomBytes(6).toString("base64url").replace(/=/g, "").slice(0, 12);
