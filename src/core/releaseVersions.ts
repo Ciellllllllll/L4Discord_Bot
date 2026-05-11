@@ -6,6 +6,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   q: "0.1.0",
   ping: "0.1.0",
   vc_rank: "0.1.0",
+  afk: "2.0.4",
   member_count_setup: "0.1.0",
   create_werewolfgame: "2.1.0",
   end_werewolfgame: "2.1.0",

@@ -23,6 +23,7 @@ import {
   handleVcGenreSelect,
   handleVcRenameModal,
 } from "../features/vc/vcInteractionHandlers.js";
+import { handleAfkDisconnectButton } from "../features/vc/afkDisconnect.js";
 import {
   handleReactionRoleButton,
   handleReactionRoleModal,
@@ -127,6 +128,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
   if (await handleUserContactPanelButton(interaction, ctx)) return;
   if (await handleReactionRoleButton(interaction, ctx)) return;
   if (await handleDetecterButton(interaction, ctx)) return;
+  if (await handleAfkDisconnectButton(interaction, ctx)) return;
   if (await handleVcCreatorButton(interaction, ctx)) return;
   if (await handlePanelButton(interaction, ctx)) return;
 }

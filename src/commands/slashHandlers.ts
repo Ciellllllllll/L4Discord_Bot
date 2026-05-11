@@ -22,6 +22,7 @@ import { startExecutionFlow } from "../features/execution/executionFlow.js";
 import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
 import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.js";
+import { startAfkDisconnectCommand } from "../features/vc/afkDisconnect.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -73,6 +74,8 @@ export async function handleSlashCommand(
       return handleMemberCountSetup(interaction, ctx, member);
     case "vc_rank":
       return handleVcRank(interaction, ctx);
+    case "afk":
+      return startAfkDisconnectCommand(interaction, ctx);
     case "create_werewolfgame":
       return handleWerewolfCreate(interaction, ctx, member);
     case "end_werewolfgame":

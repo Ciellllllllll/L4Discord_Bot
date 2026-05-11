@@ -32,6 +32,11 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       )
       .toJSON(),
     new SlashCommandBuilder()
+      .setName("afk")
+      .setDescription("同じVCにいる寝落ちユーザーを確認付きで切断します")
+      .addUserOption((o) => o.setName("target").setDescription("切断対象の寝落ちユーザー").setRequired(true))
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName("member_count_setup")
       .setDescription("メンバー数表示用のカテゴリとVCチャンネルを作成します")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
