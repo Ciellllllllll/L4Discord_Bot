@@ -244,6 +244,7 @@ export async function approveModmailReply(
           new EmbedBuilder()
             .setTitle("Modmail 返信")
             .setDescription(`${reply.fixed_reply_body || "(本文なし)"}${failedNote}`)
+            .setFooter({ text: "返信するボタン、または !send 本文 で返信できます。" })
             .setColor(0x3498db)
             .setTimestamp(new Date()),
         ],
@@ -304,6 +305,7 @@ export async function approveModmailReply(
         new EmbedBuilder()
           .setTitle("Modmail 返信")
           .setDescription(`${reply.fixed_reply_body || "(本文なし)"}${failedNote}`)
+          .setFooter({ text: "返信するボタン、または !send 本文 で返信できます。" })
           .setColor(0x3498db)
           .setTimestamp(new Date()),
       ],

@@ -1,4 +1,4 @@
-export const BOT_SEMVER = "2.0.2";
+export const BOT_SEMVER = "2.0.4";
 
 // スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER
 
@@ -6,6 +6,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   q: "0.1.0",
   ping: "0.1.0",
   vc_rank: "0.1.0",
+  afk: "2.0.4",
   member_count_setup: "0.1.0",
   create_werewolfgame: "2.1.0",
   end_werewolfgame: "2.1.0",
@@ -15,6 +16,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   enable_emoji: "0.1.0",
   stamp_count: "0.1.0",
   stamp_rank: "0.1.0",
+  ticket_users: "2.0.2",
   change_prompt: "2.0.1",
   mute: "2.0.1",
 };

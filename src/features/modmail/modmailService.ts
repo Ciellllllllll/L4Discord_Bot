@@ -19,7 +19,8 @@ import {
 } from "./modmailAttachmentUtils.js";
 import { resolveModmailParentChannelId } from "./modmailConstants.js";
 import { logModmailEvent } from "./modmailEventsLog.js";
-import { buildModmailCloseRow } from "./modmailUi.js";
+import { MODMAIL_USER_SEND_COMMAND } from "./modmailIds.js";
+import { buildModmailCloseRow, buildModmailIntakeCancelRow, buildModmailThreadLinkRow } from "./modmailUi.js";
 
 // select 結果（Kysely の ColumnType と整合させるためのランタイム行型）
 
@@ -38,6 +39,7 @@ type RelayChannel = TextChannel | NewsChannel | ThreadChannel;
 
 const INTAKE_PENDING = "PendingFirstMessage";
 const INTAKE_CONSUMED = "Consumed";
+const INTAKE_CANCELLED = "Cancelled";
 const MM_OPEN = "open";
 export const MM_CLOSED = "closed";
 
@@ -87,18 +89,6 @@ async function sendLong(channel: RelayChannel, text: string): Promise<void> {
   for (const chunk of splitDiscord(text)) {
     await channel.send({ content: chunk || " ", allowedMentions: { parse: [] } });
   }
-}
-
-function serializeAttachments(message: Message): { name: string | null; url: string | null; size: number | null }[] {
-  const out: { name: string | null; url: string | null; size: number | null }[] = [];
-  for (const a of message.attachments.values()) {
-    out.push({
-      name: a.name ?? null,
-      url: a.url ?? null,
-      size: Number.isFinite(a.size) ? a.size : null,
-    });
-  }
-  return out;
 }
 
 async function forceAddRoleMembersToThread(guild: Guild, threadId: string, roleId: string): Promise<void> {
@@ -175,6 +165,21 @@ export async function consumeModmailIntake(ctx: BotContext, guildId: string, use
     .where("guild_id", "=", guildId)
     .where("user_id", "=", userId)
     .execute();
+}
+
+export async function cancelModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
+  const ts = sqliteTimestamp();
+  const result = await ctx.ticketDb
+    .updateTable("modmail_intakes")
+    .set({
+      status: INTAKE_CANCELLED,
+      updated_at: ts as unknown as Date,
+    })
+    .where("guild_id", "=", guildId)
+    .where("user_id", "=", userId)
+    .where("status", "=", INTAKE_PENDING)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
 }
 
 export async function activeIntakeByGuildUser(
@@ -393,9 +398,11 @@ async function createStaffThread(
     const noticePayload: {
       content?: string;
       embeds: EmbedBuilder[];
+      components: ReturnType<typeof buildModmailThreadLinkRow>[];
       allowedMentions: { parse: []; roles?: string[] };
     } = {
       embeds: [buildParentTicketEmbed(row, data)],
+      components: [buildModmailThreadLinkRow(guild.id, thread.id)],
       allowedMentions: { parse: [] },
     };
     if (adminRoleId) {
@@ -435,49 +442,6 @@ async function createStaffThread(
   return null;
 }
 
-export async function relayUserDmToThread(
-  ctx: BotContext,
-  row: ModmailThreadRow,
-  dmMessage: Message,
-  isFirst: boolean,
-): Promise<void> {
-  if (!row.thread_id) return;
-  const guild = await ctx.client.guilds.fetch(row.guild_id).catch(() => null);
-  if (!guild) return;
-  const thread = await guild.channels.fetch(row.thread_id).catch(() => null);
-  if (!thread || !thread.isTextBased()) return;
-  const relayCh = thread as RelayChannel;
-
-  const attach = serializeAttachments(dmMessage);
-  const header = [
-    "User DM 受信",
-    `送信日時: ${formatDiscordTime(new Date(dmMessage.createdTimestamp).toISOString())}`,
-    isFirst ? "このメッセージでチケットが作成されました。" : null,
-    "本文:",
-    dmMessage.content?.trim() || "(本文なし)",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  await sendLong(relayCh, header).catch((e) => {
-    ctx.log.warn({ err: e, modmailId: row.id }, "modmail dm relay failed");
-  });
-
-  if (attach.length > 0) {
-    const lines = ["添付:", ...attach.map((a) => `- ${a.name ?? "?"} | ${a.size ?? 0} bytes | ${a.url ?? "-"}`)];
-    await sendLong(relayCh, lines.join("\n")).catch(() => undefined);
-  }
-
-  void logModmailEvent(ctx, "USER_DM_RECEIVED", {
-    ticket_id: row.id,
-    guild_id: row.guild_id,
-    user_id: row.user_id,
-    thread_id: row.thread_id,
-    source_message_id: dmMessage.id,
-    is_first: isFirst,
-  });
-}
-
 export async function relayUserPayloadToThread(
   ctx: BotContext,
   row: ModmailThreadRow,
@@ -515,7 +479,17 @@ export async function relayUserPayloadToThread(
       await sendLong(relayCh, lines.join("\n")).catch(() => undefined);
     }
   }
-  void logModmailEvent(ctx, "USER_REPLY_RELAY", { ticket_id: row.id, guild_id: row.guild_id, kind });
+  if (kind === "User DM 受信") {
+    void logModmailEvent(ctx, "USER_DM_RECEIVED", {
+      ticket_id: row.id,
+      guild_id: row.guild_id,
+      user_id: row.user_id,
+      thread_id: row.thread_id,
+      source: "user_send_command",
+    });
+  } else {
+    void logModmailEvent(ctx, "USER_REPLY_RELAY", { ticket_id: row.id, guild_id: row.guild_id, kind });
+  }
 }
 
 async function relayModalIntakeToThread(
@@ -532,17 +506,19 @@ async function relayModalIntakeToThread(
   if (!thread || !thread.isTextBased()) return;
   const relayCh = thread as RelayChannel;
 
-  const header = [
-    "フォーム受付",
-    `送信日時: ${formatDiscordTime(new Date().toISOString())}`,
-    "この送信でチケットが作成されました。",
-    `タイトル: ${title || "(未設定)"}`,
-    "相談内容:",
-    body.trim() || "(本文なし)",
-  ].join("\n");
+  const embed = new EmbedBuilder()
+    .setTitle("フォーム受付")
+    .setDescription("この送信でチケットが作成されました。")
+    .addFields(
+      { name: "送信日時", value: formatDiscordTime(new Date()), inline: true },
+      { name: "タイトル", value: trimMax(title || "(未設定)", 1024), inline: false },
+      { name: "相談内容", value: trimMax(body.trim() || "(本文なし)", 1024), inline: false },
+    )
+    .setColor(0x3498db)
+    .setTimestamp(new Date());
 
-  await sendLong(relayCh, header).catch((e) => {
-    ctx.log.warn({ err: e, modmailId: row.id }, "relayModalIntakeToThread text failed");
+  await relayCh.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch((e) => {
+    ctx.log.warn({ err: e, modmailId: row.id }, "relayModalIntakeToThread embed failed");
   });
 
   if (attach.length > 0) {
@@ -557,14 +533,6 @@ async function relayModalIntakeToThread(
       await sendLong(relayCh, failLines.join("\n")).catch(() => undefined);
     }
   }
-
-  void logModmailEvent(ctx, "USER_DM_RECEIVED", {
-    ticket_id: row.id,
-    guild_id: row.guild_id,
-    user_id: row.user_id,
-    thread_id: row.thread_id,
-    source: "modal_intake",
-  });
 }
 
 export type CreateTicketFromIntakeFormResult = { ok: boolean; message: string };
@@ -680,113 +648,6 @@ export async function createTicketFromIntakeForm(
   };
 }
 
-export async function createFromFirstDm(
-  ctx: BotContext,
-  intakeGuildId: string,
-  dmMessage: Message,
-): Promise<ModmailThreadRow | null> {
-  const uid = dmMessage.author.id;
-  const guild = await ctx.client.guilds.fetch(intakeGuildId).catch(() => null);
-  if (!guild) return null;
-
-  const existing = await openModmailByGuildUser(ctx, intakeGuildId, uid);
-  if (existing) {
-    await consumeModmailIntake(ctx, intakeGuildId, uid);
-    await relayUserDmToThread(ctx, existing, dmMessage, false);
-    return existing;
-  }
-
-  const body = trimMax(dmMessage.content?.trim() ?? "", 1000) || "(本文なし)";
-  let mmId: string;
-  try {
-    mmId = await createModmailSkeleton(ctx, intakeGuildId, uid, body, null, dmMessage.id, "dm_first");
-  } catch {
-    return null;
-  }
-
-  const row = await fetchModmailRow(ctx, mmId);
-  if (!row) return null;
-
-  const created = await createStaffThread(ctx, guild, row).catch(() => null);
-  if (!created) {
-    await deleteModmailById(ctx, mmId);
-    return null;
-  }
-
-  const parentId = resolveModmailParentChannelId(ctx.config);
-  if (!parentId) {
-    await deleteModmailById(ctx, mmId);
-    return null;
-  }
-
-  await updateModmailThreadMeta(ctx, mmId, parentId, created.threadId, {
-    panel_message_id: created.summaryMessageId,
-    info_message_id: created.summaryMessageId,
-    body,
-  });
-
-  const full = await fetchModmailRow(ctx, mmId);
-  if (!full) return null;
-  await consumeModmailIntake(ctx, intakeGuildId, uid);
-  await relayUserDmToThread(ctx, full, dmMessage, true);
-  return full;
-}
-
-// 添付モーダル経由の初回作成（本文 + メタ添付）
-
-export async function createFromFirstDmWithAttachments(
-  ctx: BotContext,
-  intakeGuildId: string,
-  userId: string,
-  body: string,
-  attach: AttachmentMeta[],
-): Promise<ModmailThreadRow | null> {
-  const guild = await ctx.client.guilds.fetch(intakeGuildId).catch(() => null);
-  if (!guild) return null;
-
-  const existing = await openModmailByGuildUser(ctx, intakeGuildId, userId);
-  if (existing) {
-    await consumeModmailIntake(ctx, intakeGuildId, userId);
-    await relayUserPayloadToThread(ctx, existing, "User DM 受信", body, attach);
-    return existing;
-  }
-
-  const b = trimMax(body, 1000) || "(本文なし)";
-  let mmId: string;
-  try {
-    mmId = await createModmailSkeleton(ctx, intakeGuildId, userId, b, null, null, "dm_first_attach");
-  } catch {
-    return null;
-  }
-
-  const row = await fetchModmailRow(ctx, mmId);
-  if (!row) return null;
-
-  const created = await createStaffThread(ctx, guild, row).catch(() => null);
-  if (!created) {
-    await deleteModmailById(ctx, mmId);
-    return null;
-  }
-
-  const parentId = resolveModmailParentChannelId(ctx.config);
-  if (!parentId) {
-    await deleteModmailById(ctx, mmId);
-    return null;
-  }
-
-  await updateModmailThreadMeta(ctx, mmId, parentId, created.threadId, {
-    panel_message_id: created.summaryMessageId,
-    info_message_id: created.summaryMessageId,
-    body: b,
-  });
-
-  const full = await fetchModmailRow(ctx, mmId);
-  if (!full) return null;
-  await consumeModmailIntake(ctx, intakeGuildId, userId);
-  await relayUserPayloadToThread(ctx, full, "User DM 受信", b, attach, { isFirstTicketMessage: true });
-  return full;
-}
-
 export async function handleModmailDmMessage(ctx: BotContext, message: Message): Promise<boolean> {
   if (message.author.bot) return false;
   const hasBody = Boolean(message.content?.trim());
@@ -795,17 +656,51 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
 
   const open = await anyOpenModmailByUser(ctx, message.author.id);
   if (open) {
+    const body = parseUserSendCommand(message.content ?? "");
+    if (body === null) {
+      await message.author
+        .send({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("Modmail 返信方法")
+              .setDescription(
+                "管理者側へ送信するには、管理者から届いた返信メッセージの「返信する」ボタンを押すか、`!send 本文` を送信してください。添付を送る場合も `!send` と一緒に送信してください。",
+              )
+              .setColor(0xe67e22)
+              .setTimestamp(new Date()),
+          ],
+        })
+        .catch(() => undefined);
+      return true;
+    }
+
+    const attach = serializeAttachmentsFromMessage(message);
+    if (!body && attach.length === 0) {
+      await message.author
+        .send({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("Modmail 返信方法")
+              .setDescription("`!send 本文` の形式で送信してください。添付だけ送る場合は、添付と一緒に `!send` と入力してください。")
+              .setColor(0xe67e22)
+              .setTimestamp(new Date()),
+          ],
+        })
+        .catch(() => undefined);
+      return true;
+    }
+
     if (hasAttach) {
       await relayUserPayloadToThread(
         ctx,
         open,
         "User DM 受信",
-        message.content?.trim() ?? "",
-        serializeAttachmentsFromMessage(message),
+        body || "(添付)",
+        attach,
       );
       return true;
     }
-    await relayUserDmToThread(ctx, open, message, false);
+    await relayUserPayloadToThread(ctx, open, "User DM 受信", body, []);
     return true;
   }
 
@@ -817,7 +712,7 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
           new EmbedBuilder()
             .setTitle("Modmail のご案内")
             .setDescription(
-              "サーバー内の「Modmailを始める」から DM 案内を受け取り、「チケットを作成」またはメッセージ送信で相談を開始してください。",
+              "サーバー内の「Modmailを始める」から DM 案内を受け取り、「チケットを作成」ボタンから相談を開始してください。",
             )
             .setColor(0xe67e22)
             .setTimestamp(new Date()),
@@ -827,29 +722,33 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
     return true;
   }
 
-  const created = hasAttach
-    ? await createFromFirstDmWithAttachments(
-        ctx,
-        intake.guild_id,
-        message.author.id,
-        message.content?.trim() ?? "",
-        serializeAttachmentsFromMessage(message),
-      )
-    : await createFromFirstDm(ctx, intake.guild_id, message);
-  if (!created) {
-    await message.author
-      .send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("送信失敗")
-            .setDescription("チケットの作成に失敗しました。サーバーで受付からやり直してください。")
-            .setColor(0xe74c3c)
-            .setTimestamp(new Date()),
-        ],
-      })
-      .catch(() => undefined);
-  }
+  await message.author
+    .send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("Modmail 受付待機中")
+          .setDescription(
+            "まだチケットは作成されていません。先ほど送信した Modmail 受付メッセージの「チケットを作成」ボタンから内容を入力してください。",
+          )
+          .setColor(0xe67e22)
+          .setTimestamp(new Date()),
+      ],
+      components: [buildModmailIntakeCancelRow(intake.guild_id, message.author.id)],
+    })
+    .catch(() => undefined);
   return true;
+}
+
+function parseUserSendCommand(content: string): string | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith(MODMAIL_USER_SEND_COMMAND)) {
+    return null;
+  }
+  const rest = trimmed.slice(MODMAIL_USER_SEND_COMMAND.length);
+  if (rest && !/^\s/.test(rest)) {
+    return null;
+  }
+  return rest.trim();
 }
 
 export async function sendModmailStartDm(user: User, rows: unknown[]): Promise<void> {
@@ -861,7 +760,7 @@ export async function sendModmailStartDm(user: User, rows: unknown[]): Promise<v
           [
             "Modmail 受付です。",
             "下の「チケットを作成」ボタンからタイトル・詳細・任意の添付を入力すると、スタッフ側にチケットが作成されます。",
-            "テキストのみ先に送りたい場合は、この DM にメッセージを送っても構いません（最初のメッセージで受付が始まります）。",
+            "チケット作成前の通常メッセージはスタッフ側に送信されません。",
           ].join("\n"),
         )
         .setColor(0x3498db)

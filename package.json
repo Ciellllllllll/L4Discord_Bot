@@ -7,9 +7,11 @@
     "build": "tsc",
     "start": "node bot.ts",
     "bot": "node bot.ts",
-    "dev": "tsx src/features/senryu/senryu.spec.ts && tsx watch src/index.ts",
-    "dev:utf8": "cmd /c \"chcp 65001>nul && tsx src/features/senryu/senryu.spec.ts && tsx watch src/index.ts\"",
+    "dev": "cmd /c \"set BOT_PROFILE=debug&& tsx src/features/senryu/senryu.spec.ts && tsx watch src/index.ts\"",
+    "dev:utf8": "cmd /c \"set BOT_PROFILE=debug&& chcp 65001>nul && tsx src/features/senryu/senryu.spec.ts && tsx watch src/index.ts\"",
     "migrate": "tsx src/scripts/migrateSqlite.ts up",
+    "migrate:prod": "cmd /c \"set BOT_PROFILE=production&& tsx src/scripts/migrateSqlite.ts up\"",
+    "migrate:debug": "cmd /c \"set BOT_PROFILE=debug&& tsx src/scripts/migrateSqlite.ts up\"",
     "migrate:down": "tsx src/scripts/migrateSqlite.ts down",
     "merge:vc-time": "tsx src/scripts/mergeVcTimeDbs.ts",
     "typecheck": "tsc --noEmit"

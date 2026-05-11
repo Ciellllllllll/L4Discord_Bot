@@ -47,6 +47,10 @@ export async function deepseekChat(
   const base = (config.DEEPSEEK_API_BASE ?? DEFAULT_BASE).replace(/\/$/, "");
   const url = `${base}/chat/completions`;
   const model = options.model ?? config.DEEPSEEK_MODEL;
+  const apiKey = config.DEEPSEEK_API_KEY.trim();
+  if (!apiKey) {
+    throw new Error("DEEPSEEK_API_KEY is not set. Set it in .env to use AI features.");
+  }
   const temperature = options.temperature ?? config.AI_TEMPERATURE;
   const timeoutMs = options.timeoutMs ?? config.AI_REQUEST_TIMEOUT_MS;
   const maxRetries = options.maxRetries ?? config.AI_MAX_RETRIES;
@@ -64,7 +68,7 @@ export async function deepseekChat(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${config.DEEPSEEK_API_KEY}`,
+            Authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
             model,

@@ -19,6 +19,27 @@ export function buildModmailTicketCreateRow(ctxId: string): ActionRowBuilder<But
   );
 }
 
+export function buildModmailIntakeCancelRow(guildId: string, userId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(buildThreePartId(MM_IDS.INTAKE_CANCEL_PREFIX, guildId, userId))
+      .setLabel("受付待機をキャンセル")
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export function buildModmailThreadLinkRow(
+  guildId: string,
+  threadId: string,
+): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("対応スレッドへ移動")
+      .setStyle(ButtonStyle.Link)
+      .setURL(`https://discord.com/channels/${guildId}/${threadId}`),
+  );
+}
+
 // Modmail 受付モーダル。
 // TextInput は Action Row のみ @discordjs/builders で組み立てる（discord.js との instanceof 不一致を避ける）。
 // 添付は Label + FileUpload（同一パッケージ）で追加する。
@@ -71,7 +92,7 @@ export function buildModmailUserReplyRow(ticketId: string, userId: string): Acti
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(buildThreePartId(MM_IDS.USER_REPLY_PREFIX, ticketId, userId))
-      .setLabel("スタッフへ返信")
+      .setLabel("返信する")
       .setStyle(ButtonStyle.Primary),
   );
 }
@@ -134,7 +155,7 @@ export function buildModmailAttachmentUploadModal(customId: string, title = "フ
 }
 
 /**
- * ユーザー DM の「スタッフへ返信」用モーダル（本文 + 任意添付を1つに統合）。
+ * ユーザー DM の「返信する」用モーダル（本文 + 任意添付を1つに統合）。
  * TextInput を先に置く（FileUpload のみのモーダルより DM で開きやすい）。
  * 構成は {@link buildModmailIntakeTicketModal} と同じ builders のみ。
  * （discord.js の ModalBuilder と Label/FileUpload を混ぜると DM で showModal が失敗することがある）
@@ -142,7 +163,7 @@ export function buildModmailAttachmentUploadModal(customId: string, title = "フ
 export function buildModmailUserReplyModal(customId: string): IntakeModalBuilder {
   return new IntakeModalBuilder()
     .setCustomId(customId)
-    .setTitle("スタッフへ返信")
+    .setTitle("返信する")
     .addComponents(
       new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
         new IntakeTextInputBuilder()

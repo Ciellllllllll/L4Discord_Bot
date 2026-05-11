@@ -38,7 +38,7 @@ export async function handleUserPanelModmailStart(
     await sendModmailStartDm(interaction.user, [buildModmailTicketCreateRow(ctxId)]);
     await interaction.reply({
       content:
-        "DM を送信しました。DM の「チケットを作成」から内容を入力するか、この DM にメッセージを送って受付を開始してください。",
+        "DM を送信しました。DM の「チケットを作成」から内容を入力して受付を開始してください。",
       flags: MessageFlags.Ephemeral,
     });
   } catch (e) {

@@ -32,6 +32,11 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       )
       .toJSON(),
     new SlashCommandBuilder()
+      .setName("afk")
+      .setDescription("同じVCにいる寝落ちユーザーを確認付きで切断します")
+      .addUserOption((o) => o.setName("target").setDescription("切断対象の寝落ちユーザー").setRequired(true))
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName("member_count_setup")
       .setDescription("メンバー数表示用のカテゴリとVCチャンネルを作成します")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -73,6 +78,20 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
 
     new SlashCommandBuilder().setName("stamp_rank").setDescription("スタンプランキング").toJSON(),
     new SlashCommandBuilder().setName("stamp_count").setDescription("スタンプ使用回数を表示").toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("ticket_users")
+      .setDescription("Ticket 利用者を既存データから集計します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addIntegerOption((o) =>
+        o
+          .setName("limit")
+          .setDescription("表示件数")
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(25),
+      )
+      .toJSON(),
 
     new SlashCommandBuilder()
       .setName("change_prompt")

@@ -1,4 +1,5 @@
 import {
+  EmbedBuilder,
   MessageFlags,
   ModalBuilder,
   TextInputBuilder,
@@ -21,6 +22,7 @@ import {
   parseUuidTail,
 } from "./modmailIds.js";
 import {
+  cancelModmailIntake,
   createTicketFromIntakeForm,
   getModmailTicketRow,
   relayUserPayloadToThread,
@@ -38,7 +40,6 @@ import {
   pendingUserReplyButtons,
   replyAttachmentFired,
   unmarkCloseButtonFired,
-  userAttachmentFired,
   userReplyFired,
 } from "./modmailSessions.js";
 import {
@@ -67,6 +68,9 @@ export async function routeModmailStaffAndUserInteractions(
   }
   if (interaction.isModalSubmit() && id.startsWith(MM_IDS.TICKET_SUBMIT_PREFIX)) {
     return handleModmailTicketSubmitModal(interaction, ctx);
+  }
+  if (interaction.isButton() && id.startsWith(MM_IDS.INTAKE_CANCEL_PREFIX)) {
+    return handleModmailIntakeCancelButton(interaction, ctx);
   }
 
   if (interaction.isButton() && id.startsWith(MM_IDS.CLOSE_PREFIX)) {
@@ -151,6 +155,32 @@ async function handleCloseButton(interaction: ButtonInteraction, ctx: BotContext
   } catch {
     unmarkCloseButtonFired(triggerKey);
     await replyEphemeral(interaction, "モーダル表示に失敗しました。");
+  }
+  return true;
+}
+
+async function handleModmailIntakeCancelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+  const parsed = parseThreePartId(interaction.customId, MM_IDS.INTAKE_CANCEL_PREFIX);
+  if (!parsed || interaction.user.id !== parsed.partB) {
+    await replyEphemeral(interaction, "このボタンは対象ユーザーのみ利用できます。");
+    return true;
+  }
+
+  const cancelled = await cancelModmailIntake(ctx, parsed.partA, parsed.partB);
+  const embed = new EmbedBuilder()
+    .setTitle(cancelled ? "Modmail 受付待機をキャンセルしました" : "Modmail 受付待機は終了済みです")
+    .setDescription(
+      cancelled
+        ? "受付待機をキャンセルしました。再度開始する場合は、サーバー内の「Modmailを始める」からやり直してください。"
+        : "この受付待機は既にキャンセル済み、またはチケット作成済みです。",
+    )
+    .setColor(cancelled ? 0x95a5a6 : 0xe67e22)
+    .setTimestamp(new Date());
+
+  try {
+    await interaction.update({ embeds: [embed], components: [] });
+  } catch {
+    await replyEphemeral(interaction, embed.data.description ?? "受付待機を更新しました。");
   }
   return true;
 }
@@ -308,86 +338,13 @@ async function handleReplyAttachmentModal(interaction: ModalSubmitInteraction, c
   return true;
 }
 
-async function handleUserAttachmentButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  const parsed = parseThreePartId(interaction.customId, MM_IDS.USER_ATTACHMENT_PREFIX);
-  if (!parsed || interaction.user.id !== parsed.partB) {
-    await replyEphemeral(interaction, "このボタンは対象ユーザーのみ使えます。");
-    return true;
-  }
-  const ticketId = parsed.partA;
-  const key = `${ticketId}:${parsed.partB}:${parsed.nonce}`;
-  if (userAttachmentFired.has(key)) {
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
-    await replyEphemeral(interaction, "このボタンは使用済みです。");
-    return true;
-  }
-  const ticket = await getModmailTicketRow(ctx, ticketId);
-  const appeal =
-    ticket && ticket.status === "open" && ticket.user_id === parsed.partB
-      ? null
-      : await getAppealById(ctx, ticketId);
-  const appealOk = appeal && appeal.status === "hold" && appeal.user_id === parsed.partB;
-  const ticketOk = ticket && ticket.status === "open" && ticket.user_id === parsed.partB;
-  if (!ticketOk && !appealOk) {
-    await replyEphemeral(interaction, "このチケットには返信できません。");
-    return true;
-  }
-  try {
-    await interaction.showModal(
-      buildModmailAttachmentUploadModal(
-        `${MM_IDS.USER_ATTACHMENT_MODAL_PREFIX}${interaction.customId.slice(MM_IDS.USER_ATTACHMENT_PREFIX.length)}`,
-      ),
-    );
-  } catch {
-    await replyEphemeral(interaction, "モーダルを開けませんでした。");
-  }
+async function handleUserAttachmentButton(interaction: ButtonInteraction, _ctx: BotContext): Promise<boolean> {
+  await replyEphemeral(interaction, "管理者側へ送信するには、返信メッセージの「返信する」ボタン、または `!send 本文` を使ってください。");
   return true;
 }
 
-async function handleUserAttachmentModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
-  const raw = interaction.customId.slice(MM_IDS.USER_ATTACHMENT_MODAL_PREFIX.length);
-  const fake = `${MM_IDS.USER_ATTACHMENT_PREFIX}${raw}`;
-  const parsed = parseThreePartId(fake, MM_IDS.USER_ATTACHMENT_PREFIX);
-  if (!parsed || interaction.user.id !== parsed.partB) {
-    await replyEphemeral(interaction, "無効な操作です。");
-    return true;
-  }
-  const key = `${parsed.partA}:${parsed.partB}:${parsed.nonce}`;
-  if (userAttachmentFired.has(key)) {
-    await replyEphemeral(interaction, "このボタンは使用済みです。");
-    return true;
-  }
-  const ticket = await getModmailTicketRow(ctx, parsed.partA);
-  const appeal =
-    ticket && ticket.status === "open" && ticket.user_id === parsed.partB
-      ? null
-      : await getAppealById(ctx, parsed.partA);
-  const appealOk = appeal && appeal.status === "hold" && appeal.user_id === parsed.partB;
-  const ticketOk = ticket && ticket.status === "open" && ticket.user_id === parsed.partB;
-  if (!ticketOk && !appealOk) {
-    await replyEphemeral(interaction, "このチケットには返信できません。");
-    return true;
-  }
-  let uploaded = null;
-  if (interaction.fields.fields.has(MM_IDS.ATTACHMENT_MODAL_FILES_ID)) {
-    try {
-      uploaded = interaction.fields.getUploadedFiles(MM_IDS.ATTACHMENT_MODAL_FILES_ID, false);
-    } catch {
-      uploaded = null;
-    }
-  }
-  const meta = serializeUploadedCollection(uploaded);
-  if (meta.length === 0) {
-    await replyEphemeral(interaction, "有効な添付がありません。");
-    return true;
-  }
-  if (ticketOk && ticket) {
-    await relayUserPayloadToThread(ctx, ticket, "User Reply Attachment", "(添付)", meta);
-  } else if (appealOk && appeal) {
-    await relayUserPayloadToAppealHoldThread(ctx, appeal, "User Reply Attachment", "(添付)", meta);
-  }
-  userAttachmentFired.add(key);
-  await replyEphemeral(interaction, "添付を送信しました。");
+async function handleUserAttachmentModal(interaction: ModalSubmitInteraction, _ctx: BotContext): Promise<boolean> {
+  await replyEphemeral(interaction, "管理者側へ送信するには、返信メッセージの「返信する」ボタン、または `!send 本文` を使ってください。");
   return true;
 }
 
