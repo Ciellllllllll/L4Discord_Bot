@@ -15,17 +15,6 @@ export function memberHasAdminRole(member: GuildMember | null, adminRoleId: stri
   return member.roles.cache.has(adminRoleId);
 }
 
-export function memberIsModerator(member: GuildMember | null): boolean {
-  if (!member) return false;
-  const p = member.permissions;
-  return (
-    p.has(PermissionFlagsBits.Administrator) ||
-    p.has(PermissionFlagsBits.ModerateMembers) ||
-    p.has(PermissionFlagsBits.KickMembers) ||
-    p.has(PermissionFlagsBits.BanMembers)
-  );
-}
-
 export function isAdmin(member: GuildMember | null, cfg: AdminCheckConfig): boolean {
   if (!member) return false;
   if (member.id === cfg.OWNER_ID) return true;

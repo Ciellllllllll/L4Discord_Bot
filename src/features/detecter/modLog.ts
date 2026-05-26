@@ -1,9 +1,5 @@
 import type { AppConfig } from "../../core/config.js";
 
-// .env のキー名（ドキュメント・参照用）
-
-export const MOD_LOG_CHANNEL_ENV_KEY = "MOD_LOG_CHANNEL_ID" as const;
-
 function normalizeSnowflake(value: unknown): string {
   const text = String(value ?? "").trim();
   if (!/^\d+$/.test(text)) return "";

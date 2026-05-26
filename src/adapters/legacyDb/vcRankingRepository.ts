@@ -8,9 +8,3 @@ export type VcRankEntry = {
 export interface IVcRankingRepository {
   getRanking(guildId: string, period: VcRankPeriod): Promise<VcRankEntry[]>;
 }
-
-export class NoOpVcRankingRepository implements IVcRankingRepository {
-  async getRanking(_guildId: string, _period: VcRankPeriod): Promise<VcRankEntry[]> {
-    return [];
-  }
-}

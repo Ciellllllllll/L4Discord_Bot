@@ -4,7 +4,6 @@ import {
   ButtonStyle,
   EmbedBuilder,
   StringSelectMenuBuilder,
-  type MessageCreateOptions,
 } from "discord.js";
 
 export const VC_OPEN_MODAL_ID = "open_vc_modal";
@@ -74,9 +73,3 @@ export function parseVcRenameModalCustomId(customId: string): { channelId: strin
   return { channelId, genre };
 }
 
-export function buildVcCreatorPanelPayload(): Pick<MessageCreateOptions, "embeds" | "components"> {
-  return {
-    embeds: [buildVcCreatorMainEmbed()],
-    components: buildVcCreatorMainRows(),
-  };
-}
