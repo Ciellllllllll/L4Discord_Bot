@@ -24,6 +24,7 @@ import { sendOrReconnectAiHistoryAdminPanel } from "./aiHistoryAdminPanel.js";
 // DiscordBOTv2 AI_Query.js と同じ customId 接頭辞
 
 export const HISTORY_CLEAR_Q_PREFIX = "chatgpt_history_clear_q:";
+export const SHOW_PROMPT_APPLY_BUTTON_ID = "ai_show_prompt:apply";
 
 function safeStrip(text: string): string {
   return String(text || "").trim();
@@ -562,5 +563,30 @@ export async function handleAiHistoryClearButton(interaction: ButtonInteraction,
   await svc.clearHistory(guildId, ownerId);
   void sendOrReconnectAiHistoryAdminPanel(ctx).catch(() => undefined);
   await interaction.reply({ content: "あなたの会話履歴を削除しました。", flags: MessageFlags.Ephemeral });
+  return true;
+}
+
+export async function handleShowPromptApplyButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+  if (interaction.customId !== SHOW_PROMPT_APPLY_BUTTON_ID) {
+    return false;
+  }
+
+  const embed = interaction.message.embeds[0];
+  const prompt = safeStrip(embed?.description ?? "");
+  if (!prompt || prompt === "プロンプトが空です。") {
+    await interaction.reply({ content: "適用できるプロンプトが見つかりません。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  if (embed?.footer?.text?.includes("一部のみ表示")) {
+    await interaction.reply({
+      content: "このプロンプトは表示上限で省略されているため適用できません。",
+      flags: MessageFlags.Ephemeral,
+    });
+    return true;
+  }
+
+  const svc = new AiQueryService(ctx);
+  svc.replaceUserPromptFromChangePromptCommand(interaction.user.id, interaction.user.username, prompt);
+  await interaction.reply({ content: "このプロンプトをあなたの /q に適用しました。", flags: MessageFlags.Ephemeral });
   return true;
 }
