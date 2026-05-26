@@ -2,6 +2,23 @@ import type DatabaseLib from "better-sqlite3";
 import type { Client, VoiceState } from "discord.js";
 import { snowflakeToBigInt } from "../../core/snowflake.js";
 
+const MAX_OPEN_SESSION_SEC = 24 * 60 * 60;
+const MAX_OPEN_SESSION_MS = MAX_OPEN_SESSION_SEC * 1000;
+
+function closeTimeForStartedAt(startedAt: string, now: Date): { endedAt: string; durationSec: number } {
+  const startMs = Date.parse(startedAt);
+  if (!Number.isFinite(startMs)) {
+    return { endedAt: now.toISOString(), durationSec: 0 };
+  }
+  const rawDurationMs = Math.max(0, now.getTime() - startMs);
+  const cappedDurationMs = Math.min(rawDurationMs, MAX_OPEN_SESSION_MS);
+  const endedMs = startMs + cappedDurationMs;
+  return {
+    endedAt: new Date(endedMs).toISOString(),
+    durationSec: Math.floor(cappedDurationMs / 1000),
+  };
+}
+
 function closeOpenSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint): void {
   const rows = sqlite
     .prepare(
@@ -10,14 +27,16 @@ function closeOpenSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint
     .all(gid, uid) as { id: number; started_at: string }[];
   if (rows.length === 0) return;
   const now = new Date();
-  const end = now.toISOString();
-  const endMs = now.getTime();
   const update = sqlite.prepare(`UPDATE sessions SET ended_at = ?, duration_sec = ? WHERE id = ?`);
   for (const row of rows) {
-    const startMs = Date.parse(row.started_at);
-    const dur = Number.isFinite(startMs) ? Math.max(0, Math.floor((endMs - startMs) / 1000)) : 0;
-    update.run(end, dur, row.id);
+    const closed = closeTimeForStartedAt(row.started_at, now);
+    update.run(closed.endedAt, closed.durationSec, row.id);
   }
+}
+
+function isOpenSessionStale(startedAt: string, now: Date): boolean {
+  const startMs = Date.parse(startedAt);
+  return Number.isFinite(startMs) && now.getTime() - startMs > MAX_OPEN_SESSION_MS;
 }
 
 function startSession(sqlite: DatabaseLib.Database, gid: bigint, uid: bigint, channelId: string): void {
@@ -60,12 +79,20 @@ export function reconcileVcTimeSessionsAtReady(
     const uidStr = key.split(":")[1];
     if (!uidStr) continue;
     const uid = snowflakeToBigInt(uidStr);
-    const open = sqlite
+    const openRows = sqlite
       .prepare(
-        `SELECT id FROM sessions WHERE guild_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`,
+        `SELECT id, started_at AS startedAt FROM sessions WHERE guild_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY id`,
       )
-      .get(gid, uid) as { id: number } | undefined;
-    if (!open) startSession(sqlite, gid, uid, channelId);
+      .all(gid, uid) as { id: number; startedAt: string }[];
+    if (openRows.length === 0) {
+      startSession(sqlite, gid, uid, channelId);
+      continue;
+    }
+    const now = new Date();
+    if (openRows.length > 1 || openRows.some((row) => isOpenSessionStale(row.startedAt, now))) {
+      closeOpenSession(sqlite, gid, uid);
+      startSession(sqlite, gid, uid, channelId);
+    }
   }
 
   const openRows = sqlite
