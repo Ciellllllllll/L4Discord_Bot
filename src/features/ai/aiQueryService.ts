@@ -315,15 +315,18 @@ export class AiQueryService {
     void sendOrReconnectAiHistoryAdminPanel(this.ctx);
   }
 
-  private async loadHistoryMessages(guildId: string, userId: string): Promise<ChatMessage[]> {
+  private async loadHistoryMessages(guildId: string, userId: string, since: Date | null): Promise<ChatMessage[]> {
     const max = this.ctx.config.AI_HISTORY_MAX_MESSAGES;
-    const rows = await this.ctx.aiHistoryDb
+    let query = this.ctx.aiHistoryDb
       .selectFrom("ai_history")
       .select(["role", "content"])
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)
-      .orderBy("created_at", "asc")
-      .execute();
+      .orderBy("created_at", "asc");
+    if (since) {
+      query = query.where("created_at", ">", since.toISOString() as unknown as Date);
+    }
+    const rows = await query.execute();
 
     const out: ChatMessage[] = [];
     for (const r of rows) {
@@ -377,9 +380,11 @@ export class AiQueryService {
     userName: string,
     question: string,
   ): Promise<string> {
-    const history = await this.loadHistoryMessages(guildId, userId);
+    const resolvedUserName = this.resolveUserName(userId, userName);
+    const promptUpdatedAt = this.userPromptUpdatedAt(userId, resolvedUserName);
+    const history = await this.loadHistoryMessages(guildId, userId, promptUpdatedAt);
     const { resolved: basePrompt } = this.refreshBasePromptFromFile();
-    const userPrompt = this.loadUserPrompt(userId, userName);
+    const userPrompt = this.loadUserPrompt(userId, resolvedUserName);
     const activePrompt = buildActivePromptMessage(userPrompt);
     const messages: ChatMessage[] = [
       { role: "system", content: basePrompt },
