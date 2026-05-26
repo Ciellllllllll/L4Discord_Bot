@@ -33,7 +33,7 @@ import {
   handleAiHistoryAdminButton,
   handleAiHistoryAdminStringSelect,
 } from "../features/ai/aiHistoryAdminPanel.js";
-import { handleAiHistoryClearButton } from "../features/ai/aiQueryService.js";
+import { handleAiHistoryClearButton, handleShowPromptApplyButton } from "../features/ai/aiQueryService.js";
 import { handleChangePromptModalSubmit } from "../features/ai/changePromptHandlers.js";
 import {
   handleReminderHubButton,
@@ -120,6 +120,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
   if (await handleAutoModRaidButton(interaction, ctx)) return;
   if (await handleReminderHubButton(interaction, ctx)) return;
   if (await handleAiHistoryClearButton(interaction, ctx)) return;
+  if (await handleShowPromptApplyButton(interaction, ctx)) return;
   if (await handleAiHistoryAdminButton(interaction, ctx)) return;
   if (await routeMessageLogButton(interaction, ctx)) return;
   if (await routeModmailStaffAndUserInteractions(interaction, ctx)) return;

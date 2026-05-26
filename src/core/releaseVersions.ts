@@ -1,4 +1,4 @@
-export const BOT_SEMVER = "2.0.5";
+export const BOT_SEMVER = "2.0.6";
 
 // スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER
 
@@ -18,6 +18,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   stamp_rank: "0.1.0",
   ticket_users: "2.0.2",
   change_prompt: "2.0.1",
+  show_prompt: "2.0.1",
   mute: "2.0.1",
 };
 

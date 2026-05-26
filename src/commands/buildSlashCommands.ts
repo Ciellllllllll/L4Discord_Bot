@@ -99,6 +99,11 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
 
     new SlashCommandBuilder()
+      .setName("show_prompt")
+      .setDescription("自分が /q で使用している AI システムプロンプトを表示します")
+      .toJSON(),
+
+    new SlashCommandBuilder()
       .setName("mute")
       .setDescription("このチャンネル・スレッドでの川柳機能をオフにします")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

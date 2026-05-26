@@ -1,4 +1,7 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   EmbedBuilder,
   MessageFlags,
@@ -15,7 +18,7 @@ import { isAdmin } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { SLASH_META } from "./slashMeta.js";
 import { deepseekChat } from "../features/ai/deepseek.js";
-import { AiQueryService, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
+import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
@@ -68,6 +71,8 @@ export async function handleSlashCommand(
       return handleQ(interaction, ctx);
     case "change_prompt":
       return handleChangePrompt(interaction, ctx);
+    case "show_prompt":
+      return handleShowPrompt(interaction, ctx);
     case "ping":
       return handlePing(interaction, ctx);
     case "member_count_setup":
@@ -115,6 +120,29 @@ async function handleChangePrompt(interaction: ChatInputCommandInteraction, _ctx
         .catch(() => undefined);
     }
   }
+}
+
+async function handleShowPrompt(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+  const svc = new AiQueryService(ctx);
+  const prompt = svc.loadUserPrompt(interaction.user.id, interaction.user.username);
+  const embed = new EmbedBuilder()
+    .setTitle("現在の /q プロンプト")
+    .setDescription(prompt.slice(0, 4000) || "プロンプトが空です。")
+    .setColor(0x5865f2);
+  if (prompt.length > 4000) {
+    embed.setFooter({ text: "プロンプトが長いため一部のみ表示しています。" });
+  }
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(SHOW_PROMPT_APPLY_BUTTON_ID)
+      .setLabel("このプロンプトをAIに適用する")
+      .setStyle(ButtonStyle.Primary),
+  );
+  await interaction.reply({
+    embeds: [embed],
+    components: [row],
+    allowedMentions: { parse: [] },
+  });
 }
 
 async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
