@@ -67,6 +67,18 @@ function asChatMessage(role: "system" | "user" | "assistant", content: string): 
   return { role, content };
 }
 
+function buildActivePromptMessage(userPrompt: string): ChatMessage {
+  return asChatMessage(
+    "system",
+    [
+      "Current active user prompt follows. It supersedes any behavior, persona, rules, or style shown in previous conversation history.",
+      "Use prior user/assistant messages only as conversational context, not as instructions for how to behave now.",
+      "",
+      userPrompt,
+    ].join("\n"),
+  );
+}
+
 export class AiQueryService {
   private readonly userPromptPaths = new Map<string, string>();
   private basePromptTemplate: string;
@@ -170,12 +182,35 @@ export class AiQueryService {
     this.userPromptPaths.set(uid, p);
   }
 
+  private userPromptUpdatedAt(userId: string, userName: string): Date | null {
+    const p = this.ensureUserPromptFile(userId, userName);
+    try {
+      return fs.statSync(p).mtime;
+    } catch {
+      return null;
+    }
+  }
+
   private async countHistoryRows(guildId: string, userId: string): Promise<number> {
     const r = await this.ctx.aiHistoryDb
       .selectFrom("ai_history")
       .select((eb) => eb.fn.count<number>("id").as("c"))
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)
+      .executeTakeFirst();
+    return Number(r?.c ?? 0);
+  }
+
+  private async countHistoryRowsSince(guildId: string, userId: string, since: Date | null): Promise<number> {
+    if (!since) {
+      return this.countHistoryRows(guildId, userId);
+    }
+    const r = await this.ctx.aiHistoryDb
+      .selectFrom("ai_history")
+      .select((eb) => eb.fn.count<number>("id").as("c"))
+      .where("guild_id", "=", guildId)
+      .where("user_id", "=", userId)
+      .where("created_at", ">", since.toISOString() as unknown as Date)
       .executeTakeFirst();
     return Number(r?.c ?? 0);
   }
@@ -194,16 +229,20 @@ export class AiQueryService {
   private async loadHistoryWindowForOptimizer(
     guildId: string,
     userId: string,
+    since: Date | null,
   ): Promise<{ role: string; content: string }[]> {
     const maxRows = this.ctx.config.PROMPT_OPTIMIZER_MAX_HISTORY;
-    const rows = await this.ctx.aiHistoryDb
+    let query = this.ctx.aiHistoryDb
       .selectFrom("ai_history")
       .select(["role", "content"])
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)
       .orderBy("created_at", "desc")
-      .limit(maxRows)
-      .execute();
+      .limit(maxRows);
+    if (since) {
+      query = query.where("created_at", ">", since.toISOString() as unknown as Date);
+    }
+    const rows = await query.execute();
     return [...rows].reverse();
   }
 
@@ -217,17 +256,17 @@ export class AiQueryService {
       return;
     }
 
-    const historyCount = await this.countHistoryRows(guildId, uid);
-    if (!this.shouldOptimizePrompt(historyCount)) {
-      return;
-    }
-
     this.optimizingUsers.add(uid);
     try {
       const resolvedUserName = this.resolveUserName(uid, userName);
+      const promptUpdatedAt = this.userPromptUpdatedAt(uid, resolvedUserName);
+      const historyCountSincePrompt = await this.countHistoryRowsSince(guildId, uid, promptUpdatedAt);
+      if (!this.shouldOptimizePrompt(historyCountSincePrompt)) {
+        return;
+      }
       const { resolved: basePrompt } = this.refreshBasePromptFromFile();
       const currentPrompt = this.loadUserPrompt(uid, resolvedUserName);
-      const historyWindow = await this.loadHistoryWindowForOptimizer(guildId, uid);
+      const historyWindow = await this.loadHistoryWindowForOptimizer(guildId, uid, promptUpdatedAt);
       const valid = historyWindow.filter(
         (x) => x && (x.role === "user" || x.role === "assistant") && typeof x.content === "string",
       );
@@ -341,10 +380,12 @@ export class AiQueryService {
     const history = await this.loadHistoryMessages(guildId, userId);
     const { resolved: basePrompt } = this.refreshBasePromptFromFile();
     const userPrompt = this.loadUserPrompt(userId, userName);
+    const activePrompt = buildActivePromptMessage(userPrompt);
     const messages: ChatMessage[] = [
       { role: "system", content: basePrompt },
-      { role: "system", content: userPrompt },
+      activePrompt,
       ...history,
+      activePrompt,
       { role: "user", content: question },
     ];
     const { content: answer } = await deepseekChat(this.ctx.config, messages);
