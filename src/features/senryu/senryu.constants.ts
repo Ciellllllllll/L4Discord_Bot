@@ -5,8 +5,4 @@ export const DISCORD_TOKEN_PATTERN =
 
 export const SPOILER_PATTERN = /\|\|.+?\|\|/;
 
-export const VALID_READING_PATTERN = /^[ァ-ヾ]+$/;
-
-export const DIGIT_TOKEN_PATTERN = /^[０-９0-9]+$/;
-
 export const KATAKANA_ONLY_PATTERN = /^[ァ-ヾ]+$/;

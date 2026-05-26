@@ -97,16 +97,6 @@ export function buildModmailUserReplyRow(ticketId: string, userId: string): Acti
   );
 }
 
-/** @deprecated 旧メッセージ互換。新規 DM は {@link buildModmailUserReplyRow} のみ使用 */
-export function buildModmailUserAttachmentRow(ticketId: string, userId: string): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(buildThreePartId(MM_IDS.USER_ATTACHMENT_PREFIX, ticketId, userId))
-      .setLabel("添付ファイルを送信")
-      .setStyle(ButtonStyle.Secondary),
-  );
-}
-
 export function buildModmailConfirmRow(replyId: string, authorStaffId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()

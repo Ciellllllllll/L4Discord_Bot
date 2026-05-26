@@ -37,6 +37,7 @@ import {
   insertEntry,
   loadEntriesForGuild,
   makeEntryId,
+  normalizeRoleLineEmojis,
   parseRoleLines,
   sendOrUpdateEntryMessage,
   truncateText,
@@ -116,7 +117,7 @@ function showCreateModal(interaction: ButtonInteraction, defaultChannelId?: stri
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
     .setMaxLength(1000)
-    .setPlaceholder("123456789012345678|お知らせ|📢");
+    .setPlaceholder("123456789012345678|お知らせ|📢\n123456789012345678|限定|:custom_name:");
 
   modal.addComponents(
     new ActionRowBuilder<TextInputBuilder>().addComponents(channelInput),
@@ -338,13 +339,18 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
       );
       return true;
     }
+    const normalized = await normalizeRoleLineEmojis(interaction.guild, roles);
+    if (normalized.error) {
+      await replyEphemeral(interaction, normalized.error);
+      return true;
+    }
     const entry: ReactionRoleEntry = {
       entryId: makeEntryId(),
       channelId,
       messageId: null,
       title,
       description: String(descriptionRaw || "").slice(0, 1000),
-      roles,
+      roles: normalized.roles,
     };
     try {
       const messageId = await sendOrUpdateEntryMessage(ctx, interaction.guild, entry);
@@ -400,7 +406,12 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
         );
         return true;
       }
-      entry.roles = roles;
+      const normalized = await normalizeRoleLineEmojis(interaction.guild, roles);
+      if (normalized.error) {
+        await replyEphemeral(interaction, normalized.error);
+        return true;
+      }
+      entry.roles = normalized.roles;
     }
     try {
       const messageId = await sendOrUpdateEntryMessage(ctx, interaction.guild, entry);

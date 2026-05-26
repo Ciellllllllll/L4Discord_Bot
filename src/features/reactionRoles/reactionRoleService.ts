@@ -5,6 +5,7 @@ import {
   ButtonStyle,
   EmbedBuilder,
   type Guild,
+  type GuildEmoji,
   type Message,
 } from "discord.js";
 import type { Kysely } from "kysely";
@@ -74,9 +75,81 @@ export function parseRoleLines(text: unknown): ReactionRoleLine[] {
     const label = parts[1]!;
     const emoji = parts[2] || null;
     if (!/^\d+$/.test(roleId) || !label) continue;
-    out.push({ roleId, label: label.slice(0, 80), emoji: emoji ? emoji.slice(0, 20) : null });
+    out.push({ roleId, label: label.slice(0, 80), emoji: emoji ? emoji.slice(0, 100) : null });
   }
   return out.slice(0, 5);
+}
+
+function normalizeEmojiName(input: string): string {
+  const src = input.trim();
+  const colon = src.match(/^:([^:\s]+):$/);
+  return colon?.[1] ?? src;
+}
+
+function extractCustomEmojiId(input: string): string | null {
+  const match = input.trim().match(/^<a?:[A-Za-z0-9_]+:(\d{17,20})>$/);
+  return match?.[1] ?? null;
+}
+
+function needsGuildEmojiLookup(input: string | null): boolean {
+  const src = String(input ?? "").trim();
+  if (!src) return false;
+  if (extractCustomEmojiId(src)) return true;
+  if (/^\d{17,20}$/.test(src)) return true;
+  return /^[A-Za-z0-9_]+$/.test(normalizeEmojiName(src));
+}
+
+async function fetchGuildEmojiMap(guild: Guild): Promise<Map<string, GuildEmoji>> {
+  const emojis = await guild.emojis.fetch();
+  return new Map(emojis.map((emoji) => [emoji.id, emoji]));
+}
+
+function resolveGuildEmojiInput(
+  input: string | null,
+  emojiMap: Map<string, GuildEmoji> | undefined,
+): string | null {
+  const src = String(input ?? "").trim();
+  if (!src) return null;
+
+  const id = extractCustomEmojiId(src) ?? (src.match(/^\d{17,20}$/) ? src : null);
+  if (id) {
+    return emojiMap?.has(id) ? id : null;
+  }
+
+  const lookupName = normalizeEmojiName(src);
+  if (/^[A-Za-z0-9_]+$/.test(lookupName)) {
+    const emoji = [...(emojiMap?.values() ?? [])].find((item) => item.name === lookupName);
+    return emoji?.id ?? null;
+  }
+
+  return src;
+}
+
+export async function normalizeRoleLineEmojis(
+  guild: Guild,
+  roles: ReactionRoleLine[],
+): Promise<{ roles: ReactionRoleLine[]; error: string | null }> {
+  let emojiMap: Map<string, GuildEmoji> | undefined;
+  if (roles.some((role) => needsGuildEmojiLookup(role.emoji))) {
+    const fetched = await fetchGuildEmojiMap(guild).catch(() => null);
+    if (!fetched) {
+      return { roles, error: "サーバー絵文字の取得に失敗しました。Bot の権限を確認してください。" };
+    }
+    emojiMap = fetched;
+  }
+
+  const normalized: ReactionRoleLine[] = [];
+  for (const role of roles) {
+    const emoji = resolveGuildEmojiInput(role.emoji, emojiMap);
+    if (role.emoji && !emoji) {
+      return {
+        roles,
+        error: `絵文字がこのサーバーに見つかりません: ${role.emoji}`,
+      };
+    }
+    normalized.push({ ...role, emoji });
+  }
+  return { roles: normalized, error: null };
 }
 
 export function formatRolesForInput(roles: ReactionRoleLine[]): string {
@@ -99,7 +172,7 @@ function parseRolesJson(raw: string): ReactionRoleLine[] {
         const o = item as Record<string, unknown>;
         const roleId = normalizeSnowflake(o.roleId);
         const label = truncateText(o.label ?? "", 80);
-        const emoji = o.emoji ? truncateText(o.emoji, 20) : null;
+        const emoji = o.emoji ? truncateText(o.emoji, 100) : null;
         if (!roleId || !label) return null;
         return { roleId, label, emoji: emoji || null } satisfies ReactionRoleLine;
       })
@@ -186,6 +259,7 @@ export function buildAdminEmbed(uiChannelMention: string): EmbedBuilder {
         "",
         "roles の形式: `roleId|label|emoji` を1行ずつ記述 (最大5件まで)",
         "例: `123456789012345678|お知らせ|📢`",
+        "カスタム絵文字は ID / name / :name: / <:name:id> / <a:name:id> に対応します。",
         "",
         `管理パネルチャンネル: ${uiChannelMention}`,
       ].join("\n"),

@@ -19,7 +19,6 @@ import {
 import { logModmailEvent } from "./modmailEventsLog.js";
 import { MODMAIL_REPLY_COMMAND } from "./modmailIds.js";
 import {
-  appendReplyAttachmentsMeta,
   createReplyRow,
   pendingReplyByTicket,
   pendingRepliesByAppealId,
@@ -31,12 +30,7 @@ import {
   setReplyConfirmMessageId,
   updateReplyStatus,
 } from "./modmailRepliesDb.js";
-import {
-  clearStaffAttachmentSessionsByReply,
-  consumeStaffAttachmentSession,
-  getStaffAttachmentSession,
-  replyLocks,
-} from "./modmailSessions.js";
+import { replyLocks } from "./modmailSessions.js";
 import {
   closeModmailTicketInDb,
   getModmailTicketRow,
@@ -167,7 +161,6 @@ export async function cancelPendingRepliesByTicket(
   const rows = await pendingRepliesByTicket(ctx, ticketId);
   const at = sqliteTimestamp();
   for (const row of rows) {
-    clearStaffAttachmentSessionsByReply(row.id);
     const ok = await updateReplyStatus(ctx, row.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
       cancelled_at: at,
       cancel_reason: "ticket_closed",
@@ -187,7 +180,6 @@ export async function cancelPendingRepliesByAppeal(ctx: BotContext, appealId: st
   const rows = await pendingRepliesByAppealId(ctx, appealId);
   const at = sqliteTimestamp();
   for (const row of rows) {
-    clearStaffAttachmentSessionsByReply(row.id);
     const ok = await updateReplyStatus(ctx, row.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
       cancelled_at: at,
       cancel_reason: "appeal_resolved",
@@ -205,7 +197,6 @@ export async function approveModmailReply(
   confirmInteractionMessage: Message | null,
 ): Promise<{ ok: boolean; message: string }> {
   const reply = await replyById(ctx, replyId);
-  if (reply) clearStaffAttachmentSessionsByReply(reply.id);
   if (!reply) return { ok: false, message: "返信予約が見つかりません。" };
   if (reply.status !== REPLY_STATUS.PENDING) return { ok: false, message: "この返信予約は既に処理済みです。" };
 
@@ -339,7 +330,6 @@ export async function rejectModmailReply(
   confirmInteractionMessage: Message | null,
 ): Promise<{ ok: boolean; message: string }> {
   const reply = await replyById(ctx, replyId);
-  if (reply) clearStaffAttachmentSessionsByReply(reply.id);
   if (!reply) return { ok: false, message: "返信予約が見つかりません。" };
   if (reply.status !== REPLY_STATUS.PENDING) return { ok: false, message: "この返信予約は既に処理済みです。" };
   const at = sqliteTimestamp();
@@ -400,36 +390,6 @@ export async function closeModmailTicketFull(
   } catch {}
 
   return { ok: true, message: `チケット ${ticketDisplayCode(input.ticketId)} をクローズしました。` };
-}
-
-export async function handleModmailPendingStaffAttachment(message: Message, ctx: BotContext): Promise<boolean> {
-  if (!message.guild || !message.channel?.isThread()) return false;
-  const session = getStaffAttachmentSession(message.channel.id, message.author.id);
-  if (!session) return false;
-  if (message.content.trim().startsWith(MODMAIL_REPLY_COMMAND)) return false;
-
-  const attach = serializeAttachmentsFromMessage(message);
-  if (attach.length === 0) {
-    await message.reply({ content: "添付待機中です。次のメッセージにファイルを添付してください。" }).catch(() => undefined);
-    return true;
-  }
-
-  const reply = await replyById(ctx, session.reply_id);
-  if (!reply || reply.status !== REPLY_STATUS.PENDING) {
-    consumeStaffAttachmentSession(message.channel.id, message.author.id);
-    await message.reply({ content: "返信予約の有効期限が切れたか、既に処理済みです。" }).catch(() => undefined);
-    return true;
-  }
-
-  const ok = await appendReplyAttachmentsMeta(ctx, reply.id, attach);
-  consumeStaffAttachmentSession(message.channel.id, message.author.id);
-  if (!ok) {
-    await message.reply({ content: "添付の追加に失敗しました。" }).catch(() => undefined);
-    return true;
-  }
-  await message.reply({ content: "添付を返信キューに追加しました。承認ボタンで送信してください。" }).catch(() => undefined);
-  void logModmailEvent(ctx, "STAFF_REPLY_ATTACHMENT_APPENDED", { reply_id: reply.id });
-  return true;
 }
 
 export async function handleModmailStaffReplyCommand(message: Message, ctx: BotContext): Promise<boolean> {
@@ -511,7 +471,6 @@ export async function handleModmailStaffReplyCommand(message: Message, ctx: BotC
 
 export async function routeModmailGuildThreadMessage(message: Message, ctx: BotContext): Promise<boolean> {
   if (!message.guild || message.author.bot) return false;
-  if (await handleModmailPendingStaffAttachment(message, ctx)) return true;
   if (message.content.trim().startsWith(MODMAIL_REPLY_COMMAND)) {
     if (!message.channel?.isThread()) return false;
     return handleModmailStaffReplyCommand(message, ctx);
