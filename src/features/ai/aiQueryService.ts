@@ -17,6 +17,7 @@ import type { AppConfig } from "../../core/config.js";
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { deepseekChat, type ChatMessage } from "./deepseek.js";
+import { getAiThinkingEnabled } from "./thinkingSettings.js";
 import { classifyUserIntent } from "./queryJudge.js";
 import { runAiSlashCommand } from "./aiCommandExecution.js";
 import { sendOrReconnectAiHistoryAdminPanel } from "./aiHistoryAdminPanel.js";
@@ -297,6 +298,7 @@ export class AiQueryService {
       const { content: optimized } = await deepseekChat(this.ctx.config, optimizerMessages, {
         temperature: this.ctx.config.PROMPT_OPTIMIZER_TEMPERATURE,
         sanitizeOutput: false,
+        thinking: false,
       });
 
       if (!safeStrip(optimized)) {
@@ -393,7 +395,8 @@ export class AiQueryService {
       activePrompt,
       { role: "user", content: question },
     ];
-    const { content: answer } = await deepseekChat(this.ctx.config, messages);
+    const thinking = await getAiThinkingEnabled(this.ctx, guildId, userId);
+    const { content: answer } = await deepseekChat(this.ctx.config, messages, { thinking });
     await this.appendHistoryPair(guildId, userId, question, answer);
     void this.optimizeUserPromptFromHistory(guildId, userId, userName).catch(() => undefined);
     this.touchHistoryAdminPanel();

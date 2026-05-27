@@ -125,6 +125,7 @@ export async function reviewSenryuCandidateWithAi(
       model,
       temperature: config.SENRYU_AI_REVIEW_TEMPERATURE,
       sanitizeOutput: false,
+      thinking: false,
       timeoutMs: config.SENRYU_AI_REVIEW_TIMEOUT_MS,
       maxRetries: config.SENRYU_AI_REVIEW_MAX_RETRIES,
     });

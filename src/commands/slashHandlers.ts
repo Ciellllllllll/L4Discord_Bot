@@ -21,6 +21,7 @@ import { deepseekChat } from "../features/ai/deepseek.js";
 import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
+import { getAiThinkingEnabled, setAiThinkingEnabled } from "../features/ai/thinkingSettings.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
 import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
 import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
@@ -73,6 +74,8 @@ export async function handleSlashCommand(
       return handleChangePrompt(interaction, ctx);
     case "show_prompt":
       return handleShowPrompt(interaction, ctx);
+    case "thinking":
+      return handleThinking(interaction, ctx, member);
     case "ping":
       return handlePing(interaction, ctx);
     case "member_count_setup":
@@ -105,6 +108,26 @@ export async function handleSlashCommand(
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
   }
+}
+
+async function handleThinking(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  const target = interaction.options.getUser("user") ?? interaction.user;
+  if (target.id !== interaction.user.id && (!member || !isAdmin(member, ctx.config))) {
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const enabled = interaction.options.getBoolean("enabled", true);
+  await setAiThinkingEnabled(ctx, interaction.guildId!, target.id, enabled);
+  const targetLabel = target.id === interaction.user.id ? "あなた" : `<@${target.id}>`;
+  await interaction.reply({
+    content: `${targetLabel} の DeepSeek V4 Flash Thinking を ${enabled ? "ON" : "OFF"} にしました。`,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
 }
 
 async function handleChangePrompt(interaction: ChatInputCommandInteraction, _ctx: BotContext): Promise<void> {
@@ -175,11 +198,16 @@ async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotCont
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     const { resolved } = readAiBasePromptFiles(ctx.config);
-    const { ms } = await deepseekChat(ctx.config, [
-      { role: "system", content: resolved },
-      { role: "user", content: "ping" },
-    ]);
-    await interaction.editReply(`DeepSeek 応答時間: **${ms}** ms`);
+    const thinking = await getAiThinkingEnabled(ctx, interaction.guildId!, interaction.user.id);
+    const { ms } = await deepseekChat(
+      ctx.config,
+      [
+        { role: "system", content: resolved },
+        { role: "user", content: "ping" },
+      ],
+      { thinking },
+    );
+    await interaction.editReply(`DeepSeek 応答時間: **${ms}** ms / Thinking: **${thinking ? "ON" : "OFF"}**`);
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek ping failed");
     await interaction.editReply("計測に失敗しました。");

@@ -72,6 +72,8 @@ const profileOverridableKeys = [
   "DEEPSEEK_API_KEY",
   "DEEPSEEK_API_BASE",
   "DEEPSEEK_MODEL",
+  "DEEPSEEK_THINKING_ENABLED",
+  "DEEPSEEK_THINKING_EFFORT",
   "DATABASE_PATH",
   "MESSAGE_LOG_DB_PATH",
   "LOG_DB_PATH",
@@ -202,7 +204,15 @@ const envSchema = z.object({
   ),
     // OpenAI 互換 chat completions の model 名
 
-  DEEPSEEK_MODEL: z.string().min(1).default("deepseek-chat"),
+  DEEPSEEK_MODEL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().min(1).default("deepseek-v4-flash"),
+  ),
+  DEEPSEEK_THINKING_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  DEEPSEEK_THINKING_EFFORT: z.preprocess(
+    (v) => (v === "" || v === undefined ? "high" : v),
+    z.enum(["high", "max"]).default("high"),
+  ),
   AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(45_000),
     // DeepSeek 応答 body の最大バイト（fetchWithLimits）
 

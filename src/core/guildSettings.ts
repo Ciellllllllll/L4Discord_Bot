@@ -4,6 +4,8 @@ import type { Database } from "./db/types.js";
 
 export type GuildSettingsData = {
   emoji_restricted_user_ids?: string[];
+  ai_thinking_enabled?: boolean;
+  ai_thinking_enabled_by_user?: Record<string, boolean>;
   appeal_instructions_url?: string;
   auto_reply_excluded_channel_ids?: string[];
   message_log_excluded_channel_ids?: string[];
