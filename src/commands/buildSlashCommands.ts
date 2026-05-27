@@ -99,6 +99,11 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
 
     new SlashCommandBuilder()
+      .setName("create_prompt")
+      .setDescription("条件から /q 用の AI システムプロンプトを作成します")
+      .toJSON(),
+
+    new SlashCommandBuilder()
       .setName("show_prompt")
       .setDescription("自分が /q で使用している AI システムプロンプトを表示します")
       .toJSON(),
