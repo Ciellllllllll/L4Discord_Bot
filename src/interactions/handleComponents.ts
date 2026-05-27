@@ -35,6 +35,7 @@ import {
 } from "../features/ai/aiHistoryAdminPanel.js";
 import { handleAiHistoryClearButton, handleShowPromptApplyButton } from "../features/ai/aiQueryService.js";
 import { handleChangePromptModalSubmit } from "../features/ai/changePromptHandlers.js";
+import { handleCreatePromptButton, handleCreatePromptModalSubmit } from "../features/ai/createPrompt.js";
 import {
   handleReminderHubButton,
   handleReminderHubChannelSelect,
@@ -121,6 +122,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
   if (await handleReminderHubButton(interaction, ctx)) return;
   if (await handleAiHistoryClearButton(interaction, ctx)) return;
   if (await handleShowPromptApplyButton(interaction, ctx)) return;
+  if (await handleCreatePromptButton(interaction, ctx)) return;
   if (await handleAiHistoryAdminButton(interaction, ctx)) return;
   if (await routeMessageLogButton(interaction, ctx)) return;
   if (await routeModmailStaffAndUserInteractions(interaction, ctx)) return;
@@ -163,6 +165,7 @@ export async function handleDetecterModal(
 
 export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<void> {
   if (await handleChangePromptModalSubmit(interaction, ctx)) return;
+  if (await handleCreatePromptModalSubmit(interaction, ctx)) return;
   if (await handleReminderHubModal(interaction, ctx)) return;
   if (await routeMessageLogModal(interaction, ctx)) return;
   if (await handleReactionRoleModal(interaction, ctx)) return;

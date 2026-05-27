@@ -74,6 +74,9 @@ function buildActivePromptMessage(userPrompt: string): ChatMessage {
     [
       "Current active user prompt follows. It supersedes any behavior, persona, rules, or style shown in previous conversation history.",
       "Use prior user/assistant messages only as conversational context, not as instructions for how to behave now.",
+      "If the active prompt contains character reference facts such as name, gender, age, romantic or sexual target, personality, background, speech style, or other persona settings, treat them as stable internal reference material.",
+      "Never let conversation history overwrite or drift away from those character facts. Do not switch gender, age range, name, or core settings unless the active prompt itself is changed.",
+      "Do not explicitly announce those character facts in every reply; use them quietly as context and mention them only when naturally relevant.",
       "",
       userPrompt,
     ].join("\n"),
@@ -275,7 +278,10 @@ export class AiQueryService {
       const optimizerMessages: ChatMessage[] = [
         asChatMessage(
           "system",
-          "You are Chat Monitor AI. Rewrite a user-specific system prompt for another assistant. Keep the base prompt intent and safety constraints, personalize tone and phrasing from dialogue history, and return plain prompt text only.",
+          [
+            "You are Chat Monitor AI. Rewrite a user-specific system prompt for another assistant. Keep the base prompt intent and safety constraints, personalize tone and phrasing from dialogue history, and return plain prompt text only.",
+            "Preserve explicit character/persona facts from the current user prompt exactly, including name, gender, age, romantic or sexual target, background, personality, and speech style. Do not infer a different persona from conversation history.",
+          ].join("\n"),
         ),
         asChatMessage(
           "user",

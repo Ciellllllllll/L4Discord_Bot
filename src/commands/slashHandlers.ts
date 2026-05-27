@@ -20,6 +20,7 @@ import { SLASH_META } from "./slashMeta.js";
 import { deepseekChat } from "../features/ai/deepseek.js";
 import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
+import { showCreatePromptModal } from "../features/ai/createPrompt.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 import { getAiThinkingEnabled, setAiThinkingEnabled } from "../features/ai/thinkingSettings.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
@@ -72,6 +73,8 @@ export async function handleSlashCommand(
       return handleQ(interaction, ctx);
     case "change_prompt":
       return handleChangePrompt(interaction, ctx);
+    case "create_prompt":
+      return handleCreatePrompt(interaction);
     case "show_prompt":
       return handleShowPrompt(interaction, ctx);
     case "thinking":
@@ -107,6 +110,21 @@ export async function handleSlashCommand(
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
+  }
+}
+
+async function handleCreatePrompt(interaction: ChatInputCommandInteraction): Promise<void> {
+  try {
+    await showCreatePromptModal(interaction);
+  } catch {
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction
+        .reply({
+          content: "モーダルを表示できませんでした。しばらくしてから再度お試しください。",
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => undefined);
+    }
   }
 }
 
