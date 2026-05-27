@@ -93,6 +93,7 @@ export async function classifyUserIntent(
     const { content } = await deepseekChat(config, messages, {
       temperature: config.AI_JUDGE_TEMPERATURE,
       sanitizeOutput: false,
+      thinking: false,
     });
     return parseJudgeOutput(content);
   } catch (err) {

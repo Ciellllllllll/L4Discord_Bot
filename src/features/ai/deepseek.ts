@@ -1,7 +1,7 @@
 import type { AppConfig } from "../../core/config.js";
 import { fetchWithLimits } from "./fetchWithLimits.js";
 
-const DEFAULT_BASE = "https://api.deepseek.com/v1";
+const DEFAULT_BASE = "https://api.deepseek.com";
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
@@ -14,6 +14,8 @@ export type DeepSeekRequestOptions = {
   signal?: AbortSignal;
   temperature?: number;
   model?: string;
+  thinking?: boolean;
+  reasoningEffort?: "high" | "max";
     // false のとき @everyone 等のサニタイズをしない（分類器など）
 
   sanitizeOutput?: boolean;
@@ -47,6 +49,8 @@ export async function deepseekChat(
   const base = (config.DEEPSEEK_API_BASE ?? DEFAULT_BASE).replace(/\/$/, "");
   const url = `${base}/chat/completions`;
   const model = options.model ?? config.DEEPSEEK_MODEL;
+  const thinking = options.thinking ?? config.DEEPSEEK_THINKING_ENABLED;
+  const reasoningEffort = options.reasoningEffort ?? config.DEEPSEEK_THINKING_EFFORT;
   const apiKey = config.DEEPSEEK_API_KEY.trim();
   if (!apiKey) {
     throw new Error("DEEPSEEK_API_KEY is not set. Set it in .env to use AI features.");
@@ -72,7 +76,8 @@ export async function deepseekChat(
           },
           body: JSON.stringify({
             model,
-            temperature,
+            ...(thinking ? { reasoning_effort: reasoningEffort } : { temperature }),
+            thinking: { type: thinking ? "enabled" : "disabled" },
             messages,
           }),
         },

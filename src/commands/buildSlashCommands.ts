@@ -104,6 +104,17 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
 
     new SlashCommandBuilder()
+      .setName("thinking")
+      .setDescription("自分、または管理者が指定ユーザーの Thinking を切り替えます")
+      .addBooleanOption((o) =>
+        o.setName("enabled").setDescription("Thinking を有効にするか").setRequired(true),
+      )
+      .addUserOption((o) =>
+        o.setName("user").setDescription("対象ユーザー（管理者のみ指定可）").setRequired(false),
+      )
+      .toJSON(),
+
+    new SlashCommandBuilder()
       .setName("mute")
       .setDescription("このチャンネル・スレッドでの川柳機能をオフにします")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
