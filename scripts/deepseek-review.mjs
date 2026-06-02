@@ -564,6 +564,37 @@ function normalizeSeverity(severity) {
   return "minor";
 }
 
+function formatSeverityLabel(severity) {
+  const labels = {
+    blocker: "致命的",
+    major: "重大",
+    minor: "軽微",
+    nit: "細部",
+  };
+
+  return labels[severity] ?? "軽微";
+}
+
+function formatRiskLabel(risk) {
+  const labels = {
+    high: "高",
+    medium: "中",
+    low: "低",
+  };
+
+  return labels[String(risk ?? "").toLowerCase()] ?? "不明";
+}
+
+function formatRunModeLabel(mode) {
+  const labels = {
+    pull_request: "Pull Request",
+    push: "Push",
+    issue_comment: "Issueコメント",
+  };
+
+  return labels[mode] ?? mode;
+}
+
 function filterValidComments(rawComments, lineMapByPath) {
   const filtered = [];
   const seen = new Set();
@@ -572,7 +603,7 @@ function filterValidComments(rawComments, lineMapByPath) {
     const path = String(rawComment.path ?? "").trim();
     const line = Number(rawComment.line);
     const body = String(rawComment.body ?? "").trim();
-    const title = String(rawComment.title ?? "DeepSeek Review").trim();
+    const title = String(rawComment.title ?? "DeepSeekレビュー").trim();
     const severity = normalizeSeverity(rawComment.severity);
 
     if (!path || !Number.isInteger(line) || line <= 0 || !body) {
@@ -624,7 +655,7 @@ function filterRepositoryComments(rawComments, lineCountsByPath) {
     const path = String(rawComment.path ?? "").trim();
     const line = Number(rawComment.line);
     const body = String(rawComment.body ?? "").trim();
-    const title = String(rawComment.title ?? "DeepSeek Review").trim();
+    const title = String(rawComment.title ?? "DeepSeekレビュー").trim();
     const severity = normalizeSeverity(rawComment.severity);
     const lineCount = lineCountsByPath.get(path);
 
@@ -658,7 +689,7 @@ function filterRepositoryComments(rawComments, lineCountsByPath) {
 
 function formatInlineComment(comment) {
   return [
-    `重要度: ${comment.severity}`,
+    `重要度: ${formatSeverityLabel(comment.severity)}`,
     "",
     `指摘: ${comment.title}`,
     "",
@@ -673,7 +704,7 @@ function formatCommentListForSummary(comments, maxItems = maxReviewComments) {
 
   return comments.slice(0, maxItems).map((comment) => {
     return [
-      `- \`${comment.severity}\` ${comment.path}:${comment.line} ${comment.title}`,
+      `- \`${formatSeverityLabel(comment.severity)}\` ${comment.path}:${comment.line} ${comment.title}`,
       `  ${truncateText(comment.body, 700).replaceAll("\n", "\n  ")}`,
     ].join("\n");
   }).join("\n");
@@ -681,14 +712,14 @@ function formatCommentListForSummary(comments, maxItems = maxReviewComments) {
 
 function buildReviewSummaryBody(review, inlineComments, allComments, reviewAll) {
   return [
-    "## DeepSeek Code Review",
+    "## DeepSeekコードレビュー",
     "",
-    `Model: \`${DEEPSEEK_MODEL}\``,
-    `Reasoning effort: \`${DEEPSEEK_REASONING_EFFORT}\``,
-    `Risk level: \`${review.risk_level ?? "unknown"}\``,
-    `Mode: \`${reviewAll ? "repository" : "diff"}\``,
-    `Inline comments: \`${inlineComments.length}\``,
-    `Total findings: \`${allComments.length}\``,
+    `モデル: \`${DEEPSEEK_MODEL}\``,
+    `推論強度: \`${DEEPSEEK_REASONING_EFFORT}\``,
+    `リスク: \`${formatRiskLabel(review.risk_level)}\``,
+    `対象範囲: \`${reviewAll ? "リポジトリ全体" : "差分"}\``,
+    `インラインコメント数: \`${inlineComments.length}\``,
+    `指摘数: \`${allComments.length}\``,
     "",
     "## 総評",
     "",
@@ -750,7 +781,7 @@ function emitPushAnnotations(comments) {
       `::${level}`,
       ` file=${escapeWorkflowCommandProperty(comment.path)}`,
       `,line=${comment.line}`,
-      `,title=${escapeWorkflowCommandProperty(`DeepSeek ${comment.severity}: ${comment.title}`)}`,
+      `,title=${escapeWorkflowCommandProperty(`DeepSeek ${formatSeverityLabel(comment.severity)}: ${comment.title}`)}`,
       `::${escapeWorkflowCommandData(comment.body)}`,
     ].join("");
 
@@ -786,7 +817,7 @@ function writeStepSummary(review, comments, mode, targetUrl, reviewAll) {
   const rows = comments.map((comment) => {
     return [
       "|",
-      escapeMarkdownTableCell(comment.severity),
+      escapeMarkdownTableCell(formatSeverityLabel(comment.severity)),
       "|",
       escapeMarkdownTableCell(comment.path),
       "|",
@@ -800,14 +831,14 @@ function writeStepSummary(review, comments, mode, targetUrl, reviewAll) {
   });
 
   const summary = [
-    "# DeepSeek Code Review",
+    "# DeepSeekコードレビュー",
     "",
-    `Mode: \`${mode}\``,
-    `Scope: \`${reviewAll ? "repository" : "diff"}\``,
-    `Model: \`${DEEPSEEK_MODEL}\``,
-    `Reasoning effort: \`${DEEPSEEK_REASONING_EFFORT}\``,
-    `Risk level: \`${review.risk_level ?? "unknown"}\``,
-    `Target: ${targetUrl}`,
+    `実行モード: \`${formatRunModeLabel(mode)}\``,
+    `対象範囲: \`${reviewAll ? "リポジトリ全体" : "差分"}\``,
+    `モデル: \`${DEEPSEEK_MODEL}\``,
+    `推論強度: \`${DEEPSEEK_REASONING_EFFORT}\``,
+    `リスク: \`${formatRiskLabel(review.risk_level)}\``,
+    `投稿先: ${targetUrl}`,
     "",
     "## 総評",
     "",
@@ -848,45 +879,45 @@ async function notifyDiscord(review, comments, mode, targetUrl, reviewAll) {
   }
 
   const payload = {
-    username: "AI Code Review",
+    username: "AIコードレビュー",
     content: "DeepSeekによるコードレビューが完了しました。",
     embeds: [
       {
         title: mode === "pull_request"
-          ? "Pull Request Review"
-          : "Push Review",
+          ? "Pull Requestレビュー"
+          : "Pushレビュー",
         url: targetUrl,
         color: getDiscordColor(review.risk_level),
         description: truncateText(review.summary ?? "総評はありません。", 1800),
         fields: [
           {
-            name: "Repository",
+            name: "リポジトリ",
             value: GITHUB_REPOSITORY,
             inline: true,
           },
           {
-            name: "Branch",
+            name: "ブランチ",
             value: GITHUB_REF_NAME || "unknown",
             inline: true,
           },
           {
-            name: "Risk",
-            value: String(review.risk_level ?? "unknown"),
+            name: "リスク",
+            value: formatRiskLabel(review.risk_level),
             inline: true,
           },
           {
-            name: "Comments",
+            name: "コメント数",
             value: String(comments.length),
             inline: true,
           },
           {
-            name: "Model",
+            name: "モデル",
             value: DEEPSEEK_MODEL,
             inline: true,
           },
           {
-            name: "Mode",
-            value: reviewAll ? `${mode} / repository` : `${mode} / diff`,
+            name: "実行モード",
+            value: reviewAll ? `${formatRunModeLabel(mode)} / リポジトリ全体` : `${formatRunModeLabel(mode)} / 差分`,
             inline: true,
           },
         ],
