@@ -6,6 +6,7 @@ import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { buildSetupEntryButtonRow } from "../features/panels/setupWizard.js";
 import { reloadPanelsFromGuildSettings } from "../features/panels/panelService.js";
 import { runNologToggleAndBuildEmbed } from "../features/messageLog/messageLogNolog.js";
+import { handlePacchiPrefixMessage } from "../features/pacchi/pacchi.prefix.js";
 
 const PREFIX = "!";
 
@@ -22,7 +23,17 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
   const without = raw.slice(PREFIX.length).trim();
   const [cmd, ..._rest] = without.split(/\s+/);
   const lower = cmd.toLowerCase();
+  const args = _rest;
   const botVersion = ctx.config.BOT_VERSION ?? BOT_SEMVER;
+
+  if (lower.startsWith("pacchi_")) {
+    if (!isPrefixVersionAllowed(ctx, botVersion, lower)) {
+      await message.reply(versionBlockedMessage());
+      ctx.log.info({ command: lower, userId: message.author.id, outcome: "version_blocked" }, "prefix command");
+      return true;
+    }
+    return await handlePacchiPrefixMessage(message, ctx, lower, args);
+  }
 
   if (lower === "setup") {
     if (!isPrefixVersionAllowed(ctx, botVersion, "setup")) {

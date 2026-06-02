@@ -50,6 +50,7 @@ import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
 import { ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
+import { ensurePacchiSchema } from "./features/pacchi/pacchi.schema.js";
 import {
   endOpenVcSessionForMember,
   reconcileVcTimeSessionsAtReady,
@@ -74,6 +75,9 @@ import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
 import { handlePrefixMessage } from "./message/prefixHandlers.js";
 import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
+import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
+import { ensureGameDealSchema } from "./features/gameDeals/gameDealRepository.js";
+import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
 
 let mainStarted = false;
 
@@ -119,6 +123,8 @@ async function main(): Promise<void> {
   const automodSqlite = createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
   ensureTicketDatabaseSchema(ticketSqlite);
   ensureVcTimeSchema(vcTimeSqlite);
+  ensurePacchiSchema(sqlite);
+  ensureGameDealSchema(sqlite);
   ensureAiHistorySchema(aiHistorySqlite);
   ensureAutomoderationSchema(automodSqlite);
   prepareMessageLogsDatabase(messageLogSqlite);
@@ -235,6 +241,7 @@ async function main(): Promise<void> {
   const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
   let presenceTimer: NodeJS.Timeout | undefined;
   let reminderTimer: NodeJS.Timeout | undefined;
+  let gameDealTimer: NodeJS.Timeout | undefined;
 
   client.once("clientReady", async () => {
     const u = client.user;
@@ -305,6 +312,7 @@ async function main(): Promise<void> {
     }
     presenceTimer = startPresenceRotation(client, log, config.BOT_VERSION);
     reminderTimer = startReminderScheduler(ctx);
+    gameDealTimer = startGameDealWatcher(ctx);
     log.info("startup tasks from clientReady finished (sync may still be in flight)");
   });
 
@@ -396,6 +404,7 @@ async function main(): Promise<void> {
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
       if (await handlePrefixMessage(message, ctx)) return;
+      if (await handlePacchiMessage(ctx, message)) return;
       await runUtilitiesMessageChain(utilitiesBundle, message);
       if (await handleSenryuMessage(ctx, message)) return;
       if (await handleExtendedAutoReplies(message, ctx)) return;
@@ -542,6 +551,7 @@ async function main(): Promise<void> {
     log.info("shutting down");
     if (presenceTimer) clearInterval(presenceTimer);
     if (reminderTimer) clearInterval(reminderTimer);
+    if (gameDealTimer) clearInterval(gameDealTimer);
     ctx.vcTemp.stopSweep();
     client.destroy();
     await db.destroy();

@@ -54,6 +54,7 @@ import {
 import { getDetecterService, DETECTER_REASON_INPUT_ID } from "../features/detecter/detecterService.js";
 import { handleExecutionFlowButton } from "../features/execution/executionFlow.js";
 import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
+import { handleGameDealButton } from "../features/gameDeals/gameDealWatcher.js";
 import { parseCustomId } from "./parseCustomId.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
@@ -132,6 +133,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
   if (await handleReactionRoleButton(interaction, ctx)) return;
   if (await handleDetecterButton(interaction, ctx)) return;
   if (await handleAfkDisconnectButton(interaction, ctx)) return;
+  if (await handleGameDealButton(interaction, ctx)) return;
   if (await handleVcCreatorButton(interaction, ctx)) return;
   if (await handlePanelButton(interaction, ctx)) return;
 }

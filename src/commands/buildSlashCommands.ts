@@ -14,6 +14,10 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       )
       .toJSON(),
     new SlashCommandBuilder().setName("ping").setDescription("応答時間計測用コマンド(DEBUG用です)").toJSON(),
+    new SlashCommandBuilder()
+      .setName("pacchi_help")
+      .setDescription("ぱっちぃ機能の使い方を表示します")
+      .toJSON(),
 
     new SlashCommandBuilder()
       .setName("vc_rank")
@@ -123,6 +127,37 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .setName("mute")
       .setDescription("このチャンネル・スレッドでの川柳機能をオフにします")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("game_on")
+      .setDescription("このチャンネルでSteam/Epicの無料検知通知を有効化します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("game_now")
+      .setDescription("Steam/Epicの無料ゲーム候補を即時取得します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("game_off")
+      .setDescription("Steam/Epicの無料検知通知を無効化します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("sub")
+      .setDescription("Steam/Epicゲームの割引・無料化監視を登録します")
+      .addStringOption((o) =>
+        o
+          .setName("link")
+          .setDescription("Steam または Epic Games Store のゲームURL")
+          .setRequired(true)
+          .setMaxLength(500),
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("sub_list")
+      .setDescription("自分の割引・無料化監視リストを表示します")
       .toJSON(),
   ];
 }

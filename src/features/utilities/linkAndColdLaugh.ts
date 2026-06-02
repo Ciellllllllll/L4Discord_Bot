@@ -12,6 +12,8 @@ const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
 
 const URL_CANDIDATE_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
+const LINK_IN_CONTENT_PATTERN =
+  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+/gi;
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
 function stripUrlTail(urlText: string): string {
@@ -68,7 +70,7 @@ function countKeywordOccurrences(text: string, keyword: string): number {
 
 // v2 と同じ split 挙動だが、カンマ区切り各フレーズを個別に数える（元の巨大1文字列検索は実質無効のため）
 
-function totalColdLaughHits(content: string): number {
+export function totalColdLaughHits(content: string): number {
   const phrases = COLD_LAUGH_KEYWORD.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
@@ -77,6 +79,14 @@ function totalColdLaughHits(content: string): number {
     n += countKeywordOccurrences(content, p);
   }
   return n;
+}
+
+export function stripLinksForColdLaughContent(content: string): string {
+  return String(content || "").replace(LINK_IN_CONTENT_PATTERN, " ");
+}
+
+export function coldLaughHitsForMessageContent(content: string): number {
+  return totalColdLaughHits(stripLinksForColdLaughContent(content));
 }
 
 function extractXLinks(content: string): string[] {
@@ -173,7 +183,7 @@ export class LinkAndColdLaugh {
 
     const content = String(message.content || "");
 
-    const coldCount = totalColdLaughHits(content);
+    const coldCount = coldLaughHitsForMessageContent(content);
     if (coldCount > 0) {
       const userId = String(message.author.id);
       await withLock(async () => {

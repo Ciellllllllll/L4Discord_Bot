@@ -1,10 +1,11 @@
-export const BOT_SEMVER = "2.0.6";
+export const BOT_SEMVER = "2.0.7";
 
 // スラッシュコマンド名 → 利用に必要な最低 BOT_SEMVER
 
 export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   q: "0.1.0",
   ping: "0.1.0",
+  pacchi_help: "2.0.6",
   vc_rank: "0.1.0",
   afk: "2.0.4",
   member_count_setup: "0.1.0",
@@ -22,6 +23,11 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   show_prompt: "2.0.1",
   thinking: "2.0.6",
   mute: "2.0.1",
+  game_on: "2.0.6",
+  game_now: "2.0.6",
+  game_off: "2.0.6",
+  sub: "2.0.6",
+  sub_list: "2.0.6",
 };
 
 // プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER
@@ -35,6 +41,20 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   see: "2.1.0",
   reply: "0.1.0",
   nolog: "0.1.0",
+  pacchi_on: "2.0.6",
+  pacchi_off: "2.0.6",
+  pacchi_channel: "2.0.6",
+  pacchi_rate: "2.0.6",
+  pacchi_status: "2.0.6",
+  pacchi_memory: "2.0.6",
+  pacchi_words: "2.0.6",
+  pacchi_forget: "2.0.6",
+  pacchi_poem: "2.0.6",
+  pacchi_work_start: "2.0.6",
+  pacchi_work_end: "2.0.6",
+  pacchi_sleep: "2.0.6",
+  pacchi_export: "2.0.6",
+  pacchi_import: "2.0.6",
 };
 
 // 常設パネル（panel_kind）ごとの UI 論理バージョン。

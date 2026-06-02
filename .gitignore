@@ -8,3 +8,4 @@ data/message_log_attachments/
 *.log
 .DS_Store
 data/
+goal.md

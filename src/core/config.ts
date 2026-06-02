@@ -69,6 +69,8 @@ const profileOverridableKeys = [
   "VC_CREATE_CATEGORY_ID",
   "REACTION_ROLE_UI_CHANNEL_ID",
   "REACTION_ROLE_OUTPUT_CHANNEL_ID",
+  "GAME_DEAL_CHANNEL_ID",
+  "GAME_DEAL_NOTIFY_ROLE_ID",
   "DEEPSEEK_API_KEY",
   "DEEPSEEK_API_BASE",
   "DEEPSEEK_MODEL",
@@ -88,7 +90,15 @@ const profileOverridableKeys = [
   "PROMPT_FILE_PATH",
   "USER_PROMPT_DIR",
   "COLD_LAUGH_STORE_PATH",
+  "THECATAPI_ENABLED",
+  "THECATAPI_API_KEY",
+  "THECATAPI_API_BASE_URL",
+  "THECATAPI_REQUEST_TIMEOUT_MS",
+  "DOGCEO_ENABLED",
+  "DOGCEO_IMAGE_RANDOM_URL",
+  "DOGCEO_REQUEST_TIMEOUT_MS",
   "SENRYU_KUROMOJI_DICT_PATH",
+  "PACCHI_WIKIPEDIA_API_BASE_URL",
 ] as const;
 
 function normalizeBotProfile(v: unknown): BotProfile {
@@ -291,9 +301,24 @@ const envSchema = z.object({
 
   REACTION_ROLE_UI_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   REACTION_ROLE_OUTPUT_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  GAME_DEAL_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  GAME_DEAL_NOTIFY_ROLE_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
     // DiscordBOTv2 Utilities: 冷笑カウント JSON（既定: data/server/json/cold_laugh_counts.json）
 
   COLD_LAUGH_STORE_PATH: z.string().min(1).default("data/server/json/cold_laugh_counts.json"),
+  THECATAPI_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  THECATAPI_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  THECATAPI_API_BASE_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://api.thecatapi.com"),
+  ),
+  THECATAPI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  DOGCEO_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  DOGCEO_IMAGE_RANDOM_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://dog.ceo/api/breeds/image/random"),
+  ),
+  DOGCEO_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
     // 川柳（5-7-5）検出（kuromoji）。未設定・空は false
 
   SENRYU_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
@@ -329,6 +354,10 @@ const envSchema = z.object({
   SENRYU_KUROMOJI_DICT_PATH: z.preprocess(
     (v) => (v === "" || v === undefined ? undefined : v),
     z.string().min(1).optional(),
+  ),
+  PACCHI_WIKIPEDIA_API_BASE_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://ja.wikipedia.org/api/rest_v1/page/summary"),
   ),
 });
 
