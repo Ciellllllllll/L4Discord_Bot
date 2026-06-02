@@ -5,7 +5,7 @@ const SEARCH_URL = "https://store.steampowered.com/search/?maxprice=free&special
 const APPDETAILS_URL = "https://store.steampowered.com/api/appdetails";
 const USER_AGENT = "L4DiscordBot/0.1 SteamFreeWatcher (+https://store.steampowered.com/)";
 const REQUEST_TIMEOUT_MS = 12_000;
-const MAX_SEARCH_ITEMS = 30;
+const MAX_SEARCH_ITEMS = 90;
 const SINGLE_APPDETAILS_CONCURRENCY = 3;
 const SINGLE_APPDETAILS_DELAY_MS = 300;
 
@@ -22,6 +22,18 @@ class SteamHttpError extends Error {
   ) {
     super(message);
     this.name = "SteamHttpError";
+  }
+}
+
+export class SteamSearchUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly url: string,
+    readonly bodyPreview: string,
+  ) {
+    super(message);
+    this.name = "SteamSearchUnavailableError";
   }
 }
 
@@ -114,6 +126,9 @@ async function fetchText(url: string, opts: FetchOptions = {}): Promise<string> 
     headers: {
       "User-Agent": USER_AGENT,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.7,en;q=0.6",
+      "Cache-Control": "no-cache",
+      Referer: "https://store.steampowered.com/",
     },
   });
   if (!res.ok) {
@@ -180,12 +195,11 @@ function normalizeDetails(appid: string, raw: AppDetailsResponse[string]): Steam
   };
 }
 
-function httpErrorLogFields(err: unknown): Record<string, unknown> {
+function appdetailsSingleErrorLogFields(err: unknown): Record<string, unknown> {
   if (err instanceof SteamHttpError) {
     return {
       err: err.message,
       status: err.status,
-      url: err.url,
       bodyPreview: err.bodyPreview,
     };
   }
@@ -209,35 +223,27 @@ export class SteamStoreClient {
   constructor(private readonly log: pino.Logger) {}
 
   async fetchSearchItems(limit = MAX_SEARCH_ITEMS): Promise<SteamSearchItem[]> {
+    const byAppid = new Map<string, SteamSearchItem>();
     try {
       const html = await withTimeout((signal) => fetchText(SEARCH_URL, { signal }));
       const rows = html.match(/<a\b[^>]*class=["'][^"']*search_result_row[^"']*["'][\s\S]*?<\/a>/gi) ?? [];
-      return rows.map(parseSearchItem).filter((v): v is SteamSearchItem => v !== null).slice(0, limit);
+      for (const item of rows.map(parseSearchItem).filter((v): v is SteamSearchItem => v !== null)) {
+        if (!byAppid.has(item.appid)) byAppid.set(item.appid, item);
+        if (byAppid.size >= limit) break;
+      }
     } catch (err) {
-      this.log.warn({ err }, "steam search fetch or parse failed");
-      return [];
+      if (err instanceof SteamHttpError && err.status === 403) {
+        throw new SteamSearchUnavailableError("Steam search source unavailable", err.status, err.url, err.bodyPreview);
+      }
+      this.log.warn({ err, url: SEARCH_URL }, "steam search fetch or parse failed");
     }
+    return [...byAppid.values()].slice(0, limit);
   }
 
   async fetchAppDetails(appids: string[]): Promise<Map<string, SteamAppDetails>> {
     const unique = normalizeAppidList(appids);
     const out = new Map<string, SteamAppDetails>();
     if (unique.length === 0) return out;
-    let batchFailed = false;
-    try {
-      const url = `${APPDETAILS_URL}?appids=${encodeURIComponent(unique.join(","))}&cc=jp&l=japanese`;
-      const json = await withTimeout((signal) => fetchJson<AppDetailsResponse>(url, { signal }));
-      for (const appid of unique) {
-        const normalized = normalizeDetails(appid, json[appid]);
-        if (normalized) out.set(appid, normalized);
-      }
-      if (out.size > 0) return out;
-    } catch (err) {
-      batchFailed = true;
-      this.log.warn({ ...httpErrorLogFields(err), count: unique.length }, "steam appdetails batch failed, fallback to single appdetails");
-    }
-
-    if (!batchFailed && out.size > 0) return out;
 
     for (let i = 0; i < unique.length; i += SINGLE_APPDETAILS_CONCURRENCY) {
       const chunk = unique.slice(i, i + SINGLE_APPDETAILS_CONCURRENCY);
@@ -258,7 +264,7 @@ export class SteamStoreClient {
         } else {
           const reason = result.reason as { appid?: unknown; err?: unknown };
           this.log.warn(
-            { appid: reason.appid, ...httpErrorLogFields(reason.err ?? result.reason) },
+            { appid: reason.appid, ...appdetailsSingleErrorLogFields(reason.err ?? result.reason) },
             "steam appdetails single failed",
           );
         }

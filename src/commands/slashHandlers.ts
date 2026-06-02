@@ -29,6 +29,13 @@ import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.js";
 import { startAfkDisconnectCommand } from "../features/vc/afkDisconnect.js";
 import { handlePacchiHelp } from "../features/pacchi/pacchi.slash.js";
+import {
+  handleGameNow,
+  handleGameOff,
+  handleGameOn,
+  handleGameSub,
+  handleGameSubList,
+} from "../features/gameDeals/gameDealCommands.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -110,6 +117,16 @@ export async function handleSlashCommand(
       return handleTicketUsers(interaction, ctx, member);
     case "mute":
       return handleSenryuMute(interaction, ctx, member);
+    case "game_on":
+      return handleGameOn(interaction, ctx, member);
+    case "game_now":
+      return handleGameNow(interaction, ctx, member);
+    case "game_off":
+      return handleGameOff(interaction, ctx, member);
+    case "sub":
+      return handleGameSub(interaction, ctx);
+    case "sub_list":
+      return handleGameSubList(interaction, ctx);
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });

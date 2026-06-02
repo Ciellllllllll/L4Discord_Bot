@@ -23,6 +23,11 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   show_prompt: "2.0.1",
   thinking: "2.0.6",
   mute: "2.0.1",
+  game_on: "2.0.6",
+  game_now: "2.0.6",
+  game_off: "2.0.6",
+  sub: "2.0.6",
+  sub_list: "2.0.6",
 };
 
 // プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER

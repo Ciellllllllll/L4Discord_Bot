@@ -38,11 +38,13 @@ export function detectSteamFreeCandidates(
     const discountPercent = po?.discountPercent ?? item.discountPercent;
     const rawPriceText = item.rawPriceText.toLowerCase();
     const htmlLooksFree = finalPrice === 0 || /free|無料|0/.test(rawPriceText);
+    const htmlLooks100PercentOff = discountPercent === 100 || /-?\s*100\s*%/.test(item.rawPriceText);
+    const htmlHasPaidOriginal = originalPrice !== null && originalPrice > 0;
     const htmlLooksFreeWeekend = /weekend|週末|期間|play for free|無料プレイ/i.test(item.rawPriceText);
 
     if (finalPrice === null && discountPercent === null && details.isFree !== true) continue;
 
-    if (finalPrice === 0 && discountPercent === 100) {
+    if ((finalPrice === 0 || htmlLooksFree) && htmlLooks100PercentOff) {
       candidates.push({
         appid: item.appid,
         name: details.name || item.name,
@@ -58,7 +60,7 @@ export function detectSteamFreeCandidates(
       continue;
     }
 
-    if (finalPrice === 0 && htmlLooksFree && originalPrice !== null && originalPrice > 0) {
+    if ((finalPrice === 0 || htmlLooksFree) && htmlHasPaidOriginal) {
       candidates.push({
         appid: item.appid,
         name: details.name || item.name,

@@ -81,6 +81,26 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/015_steam_free.up.sql"),
     down: join(repoRoot, "migrations/sqlite/015_steam_free.down.sql"),
   },
+  {
+    version: 16,
+    up: join(repoRoot, "migrations/sqlite/016_epic_free.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/016_epic_free.down.sql"),
+  },
+  {
+    version: 17,
+    up: join(repoRoot, "migrations/sqlite/017_game_deals.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/017_game_deals.down.sql"),
+  },
+  {
+    version: 18,
+    up: join(repoRoot, "migrations/sqlite/018_game_deals_steam_source_status.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/018_game_deals_steam_source_status.down.sql"),
+  },
+  {
+    version: 19,
+    up: join(repoRoot, "migrations/sqlite/019_cheapshark_deals.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/019_cheapshark_deals.down.sql"),
+  },
   // ticket.db 側の appeals / modmail_replies 列追加はメイン DB マイグレーションに含めない（ensureTicketDatabaseSchema で列追加）。
 ];
 
