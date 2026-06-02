@@ -76,7 +76,12 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/014_vc_temp_tracked_channels.up.sql"),
     down: join(repoRoot, "migrations/sqlite/014_vc_temp_tracked_channels.down.sql"),
   },
-  // v15（appeals / modmail_replies の列追加）は ticket.db のみ。メイン DB は v10 で appeals 等を DROP 済みのためここに含めない（ensureTicketDatabaseSchema で列追加）。
+  {
+    version: 15,
+    up: join(repoRoot, "migrations/sqlite/015_steam_free.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/015_steam_free.down.sql"),
+  },
+  // ticket.db 側の appeals / modmail_replies 列追加はメイン DB マイグレーションに含めない（ensureTicketDatabaseSchema で列追加）。
 ];
 
 export function getSqliteUserVersion(db: DatabaseLib.Database): number {

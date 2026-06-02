@@ -76,6 +76,8 @@ import { handlePrefixMessage } from "./message/prefixHandlers.js";
 import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
 import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
+import { ensureSteamFreeSchema } from "./features/steam/steamFreeRepository.js";
+import { startSteamFreeWatcher } from "./features/steam/steamFreeWatcher.js";
 
 let mainStarted = false;
 
@@ -122,6 +124,7 @@ async function main(): Promise<void> {
   ensureTicketDatabaseSchema(ticketSqlite);
   ensureVcTimeSchema(vcTimeSqlite);
   ensurePacchiSchema(sqlite);
+  ensureSteamFreeSchema(sqlite);
   ensureAiHistorySchema(aiHistorySqlite);
   ensureAutomoderationSchema(automodSqlite);
   prepareMessageLogsDatabase(messageLogSqlite);
@@ -238,6 +241,7 @@ async function main(): Promise<void> {
   const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
   let presenceTimer: NodeJS.Timeout | undefined;
   let reminderTimer: NodeJS.Timeout | undefined;
+  let steamFreeTimer: NodeJS.Timeout | undefined;
 
   client.once("clientReady", async () => {
     const u = client.user;
@@ -308,6 +312,7 @@ async function main(): Promise<void> {
     }
     presenceTimer = startPresenceRotation(client, log, config.BOT_VERSION);
     reminderTimer = startReminderScheduler(ctx);
+    steamFreeTimer = startSteamFreeWatcher(ctx);
     log.info("startup tasks from clientReady finished (sync may still be in flight)");
   });
 
@@ -546,6 +551,7 @@ async function main(): Promise<void> {
     log.info("shutting down");
     if (presenceTimer) clearInterval(presenceTimer);
     if (reminderTimer) clearInterval(reminderTimer);
+    if (steamFreeTimer) clearInterval(steamFreeTimer);
     ctx.vcTemp.stopSweep();
     client.destroy();
     await db.destroy();

@@ -7,6 +7,7 @@ import { buildSetupEntryButtonRow } from "../features/panels/setupWizard.js";
 import { reloadPanelsFromGuildSettings } from "../features/panels/panelService.js";
 import { runNologToggleAndBuildEmbed } from "../features/messageLog/messageLogNolog.js";
 import { handlePacchiPrefixMessage } from "../features/pacchi/pacchi.prefix.js";
+import { handleSteamFreePrefixMessage, isSteamFreePrefixCommand } from "../features/steam/steamFreeCommands.js";
 
 const PREFIX = "!";
 
@@ -33,6 +34,15 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
       return true;
     }
     return await handlePacchiPrefixMessage(message, ctx, lower, args);
+  }
+
+  if (isSteamFreePrefixCommand(lower)) {
+    if (!isPrefixVersionAllowed(ctx, botVersion, lower)) {
+      await message.reply(versionBlockedMessage());
+      ctx.log.info({ command: lower, userId: message.author.id, outcome: "version_blocked" }, "prefix command");
+      return true;
+    }
+    return await handleSteamFreePrefixMessage(message, ctx, lower);
   }
 
   if (lower === "setup") {
