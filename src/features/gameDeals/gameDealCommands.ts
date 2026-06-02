@@ -1,7 +1,6 @@
 import { MessageFlags, type ChatInputCommandInteraction, type GuildMember, type SendableChannels } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
-import { buildGameDealStatusEmbed } from "./gameDealEmbeds.js";
 import { GameDealRepository } from "./gameDealRepository.js";
 import { parseGameStoreLink, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
 import type { GameDealFreeItem, GameDealScanResult } from "./gameDealTypes.js";
@@ -167,30 +166,6 @@ export async function handleGameNow(
   }
   const sent = await sendGameDealItemsToChannel(interaction, items, ctx, channelId);
   await interaction.editReply(sent ? `ゲーム無料候補 ${items.length}件を送信しました。${steamSourceNote(scan)}` : "通知チャンネルを取得できませんでした。");
-}
-
-export async function handleGameStatus(
-  interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
-  member: GuildMember | null,
-): Promise<void> {
-  if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
-    return;
-  }
-  const repo = new GameDealRepository(ctx.sqlite);
-  const channel = repo.getNotifyChannel(interaction.guildId!);
-  await interaction.reply({
-    embeds: [
-      buildGameDealStatusEmbed({
-        enabled: channel?.enabled === true,
-        channelId: channel?.enabled ? channel.channelId : null,
-        status: repo.getStatus(),
-      }),
-    ],
-    flags: MessageFlags.Ephemeral,
-    allowedMentions: { parse: [] },
-  });
 }
 
 export async function handleGameSub(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {

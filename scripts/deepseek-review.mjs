@@ -1,4 +1,6 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
 
 const {
   DEEPSEEK_API_KEY,
@@ -11,6 +13,7 @@ const {
   GITHUB_REF_NAME,
   GITHUB_SERVER_URL = "https://github.com",
   GITHUB_RUN_ID,
+  GITHUB_EVENT_PATH,
 
   PR_NUMBER,
   PR_HTML_URL,
@@ -21,12 +24,16 @@ const {
   DISCORD_REVIEW_WEBHOOK_URL,
 
   MAX_DIFF_CHARS = "180000",
-  MAX_REVIEW_COMMENTS = "25",
+  MAX_REPOSITORY_CHARS = "350000",
+  MAX_REVIEW_COMMENTS = "80",
+  MAX_DEEPSEEK_TOKENS = "12000",
   SKIP_PUSH_REVIEW_IF_OPEN_PR = "true",
 } = process.env;
 
 const maxDiffChars = Number(MAX_DIFF_CHARS);
+const maxRepositoryChars = Number(MAX_REPOSITORY_CHARS);
 const maxReviewComments = Number(MAX_REVIEW_COMMENTS);
+const maxDeepSeekTokens = Number(MAX_DEEPSEEK_TOKENS);
 
 function requireEnv(name, value) {
   if (!value) {
@@ -43,9 +50,27 @@ requireEnv("HEAD_SHA", HEAD_SHA);
 const [owner, repo] = GITHUB_REPOSITORY.split("/");
 const isPullRequest = GITHUB_EVENT_NAME === "pull_request";
 const isPush = GITHUB_EVENT_NAME === "push";
+const isIssueComment = GITHUB_EVENT_NAME === "issue_comment";
 
-if (isPullRequest) {
-  requireEnv("PR_NUMBER", PR_NUMBER);
+function readGitHubEventPayload() {
+  if (!GITHUB_EVENT_PATH) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(readFileSync(GITHUB_EVENT_PATH, "utf8"));
+  } catch (error) {
+    console.warn("Failed to read GitHub event payload.");
+    console.warn(error);
+    return {};
+  }
+}
+
+const eventPayload = readGitHubEventPayload();
+const prNumber = PR_NUMBER || String(eventPayload.pull_request?.number ?? eventPayload.issue?.number ?? "");
+
+if (isPullRequest || isIssueComment) {
+  requireEnv("PR_NUMBER", prNumber);
 }
 
 function truncateText(text, maxLength) {
@@ -114,7 +139,7 @@ async function getPullRequestFiles() {
 
   while (true) {
     const result = await githubRequest(
-      `/repos/${owner}/${repo}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}`,
+      `/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`,
     );
 
     files.push(...result);
@@ -145,6 +170,87 @@ async function getPushFiles() {
   return commit.files ?? [];
 }
 
+async function getHeadCommit() {
+  return githubRequest(
+    `/repos/${owner}/${repo}/commits/${HEAD_SHA}`,
+  );
+}
+
+async function getHeadCommitComments() {
+  return githubRequest(
+    `/repos/${owner}/${repo}/commits/${HEAD_SHA}/comments?per_page=100`,
+  );
+}
+
+async function getPullRequest() {
+  return githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
+}
+
+async function getPullRequestIssueComments() {
+  const comments = [];
+  let page = 1;
+
+  while (true) {
+    const result = await githubRequest(
+      `/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100&page=${page}`,
+    );
+
+    comments.push(...result);
+
+    if (result.length < 100) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return comments;
+}
+
+function containsAllReviewDirective(text) {
+  return /(^|\s)\/all(?=\s|$)/i.test(String(text ?? ""));
+}
+
+async function shouldReviewAllRepository() {
+  const values = [eventPayload.comment?.body];
+
+  try {
+    const commit = await getHeadCommit();
+    values.push(commit?.commit?.message);
+  } catch (error) {
+    console.warn("Failed to read head commit message for /all detection.");
+    console.warn(error);
+  }
+
+  try {
+    const comments = await getHeadCommitComments();
+    values.push(...comments.map((comment) => comment.body));
+  } catch (error) {
+    console.warn("Failed to read head commit comments for /all detection.");
+    console.warn(error);
+  }
+
+  if (isPullRequest || isIssueComment) {
+    try {
+      const pull = await getPullRequest();
+      values.push(pull?.title, pull?.body);
+    } catch (error) {
+      console.warn("Failed to read pull request body for /all detection.");
+      console.warn(error);
+    }
+
+    try {
+      const comments = await getPullRequestIssueComments();
+      values.push(...comments.map((comment) => comment.body));
+    } catch (error) {
+      console.warn("Failed to read pull request comments for /all detection.");
+      console.warn(error);
+    }
+  }
+
+  return values.some(containsAllReviewDirective);
+}
+
 async function hasOpenPullRequestForCommit() {
   try {
     const pulls = await githubRequest(
@@ -159,18 +265,9 @@ async function hasOpenPullRequestForCommit() {
   }
 }
 
-function isReviewTargetFile(file) {
-  const filename = file.filename;
-
-  if (!filename || !file.patch) {
-    return false;
-  }
-
-  if (file.status === "removed") {
-    return false;
-  }
-
+function isReviewTargetPath(filename) {
   const excludedPatterns = [
+    /^\.git\//,
     /^node_modules\//,
     /^dist\//,
     /^build\//,
@@ -178,6 +275,8 @@ function isReviewTargetFile(file) {
     /^\.next\//,
     /^\.turbo\//,
     /^\.cache\//,
+    /^data\//,
+    /^\.env(?:\.|$)/,
     /package-lock\.json$/,
     /pnpm-lock\.yaml$/,
     /yarn\.lock$/,
@@ -185,7 +284,96 @@ function isReviewTargetFile(file) {
     /\.(png|jpg|jpeg|gif|webp|ico|svg|mp4|mp3|wav|zip|pdf|ttf|otf|woff|woff2)$/i,
   ];
 
-  return !excludedPatterns.some((pattern) => pattern.test(filename));
+  return Boolean(filename) && !excludedPatterns.some((pattern) => pattern.test(filename));
+}
+
+function isReviewTargetFile(file) {
+  if (!file.filename || !file.patch) {
+    return false;
+  }
+
+  if (file.status === "removed") {
+    return false;
+  }
+
+  return isReviewTargetPath(file.filename);
+}
+
+async function collectRepositoryFiles(dir = ".") {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relativePath = fullPath.split(path.sep).join("/");
+
+    if (entry.isDirectory()) {
+      if (!isReviewTargetPath(`${relativePath}/`)) {
+        continue;
+      }
+
+      files.push(...await collectRepositoryFiles(fullPath));
+      continue;
+    }
+
+    if (entry.isFile() && isReviewTargetPath(relativePath)) {
+      files.push(relativePath);
+    }
+  }
+
+  return files.sort((a, b) => a.localeCompare(b));
+}
+
+async function buildRepositoryContextForPrompt() {
+  const chunks = [];
+  const lineCountsByPath = new Map();
+  let totalLength = 0;
+  let omittedCount = 0;
+
+  for (const filename of await collectRepositoryFiles()) {
+    let content;
+
+    try {
+      content = await readFile(filename, "utf8");
+    } catch {
+      omittedCount += 1;
+      continue;
+    }
+
+    if (content.includes("\0")) {
+      omittedCount += 1;
+      continue;
+    }
+
+    const lineCount = content.length === 0 ? 1 : content.split("\n").length;
+    lineCountsByPath.set(filename, lineCount);
+
+    const chunk = [
+      `FILE: ${filename}`,
+      "CONTENT:",
+      truncateText(content, 25000),
+    ].join("\n");
+
+    if (totalLength + chunk.length > maxRepositoryChars) {
+      omittedCount += 1;
+      continue;
+    }
+
+    chunks.push(chunk);
+    totalLength += chunk.length;
+  }
+
+  const header = [
+    "REPOSITORY SNAPSHOT:",
+    `Included files: ${chunks.length}`,
+    `Omitted files: ${omittedCount}`,
+    "",
+  ].join("\n");
+
+  return {
+    text: truncateText(`${header}${chunks.join("\n\n---\n\n")}`, maxRepositoryChars),
+    lineCountsByPath,
+  };
 }
 
 function buildLinePositionMap(patch) {
@@ -268,7 +456,9 @@ function extractJson(text) {
   throw new Error("DeepSeek response did not contain JSON.");
 }
 
-async function requestDeepSeekReview(diffText) {
+async function requestDeepSeekReview(diffText, options = {}) {
+  const reviewAll = Boolean(options.reviewAll);
+  const repositoryText = options.repositoryText ?? "";
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: {
@@ -284,7 +474,7 @@ async function requestDeepSeekReview(diffText) {
       response_format: {
         type: "json_object",
       },
-      max_tokens: 8000,
+      max_tokens: maxDeepSeekTokens,
       messages: [
         {
           role: "system",
@@ -294,17 +484,25 @@ async function requestDeepSeekReview(diffText) {
             "日本語でレビューしてください。",
             "セキュリティ、APIキー漏洩、バグ、例外処理、型安全性、非同期処理、保守性、不要な複雑化、設定ミスを重点的に確認してください。",
             "根拠が弱い指摘は書かないでください。",
-            "コメント対象は差分上に存在する変更後ファイルの行だけにしてください。",
-            "削除された行にはコメントしないでください。",
+            reviewAll
+              ? "コメント対象は入力されたリポジトリスナップショット内のファイル行、または差分上に存在する変更後ファイルの行だけにしてください。"
+              : "コメント対象は差分上に存在する変更後ファイルの行だけにしてください。",
+            reviewAll
+              ? "未変更ファイルにも重大な問題があればコメントしてください。"
+              : "削除された行にはコメントしないでください。",
             "pathは入力されたFILEの値と完全一致させてください。",
-            "lineは変更後ファイル上の行番号を指定してください。",
+            reviewAll
+              ? "lineはリポジトリスナップショット内のファイル行番号、または変更後ファイル上の行番号を指定してください。"
+              : "lineは変更後ファイル上の行番号を指定してください。",
             "内部推論やchain-of-thoughtは出力しないでください。",
           ].join("\n"),
         },
         {
           role: "user",
           content: [
-            "以下のgit diffをレビューしてください。",
+            reviewAll
+              ? "以下のgit diffとリポジトリスナップショットをレビューしてください。"
+              : "以下のgit diffをレビューしてください。",
             "",
             "次のJSON形式だけで返してください。",
             "",
@@ -329,7 +527,11 @@ async function requestDeepSeekReview(diffText) {
             "```diff",
             diffText,
             "```",
-          ].join("\n"),
+            reviewAll ? "" : null,
+            reviewAll ? "```text" : null,
+            reviewAll ? repositoryText : null,
+            reviewAll ? "```" : null,
+          ].filter((line) => line !== null).join("\n"),
         },
       ],
     }),
@@ -362,6 +564,37 @@ function normalizeSeverity(severity) {
   return "minor";
 }
 
+function formatSeverityLabel(severity) {
+  const labels = {
+    blocker: "致命的",
+    major: "重大",
+    minor: "軽微",
+    nit: "細部",
+  };
+
+  return labels[severity] ?? "軽微";
+}
+
+function formatRiskLabel(risk) {
+  const labels = {
+    high: "高",
+    medium: "中",
+    low: "低",
+  };
+
+  return labels[String(risk ?? "").toLowerCase()] ?? "不明";
+}
+
+function formatRunModeLabel(mode) {
+  const labels = {
+    pull_request: "Pull Request",
+    push: "Push",
+    issue_comment: "Issueコメント",
+  };
+
+  return labels[mode] ?? mode;
+}
+
 function filterValidComments(rawComments, lineMapByPath) {
   const filtered = [];
   const seen = new Set();
@@ -370,7 +603,7 @@ function filterValidComments(rawComments, lineMapByPath) {
     const path = String(rawComment.path ?? "").trim();
     const line = Number(rawComment.line);
     const body = String(rawComment.body ?? "").trim();
-    const title = String(rawComment.title ?? "DeepSeek Review").trim();
+    const title = String(rawComment.title ?? "DeepSeekレビュー").trim();
     const severity = normalizeSeverity(rawComment.severity);
 
     if (!path || !Number.isInteger(line) || line <= 0 || !body) {
@@ -414,9 +647,49 @@ function filterValidComments(rawComments, lineMapByPath) {
   return filtered;
 }
 
+function filterRepositoryComments(rawComments, lineCountsByPath) {
+  const filtered = [];
+  const seen = new Set();
+
+  for (const rawComment of rawComments ?? []) {
+    const path = String(rawComment.path ?? "").trim();
+    const line = Number(rawComment.line);
+    const body = String(rawComment.body ?? "").trim();
+    const title = String(rawComment.title ?? "DeepSeekレビュー").trim();
+    const severity = normalizeSeverity(rawComment.severity);
+    const lineCount = lineCountsByPath.get(path);
+
+    if (!path || !Number.isInteger(line) || line <= 0 || !body || !lineCount || line > lineCount) {
+      continue;
+    }
+
+    const key = `${path}:${line}:${title}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+
+    filtered.push({
+      path,
+      line,
+      severity,
+      title: truncateText(title, 120),
+      body: truncateText(body, 3000),
+    });
+
+    if (filtered.length >= maxReviewComments) {
+      break;
+    }
+  }
+
+  return filtered;
+}
+
 function formatInlineComment(comment) {
   return [
-    `重要度: ${comment.severity}`,
+    `重要度: ${formatSeverityLabel(comment.severity)}`,
     "",
     `指摘: ${comment.title}`,
     "",
@@ -424,30 +697,49 @@ function formatInlineComment(comment) {
   ].join("\n");
 }
 
-function buildReviewSummaryBody(review, comments) {
+function formatCommentListForSummary(comments, maxItems = maxReviewComments) {
+  if (comments.length === 0) {
+    return "指摘はありません。";
+  }
+
+  return comments.slice(0, maxItems).map((comment) => {
+    return [
+      `- \`${formatSeverityLabel(comment.severity)}\` ${comment.path}:${comment.line} ${comment.title}`,
+      `  ${truncateText(comment.body, 700).replaceAll("\n", "\n  ")}`,
+    ].join("\n");
+  }).join("\n");
+}
+
+function buildReviewSummaryBody(review, inlineComments, allComments, reviewAll) {
   return [
-    "## DeepSeek Code Review",
+    "## DeepSeekコードレビュー",
     "",
-    `Model: \`${DEEPSEEK_MODEL}\``,
-    `Reasoning effort: \`${DEEPSEEK_REASONING_EFFORT}\``,
-    `Risk level: \`${review.risk_level ?? "unknown"}\``,
-    `Inline comments: \`${comments.length}\``,
+    `モデル: \`${DEEPSEEK_MODEL}\``,
+    `推論強度: \`${DEEPSEEK_REASONING_EFFORT}\``,
+    `リスク: \`${formatRiskLabel(review.risk_level)}\``,
+    `対象範囲: \`${reviewAll ? "リポジトリ全体" : "差分"}\``,
+    `インラインコメント数: \`${inlineComments.length}\``,
+    `指摘数: \`${allComments.length}\``,
     "",
     "## 総評",
     "",
     truncateText(review.summary ?? "総評はありません。", 12000),
+    "",
+    "## 指摘一覧",
+    "",
+    formatCommentListForSummary(allComments),
   ].join("\n");
 }
 
-async function createPullRequestReview(review, comments) {
+async function createPullRequestReview(review, inlineComments, allComments, reviewAll) {
   const payload = {
     commit_id: HEAD_SHA,
     event: "COMMENT",
-    body: buildReviewSummaryBody(review, comments),
+    body: buildReviewSummaryBody(review, inlineComments, allComments, reviewAll),
   };
 
-  if (comments.length > 0) {
-    payload.comments = comments.map((comment) => {
+  if (inlineComments.length > 0) {
+    payload.comments = inlineComments.map((comment) => {
       return {
         path: comment.path,
         position: comment.position,
@@ -456,7 +748,7 @@ async function createPullRequestReview(review, comments) {
     });
   }
 
-  return githubRequest(`/repos/${owner}/${repo}/pulls/${PR_NUMBER}/reviews`, {
+  return githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -465,16 +757,17 @@ async function createPullRequestReview(review, comments) {
 function emitPushAnnotations(comments) {
   let errorCount = 0;
   let warningCount = 0;
+  const maxAnnotationsPerLevel = Math.max(10, maxReviewComments);
 
   for (const comment of comments) {
     const isError = comment.severity === "blocker" || comment.severity === "major";
     const level = isError ? "error" : "warning";
 
-    if (isError && errorCount >= 10) {
+    if (isError && errorCount >= maxAnnotationsPerLevel) {
       continue;
     }
 
-    if (!isError && warningCount >= 10) {
+    if (!isError && warningCount >= maxAnnotationsPerLevel) {
       continue;
     }
 
@@ -488,7 +781,7 @@ function emitPushAnnotations(comments) {
       `::${level}`,
       ` file=${escapeWorkflowCommandProperty(comment.path)}`,
       `,line=${comment.line}`,
-      `,title=${escapeWorkflowCommandProperty(`DeepSeek ${comment.severity}: ${comment.title}`)}`,
+      `,title=${escapeWorkflowCommandProperty(`DeepSeek ${formatSeverityLabel(comment.severity)}: ${comment.title}`)}`,
       `::${escapeWorkflowCommandData(comment.body)}`,
     ].join("");
 
@@ -516,7 +809,7 @@ function getTargetUrl(reviewApiResult) {
   return getRunUrl();
 }
 
-function writeStepSummary(review, comments, mode, targetUrl) {
+function writeStepSummary(review, comments, mode, targetUrl, reviewAll) {
   if (!process.env.GITHUB_STEP_SUMMARY) {
     return;
   }
@@ -524,7 +817,7 @@ function writeStepSummary(review, comments, mode, targetUrl) {
   const rows = comments.map((comment) => {
     return [
       "|",
-      escapeMarkdownTableCell(comment.severity),
+      escapeMarkdownTableCell(formatSeverityLabel(comment.severity)),
       "|",
       escapeMarkdownTableCell(comment.path),
       "|",
@@ -538,13 +831,14 @@ function writeStepSummary(review, comments, mode, targetUrl) {
   });
 
   const summary = [
-    "# DeepSeek Code Review",
+    "# DeepSeekコードレビュー",
     "",
-    `Mode: \`${mode}\``,
-    `Model: \`${DEEPSEEK_MODEL}\``,
-    `Reasoning effort: \`${DEEPSEEK_REASONING_EFFORT}\``,
-    `Risk level: \`${review.risk_level ?? "unknown"}\``,
-    `Target: ${targetUrl}`,
+    `実行モード: \`${formatRunModeLabel(mode)}\``,
+    `対象範囲: \`${reviewAll ? "リポジトリ全体" : "差分"}\``,
+    `モデル: \`${DEEPSEEK_MODEL}\``,
+    `推論強度: \`${DEEPSEEK_REASONING_EFFORT}\``,
+    `リスク: \`${formatRiskLabel(review.risk_level)}\``,
+    `投稿先: ${targetUrl}`,
     "",
     "## 総評",
     "",
@@ -579,51 +873,51 @@ function getDiscordColor(riskLevel) {
   return 5763719;
 }
 
-async function notifyDiscord(review, comments, mode, targetUrl) {
+async function notifyDiscord(review, comments, mode, targetUrl, reviewAll) {
   if (!DISCORD_REVIEW_WEBHOOK_URL) {
     return;
   }
 
   const payload = {
-    username: "AI Code Review",
+    username: "AIコードレビュー",
     content: "DeepSeekによるコードレビューが完了しました。",
     embeds: [
       {
         title: mode === "pull_request"
-          ? "Pull Request Review"
-          : "Push Review",
+          ? "Pull Requestレビュー"
+          : "Pushレビュー",
         url: targetUrl,
         color: getDiscordColor(review.risk_level),
         description: truncateText(review.summary ?? "総評はありません。", 1800),
         fields: [
           {
-            name: "Repository",
+            name: "リポジトリ",
             value: GITHUB_REPOSITORY,
             inline: true,
           },
           {
-            name: "Branch",
+            name: "ブランチ",
             value: GITHUB_REF_NAME || "unknown",
             inline: true,
           },
           {
-            name: "Risk",
-            value: String(review.risk_level ?? "unknown"),
+            name: "リスク",
+            value: formatRiskLabel(review.risk_level),
             inline: true,
           },
           {
-            name: "Comments",
+            name: "コメント数",
             value: String(comments.length),
             inline: true,
           },
           {
-            name: "Model",
+            name: "モデル",
             value: DEEPSEEK_MODEL,
             inline: true,
           },
           {
-            name: "Mode",
-            value: mode,
+            name: "実行モード",
+            value: reviewAll ? `${formatRunModeLabel(mode)} / リポジトリ全体` : `${formatRunModeLabel(mode)} / 差分`,
             inline: true,
           },
         ],
@@ -650,10 +944,11 @@ async function notifyDiscord(review, comments, mode, targetUrl) {
   }
 }
 
-async function runReview(mode, files) {
+async function runReview(mode, files, options = {}) {
+  const reviewAll = Boolean(options.reviewAll);
   const targetFiles = files.filter(isReviewTargetFile);
 
-  if (targetFiles.length === 0) {
+  if (targetFiles.length === 0 && !reviewAll) {
     const review = {
       summary: "レビュー対象のテキスト差分がありませんでした。",
       risk_level: "low",
@@ -662,13 +957,13 @@ async function runReview(mode, files) {
 
     let reviewResult = null;
 
-    if (isPullRequest) {
-      reviewResult = await createPullRequestReview(review, []);
+    if (isPullRequest || isIssueComment) {
+      reviewResult = await createPullRequestReview(review, [], [], false);
     }
 
     const targetUrl = getTargetUrl(reviewResult);
-    writeStepSummary(review, [], mode, targetUrl);
-    await notifyDiscord(review, [], mode, targetUrl);
+    writeStepSummary(review, [], mode, targetUrl, false);
+    await notifyDiscord(review, [], mode, targetUrl, false);
     return;
   }
 
@@ -679,29 +974,40 @@ async function runReview(mode, files) {
   }
 
   const diffText = buildDiffForPrompt(targetFiles);
-  const review = await requestDeepSeekReview(diffText);
-  const comments = filterValidComments(review.comments ?? [], lineMapByPath);
+  const repositoryContext = reviewAll
+    ? await buildRepositoryContextForPrompt()
+    : { text: "", lineCountsByPath: new Map() };
+  const review = await requestDeepSeekReview(diffText, {
+    reviewAll,
+    repositoryText: repositoryContext.text,
+  });
+  const inlineComments = filterValidComments(review.comments ?? [], lineMapByPath);
+  const allComments = reviewAll
+    ? filterRepositoryComments(review.comments ?? [], repositoryContext.lineCountsByPath)
+    : inlineComments;
 
   let reviewResult = null;
 
-  if (isPullRequest) {
-    reviewResult = await createPullRequestReview(review, comments);
+  if (isPullRequest || isIssueComment) {
+    reviewResult = await createPullRequestReview(review, inlineComments, allComments, reviewAll);
   } else {
-    emitPushAnnotations(comments);
+    emitPushAnnotations(allComments);
   }
 
   const targetUrl = getTargetUrl(reviewResult);
 
-  writeStepSummary(review, comments, mode, targetUrl);
-  await notifyDiscord(review, comments, mode, targetUrl);
+  writeStepSummary(review, allComments, mode, targetUrl, reviewAll);
+  await notifyDiscord(review, allComments, mode, targetUrl, reviewAll);
 
-  console.log(`DeepSeek review completed. mode=${mode} comments=${comments.length}`);
+  console.log(`DeepSeek review completed. mode=${mode} scope=${reviewAll ? "repository" : "diff"} comments=${allComments.length} inline=${inlineComments.length}`);
 }
 
 async function main() {
+  const reviewAll = await shouldReviewAllRepository();
+
   if (isPullRequest) {
     const files = await getPullRequestFiles();
-    await runReview("pull_request", files);
+    await runReview("pull_request", files, { reviewAll });
     return;
   }
 
@@ -716,7 +1022,23 @@ async function main() {
     }
 
     const files = await getPushFiles();
-    await runReview("push", files);
+    await runReview("push", files, { reviewAll });
+    return;
+  }
+
+  if (isIssueComment) {
+    if (!reviewAll) {
+      console.log("Issue/PR comment does not contain /all. Skip DeepSeek review.");
+      return;
+    }
+
+    if (!eventPayload.issue?.pull_request) {
+      console.log("Issue comment is not on a pull request. Skip DeepSeek review.");
+      return;
+    }
+
+    const files = await getPullRequestFiles();
+    await runReview("issue_comment", files, { reviewAll: true });
     return;
   }
 

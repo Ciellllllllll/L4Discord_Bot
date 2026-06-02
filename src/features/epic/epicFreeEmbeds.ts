@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
-import type { EpicFreeCandidate, EpicWatcherStatus } from "./epicFreeTypes.js";
+import type { EpicFreeCandidate } from "./epicFreeTypes.js";
 
 function priceText(value: number | null, currency: string | null): string {
   if (value === null) return "不明";
@@ -49,28 +49,4 @@ export function buildEpicLinkButtons(candidate: EpicFreeCandidate): ActionRowBui
       .setStyle(ButtonStyle.Link)
       .setURL(candidate.url),
   );
-}
-
-export function buildEpicStatusEmbed(input: {
-  enabled: boolean;
-  channelId: string | null;
-  status: EpicWatcherStatus;
-}): EmbedBuilder {
-  return new EmbedBuilder()
-    .setTitle("Epic無料配布通知 状態")
-    .setColor(input.enabled ? 0x2ecc71 : 0x95a5a6)
-    .addFields(
-      { name: "通知状態", value: input.enabled ? "有効" : "無効", inline: true },
-      { name: "通知チャンネル", value: input.channelId ? `<#${input.channelId}>` : "未設定", inline: true },
-      { name: "最終スキャン", value: input.status.lastScanAt ?? "未実行", inline: false },
-      { name: "最終成功", value: input.status.lastSuccessAt ?? "未実行", inline: false },
-      { name: "直近検出件数", value: String(input.status.lastDetectedCount), inline: true },
-      { name: "直近エラー", value: input.status.lastError ?? "なし", inline: false },
-    )
-    .setTimestamp(new Date());
-}
-
-export function buildEpicSummaryText(total: number, shown: number): string | undefined {
-  const rest = total - shown;
-  return rest > 0 ? `ほか${rest}件のEpic無料配布候補があります。` : undefined;
 }

@@ -105,7 +105,7 @@ async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<
   }
 }
 
-export function cheapSharkErrorLogFields(err: unknown): Record<string, unknown> {
+function cheapSharkErrorLogFields(err: unknown): Record<string, unknown> {
   if (err instanceof CheapSharkHttpError) {
     return {
       err: err.message,

@@ -27,7 +27,7 @@ import { createLogger } from "./core/logger.js";
 import { getDetecterService } from "./features/detecter/detecterService.js";
 import { handleAutoModerationMessage } from "./features/moderation/autoModerationMessage.js";
 import { handleEmojiGuardMessage, handleEmojiGuardReaction } from "./features/moderation/emojiGuard.js";
-import { trackStampReaction } from "./features/stamps/trackReaction.js";
+import { trackStampMessage, trackStampReaction } from "./features/stamps/trackReaction.js";
 import {
   routeButton,
   routeChannelSelectMenu,
@@ -401,6 +401,7 @@ async function main(): Promise<void> {
             log,
           );
         }
+        await trackStampMessage(message, ctx);
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
       if (await handlePrefixMessage(message, ctx)) return;

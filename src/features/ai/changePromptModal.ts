@@ -1,15 +1,14 @@
-import { TextInputStyle } from "discord.js";
 import {
   ActionRowBuilder as IntakeActionRowBuilder,
   FileUploadBuilder,
   LabelBuilder,
   ModalBuilder as IntakeModalBuilder,
+  TextInputStyle,
   TextInputBuilder as IntakeTextInputBuilder,
-} from "@discordjs/builders";
+} from "discord.js";
 import { CHANGE_PROMPT_FILE_ID, CHANGE_PROMPT_MODAL_ID, CHANGE_PROMPT_TEXT_ID } from "./changePromptIds.js";
 
 // `/change_prompt` 用モーダル。
-// TextInput は builders 側（discord.js との instanceof 整合のため Modmail と同パターン）。
 
 export function buildChangePromptModal(): IntakeModalBuilder {
   return new IntakeModalBuilder()

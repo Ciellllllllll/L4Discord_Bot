@@ -7,7 +7,6 @@ import type { SteamAppDetails } from "../steam/steamFreeTypes.js";
 import { CheapSharkClient, CheapSharkHttpError } from "./cheapSharkClient.js";
 import { buildCheapSharkLinkButtons, buildCheapSharkSteamFreeEmbed } from "./gameDealEmbeds.js";
 import { GameDealRepository } from "./gameDealRepository.js";
-import type { CheapSharkDeal } from "./cheapSharkTypes.js";
 import { detectSteamDeal } from "./steamDealDetector.js";
 import type {
   GameDealFreeItem,
@@ -22,10 +21,6 @@ const CHEAPSHARK_DEFAULT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 function epicDedupeKey(candidate: ReturnType<typeof detectEpicFreeCandidates>[number]): string {
   return `epic:${candidate.dedupeKey}`;
-}
-
-export async function scanCurrentFreeGames(ctx: BotContext): Promise<GameDealFreeItem[]> {
-  return (await scanCurrentFreeGamesDetailed(ctx)).items;
 }
 
 export async function scanCurrentFreeGamesDetailed(ctx: BotContext): Promise<GameDealScanResult> {
@@ -133,23 +128,6 @@ async function scanEpicCurrentFreeGames(ctx: BotContext): Promise<GameDealFreeIt
   return items;
 }
 
-export function selectGameDealItemsForDisplay(items: GameDealFreeItem[], limit = 10): GameDealFreeItem[] {
-  const byPlatform: Record<GameDealPlatform, GameDealFreeItem[]> = {
-    steam: items.filter((item) => item.platform === "steam"),
-    epic: items.filter((item) => item.platform === "epic"),
-  };
-  const selected: GameDealFreeItem[] = [];
-  for (const platform of ["steam", "epic"] as const) {
-    const item = byPlatform[platform].shift();
-    if (item) selected.push(item);
-  }
-  for (const item of [...byPlatform.steam, ...byPlatform.epic]) {
-    if (selected.length >= limit) break;
-    selected.push(item);
-  }
-  return selected.slice(0, limit);
-}
-
 export function parseGameStoreLink(link: string): { platform: GameDealPlatform; targetId: string; url: string } | null {
   let url: URL;
   try {
@@ -189,24 +167,6 @@ function steamPriceHit(sub: GameDealSubscription, details: SteamAppDetails): Gam
     stateKey: `steam:${sub.targetId}:${po.final}:${po.discountPercent ?? "null"}`,
     platform: "steam",
   };
-}
-
-export function parseSteamAppId(input: string): string | null {
-  const trimmed = input.trim();
-  if (/^\d+$/.test(trimmed)) return trimmed;
-  try {
-    const url = new URL(trimmed);
-    const appid = url.pathname.match(/\/app\/(\d+)/)?.[1];
-    return appid && /^\d+$/.test(appid) ? appid : null;
-  } catch {
-    return null;
-  }
-}
-
-export function bestDiscountDeal(deals: CheapSharkDeal[]): CheapSharkDeal | null {
-  return deals
-    .filter((deal) => detectSteamDeal(deal).detectedType === "steam_discount" || detectSteamDeal(deal).detectedType === "steam_limited_free")
-    .sort((a, b) => b.savings - a.savings || a.salePrice - b.salePrice)[0] ?? null;
 }
 
 export async function checkSubscription(ctx: BotContext, sub: GameDealSubscription): Promise<GameDealSubscriptionHit | null> {

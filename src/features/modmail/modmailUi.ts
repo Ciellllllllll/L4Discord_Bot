@@ -1,11 +1,14 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextInputStyle } from "discord.js";
 import {
+  ActionRowBuilder,
   ActionRowBuilder as IntakeActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   FileUploadBuilder,
   LabelBuilder,
   ModalBuilder as IntakeModalBuilder,
+  TextInputStyle,
   TextInputBuilder as IntakeTextInputBuilder,
-} from "@discordjs/builders";
+} from "discord.js";
 import { buildThreePartId, MM_IDS } from "./modmailIds.js";
 
 // DM: 「チケットを作成」→モーダル（DiscordBOTv2 `modmail_ticket_start:` 相当）
@@ -41,8 +44,7 @@ export function buildModmailThreadLinkRow(
 }
 
 // Modmail 受付モーダル。
-// TextInput は Action Row のみ @discordjs/builders で組み立てる（discord.js との instanceof 不一致を避ける）。
-// 添付は Label + FileUpload（同一パッケージ）で追加する。
+// 添付は Label + FileUpload で追加する。
 
 export function buildModmailIntakeTicketModal(ctxId: string): IntakeModalBuilder {
   return new IntakeModalBuilder()
