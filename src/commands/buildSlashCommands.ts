@@ -14,6 +14,10 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       )
       .toJSON(),
     new SlashCommandBuilder().setName("ping").setDescription("応答時間計測用コマンド(DEBUG用です)").toJSON(),
+    new SlashCommandBuilder()
+      .setName("pacchi_help")
+      .setDescription("ぱっちぃ機能の使い方を表示します")
+      .toJSON(),
 
     new SlashCommandBuilder()
       .setName("vc_rank")

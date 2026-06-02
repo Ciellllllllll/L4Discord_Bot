@@ -5,6 +5,7 @@ export const BOT_SEMVER = "2.0.6";
 export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   q: "0.1.0",
   ping: "0.1.0",
+  pacchi_help: "2.0.6",
   vc_rank: "0.1.0",
   afk: "2.0.4",
   member_count_setup: "0.1.0",
@@ -35,6 +36,20 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   see: "2.1.0",
   reply: "0.1.0",
   nolog: "0.1.0",
+  pacchi_on: "2.0.6",
+  pacchi_off: "2.0.6",
+  pacchi_channel: "2.0.6",
+  pacchi_rate: "2.0.6",
+  pacchi_status: "2.0.6",
+  pacchi_memory: "2.0.6",
+  pacchi_words: "2.0.6",
+  pacchi_forget: "2.0.6",
+  pacchi_poem: "2.0.6",
+  pacchi_work_start: "2.0.6",
+  pacchi_work_end: "2.0.6",
+  pacchi_sleep: "2.0.6",
+  pacchi_export: "2.0.6",
+  pacchi_import: "2.0.6",
 };
 
 // 常設パネル（panel_kind）ごとの UI 論理バージョン。

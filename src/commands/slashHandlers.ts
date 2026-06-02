@@ -28,6 +28,7 @@ import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.
 import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.js";
 import { startAfkDisconnectCommand } from "../features/vc/afkDisconnect.js";
+import { handlePacchiHelp } from "../features/pacchi/pacchi.slash.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -81,6 +82,8 @@ export async function handleSlashCommand(
       return handleThinking(interaction, ctx, member);
     case "ping":
       return handlePing(interaction, ctx);
+    case "pacchi_help":
+      return handlePacchiHelp(interaction, ctx);
     case "member_count_setup":
       return handleMemberCountSetup(interaction, ctx, member);
     case "vc_rank":

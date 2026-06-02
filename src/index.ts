@@ -50,6 +50,7 @@ import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
 import { ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
+import { ensurePacchiSchema } from "./features/pacchi/pacchi.schema.js";
 import {
   endOpenVcSessionForMember,
   reconcileVcTimeSessionsAtReady,
@@ -74,6 +75,7 @@ import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
 import { handlePrefixMessage } from "./message/prefixHandlers.js";
 import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
+import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
 
 let mainStarted = false;
 
@@ -119,6 +121,7 @@ async function main(): Promise<void> {
   const automodSqlite = createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
   ensureTicketDatabaseSchema(ticketSqlite);
   ensureVcTimeSchema(vcTimeSqlite);
+  ensurePacchiSchema(sqlite);
   ensureAiHistorySchema(aiHistorySqlite);
   ensureAutomoderationSchema(automodSqlite);
   prepareMessageLogsDatabase(messageLogSqlite);
@@ -396,6 +399,7 @@ async function main(): Promise<void> {
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
       if (await handlePrefixMessage(message, ctx)) return;
+      if (await handlePacchiMessage(ctx, message)) return;
       await runUtilitiesMessageChain(utilitiesBundle, message);
       if (await handleSenryuMessage(ctx, message)) return;
       if (await handleExtendedAutoReplies(message, ctx)) return;

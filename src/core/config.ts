@@ -89,6 +89,7 @@ const profileOverridableKeys = [
   "USER_PROMPT_DIR",
   "COLD_LAUGH_STORE_PATH",
   "SENRYU_KUROMOJI_DICT_PATH",
+  "PACCHI_WIKIPEDIA_API_BASE_URL",
 ] as const;
 
 function normalizeBotProfile(v: unknown): BotProfile {
@@ -329,6 +330,10 @@ const envSchema = z.object({
   SENRYU_KUROMOJI_DICT_PATH: z.preprocess(
     (v) => (v === "" || v === undefined ? undefined : v),
     z.string().min(1).optional(),
+  ),
+  PACCHI_WIKIPEDIA_API_BASE_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://ja.wikipedia.org/api/rest_v1/page/summary"),
   ),
 });
 
