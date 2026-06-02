@@ -119,6 +119,27 @@ export type SqliteMigrationHooks = {
   beforeApplyVersion?: (version: number, mainDb: DatabaseLib.Database) => void;
 };
 
+function isDuplicateColumnError(err: unknown): boolean {
+  return err instanceof Error && /duplicate column name/i.test(err.message);
+}
+
+function executeMigrationSql(db: DatabaseLib.Database, sql: string): void {
+  try {
+    db.exec(sql);
+    return;
+  } catch (err) {
+    if (!isDuplicateColumnError(err)) throw err;
+  }
+
+  for (const statement of sql.split(";").map((part) => part.trim()).filter(Boolean)) {
+    try {
+      db.exec(statement);
+    } catch (err) {
+      if (!isDuplicateColumnError(err)) throw err;
+    }
+  }
+}
+
 // Applies pending migrations in order. Returns applied version numbers.
 
 export function applyPendingSqliteMigrations(
@@ -130,7 +151,7 @@ export function applyPendingSqliteMigrations(
   for (const m of SQLITE_MIGRATIONS) {
     if (v < m.version) {
       hooks?.beforeApplyVersion?.(m.version, db);
-      db.exec(readFileSync(m.up, "utf8"));
+      executeMigrationSql(db, readFileSync(m.up, "utf8"));
       setSqliteUserVersion(db, m.version);
       v = m.version;
       applied.push(m.version);

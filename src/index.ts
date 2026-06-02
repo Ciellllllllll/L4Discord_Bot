@@ -50,7 +50,7 @@ import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
 import { ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
-import { ensurePacchiSchema } from "./features/pacchi/pacchi.schema.js";
+import { ensurePacchiSchemaOnce } from "./features/pacchi/pacchi.schema.js";
 import {
   endOpenVcSessionForMember,
   reconcileVcTimeSessionsAtReady,
@@ -123,7 +123,7 @@ async function main(): Promise<void> {
   const automodSqlite = createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
   ensureTicketDatabaseSchema(ticketSqlite);
   ensureVcTimeSchema(vcTimeSqlite);
-  ensurePacchiSchema(sqlite);
+  ensurePacchiSchemaOnce(sqlite);
   ensureGameDealSchema(sqlite);
   ensureAiHistorySchema(aiHistorySqlite);
   ensureAutomoderationSchema(automodSqlite);

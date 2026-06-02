@@ -12,6 +12,7 @@ import type {
   PacchiWordRow,
 } from "./pacchi.types.js";
 import { RATE_CONFIG } from "./pacchi.reply.js";
+import { ensurePacchiSchemaOnce } from "./pacchi.schema.js";
 
 type SettingsRow = {
   guild_id: string;
@@ -62,6 +63,8 @@ function toChannel(row: ChannelRow): PacchiChannelSettings {
 }
 
 export function createPacchiRepository(sqlite: DatabaseLib.Database) {
+  ensurePacchiSchemaOnce(sqlite);
+
   const getSettingsStmt = sqlite.prepare("SELECT * FROM pacchi_settings WHERE guild_id = ?");
   const insertSettingsStmt = sqlite.prepare(`
     INSERT INTO pacchi_settings (

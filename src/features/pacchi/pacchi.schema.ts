@@ -1,5 +1,7 @@
 import type DatabaseLib from "better-sqlite3";
 
+const ensuredDatabases = new WeakSet<DatabaseLib.Database>();
+
 export function ensurePacchiSchema(db: DatabaseLib.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pacchi_settings (
@@ -105,4 +107,10 @@ export function ensurePacchiSchema(db: DatabaseLib.Database): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_pacchi_sleep_user_open ON pacchi_sleep_logs(guild_id, user_id, wake_at);");
   db.exec("CREATE INDEX IF NOT EXISTS idx_pacchi_daily_user_open ON pacchi_daily_reports(guild_id, user_id, end_at);");
   db.exec("CREATE INDEX IF NOT EXISTS idx_pacchi_reply_channel ON pacchi_reply_logs(guild_id, channel_id, created_at);");
+}
+
+export function ensurePacchiSchemaOnce(db: DatabaseLib.Database): void {
+  if (ensuredDatabases.has(db)) return;
+  ensurePacchiSchema(db);
+  ensuredDatabases.add(db);
 }
