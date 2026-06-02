@@ -88,6 +88,13 @@ const profileOverridableKeys = [
   "PROMPT_FILE_PATH",
   "USER_PROMPT_DIR",
   "COLD_LAUGH_STORE_PATH",
+  "THECATAPI_ENABLED",
+  "THECATAPI_API_KEY",
+  "THECATAPI_API_BASE_URL",
+  "THECATAPI_REQUEST_TIMEOUT_MS",
+  "DOGCEO_ENABLED",
+  "DOGCEO_IMAGE_RANDOM_URL",
+  "DOGCEO_REQUEST_TIMEOUT_MS",
   "SENRYU_KUROMOJI_DICT_PATH",
   "PACCHI_WIKIPEDIA_API_BASE_URL",
 ] as const;
@@ -295,6 +302,19 @@ const envSchema = z.object({
     // DiscordBOTv2 Utilities: 冷笑カウント JSON（既定: data/server/json/cold_laugh_counts.json）
 
   COLD_LAUGH_STORE_PATH: z.string().min(1).default("data/server/json/cold_laugh_counts.json"),
+  THECATAPI_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  THECATAPI_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  THECATAPI_API_BASE_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://api.thecatapi.com"),
+  ),
+  THECATAPI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  DOGCEO_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  DOGCEO_IMAGE_RANDOM_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://dog.ceo/api/breeds/image/random"),
+  ),
+  DOGCEO_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
     // 川柳（5-7-5）検出（kuromoji）。未設定・空は false
 
   SENRYU_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
