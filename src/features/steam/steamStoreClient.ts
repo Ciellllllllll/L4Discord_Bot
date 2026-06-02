@@ -25,7 +25,7 @@ class SteamHttpError extends Error {
   }
 }
 
-export class SteamSearchUnavailableError extends Error {
+class SteamSearchUnavailableError extends Error {
   constructor(
     message: string,
     readonly status: number,

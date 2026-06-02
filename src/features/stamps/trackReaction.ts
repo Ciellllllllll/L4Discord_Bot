@@ -19,6 +19,22 @@ function normalizeCount(count: number): bigint {
   return BigInt(Math.max(1, Math.trunc(count)));
 }
 
+function countUsageItems(items: StampUsageItem[]): Array<StampUsageItem & { count: number }> {
+  const byId = new Map<string, StampUsageItem & { count: number }>();
+
+  for (const item of items) {
+    const current = byId.get(item.id);
+    if (current) {
+      current.count += 1;
+      current.name = item.name;
+      continue;
+    }
+    byId.set(item.id, { ...item, count: 1 });
+  }
+
+  return [...byId.values()];
+}
+
 async function incrementStampUsage(
   ctx: BotContext,
   guildId: string,
@@ -50,7 +66,7 @@ async function incrementStampUsage(
     .execute();
 }
 
-export function extractEmojiUsageFromContent(content: string): StampUsageItem[] {
+function extractEmojiUsageFromContent(content: string): StampUsageItem[] {
   const items: StampUsageItem[] = [];
   const customRanges: Array<[number, number]> = [];
 
@@ -75,7 +91,7 @@ export function extractEmojiUsageFromContent(content: string): StampUsageItem[] 
   return items;
 }
 
-export function extractStickerUsageFromMessage(message: Message): StampUsageItem[] {
+function extractStickerUsageFromMessage(message: Message): StampUsageItem[] {
   return [...message.stickers.values()].map((sticker) => ({
     id: `s:${sticker.id}`,
     name: sticker.name || sticker.id,
@@ -85,13 +101,13 @@ export function extractStickerUsageFromMessage(message: Message): StampUsageItem
 export async function trackStampMessage(message: Message, ctx: BotContext): Promise<void> {
   if (!message.guildId || message.author.bot) return;
 
-  const items = [
+  const items = countUsageItems([
     ...extractEmojiUsageFromContent(message.content ?? ""),
     ...extractStickerUsageFromMessage(message),
-  ];
+  ]);
 
   for (const item of items) {
-    await incrementStampUsage(ctx, message.guildId, message.author.id, item);
+    await incrementStampUsage(ctx, message.guildId, message.author.id, item, item.count);
   }
 }
 

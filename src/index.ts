@@ -467,7 +467,7 @@ async function main(): Promise<void> {
     }
   });
 
-  client.on("messageReactionAdd", async (reaction, user, _details) => {
+  client.on("messageReactionAdd", async (reaction, user) => {
     try {
       const u = user.partial ? await user.fetch() : user;
       await handleEmojiGuardReaction(reaction, u, ctx);

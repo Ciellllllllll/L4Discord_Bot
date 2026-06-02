@@ -1,6 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
 import type { CheapSharkDeal } from "./cheapSharkTypes.js";
-import type { GameDealStatus, GameDealSubscriptionHit } from "./gameDealTypes.js";
+import type { GameDealSubscriptionHit } from "./gameDealTypes.js";
 
 function priceText(value: number | null): string {
   if (value === null) return "不明";
@@ -10,33 +10,6 @@ function priceText(value: number | null): string {
 
 function discountText(value: number | null): string {
   return value === null ? "不明" : `${value}%`;
-}
-
-export function buildGameDealStatusEmbed(input: {
-  enabled: boolean;
-  channelId: string | null;
-  status: GameDealStatus;
-}): EmbedBuilder {
-  return new EmbedBuilder()
-    .setTitle("ゲーム無料お知らせ 状態")
-    .setColor(input.enabled ? 0x2ecc71 : 0x95a5a6)
-    .addFields(
-      { name: "通知状態", value: input.enabled ? "有効" : "無効", inline: true },
-      { name: "通知チャンネル", value: input.channelId ? `<#${input.channelId}>` : "未設定", inline: true },
-      { name: "最終スキャン", value: input.status.lastScanAt ?? "未実行", inline: false },
-      { name: "最終成功", value: input.status.lastSuccessAt ?? "未実行", inline: false },
-      { name: "直近検出件数", value: String(input.status.lastDetectedCount), inline: true },
-      { name: "直近エラー", value: input.status.lastError ?? "なし", inline: false },
-      { name: "Steam検索状態", value: input.status.lastSteamSearchStatus ?? "未実行", inline: true },
-      { name: "Steam検索クールダウン", value: input.status.steamSearchCooldownUntil ?? "なし", inline: false },
-      { name: "Steam検索エラー", value: input.status.lastSteamSearchError ?? "なし", inline: false },
-    )
-    .setTimestamp(new Date());
-}
-
-export function buildGameDealSummaryText(total: number, shown: number): string | undefined {
-  const rest = total - shown;
-  return rest > 0 ? `ほか${rest}件のゲーム無料候補があります。` : undefined;
 }
 
 export function buildSubscriptionDealEmbed(hit: GameDealSubscriptionHit): EmbedBuilder {
@@ -81,23 +54,6 @@ export function buildCheapSharkSteamFreeEmbed(deal: CheapSharkDeal): EmbedBuilde
       { name: "通常価格", value: usdPrice(deal.normalPrice), inline: true },
       { name: "現在価格", value: usdPrice(deal.salePrice), inline: true },
       { name: "割引率", value: `${deal.savings.toFixed(1)}%`, inline: true },
-      { name: "Steam購入リンク", value: deal.steamUrl, inline: false },
-    )
-    .setTimestamp(new Date());
-  if (deal.thumb) embed.setImage(deal.thumb);
-  return embed;
-}
-
-export function buildCheapSharkSteamSaleEmbed(deal: CheapSharkDeal, previousSalePrice: number | null): EmbedBuilder {
-  const embed = new EmbedBuilder()
-    .setTitle("Steam セール通知")
-    .setColor(0xf1c40f)
-    .setDescription(`**${deal.title}**\n登録したSteamゲームが割引されています!`)
-    .addFields(
-      { name: "通常価格", value: usdPrice(deal.normalPrice), inline: true },
-      { name: "セール価格", value: usdPrice(deal.salePrice), inline: true },
-      { name: "割引率", value: `${deal.savings.toFixed(1)}%`, inline: true },
-      { name: "前回価格", value: usdPrice(previousSalePrice), inline: true },
       { name: "Steam購入リンク", value: deal.steamUrl, inline: false },
     )
     .setTimestamp(new Date());

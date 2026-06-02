@@ -45,15 +45,3 @@ export type EpicFreeCandidate = {
   confidence: "high" | "medium" | "low";
 };
 
-export type EpicNotifyChannel = {
-  guildId: string;
-  channelId: string;
-  enabled: boolean;
-};
-
-export type EpicWatcherStatus = {
-  lastScanAt: string | null;
-  lastSuccessAt: string | null;
-  lastError: string | null;
-  lastDetectedCount: number;
-};
