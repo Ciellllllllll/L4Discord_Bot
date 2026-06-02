@@ -1,6 +1,6 @@
 import type { BotContext } from "../../bot/context.js";
 import { detectEpicFreeCandidates } from "../epic/epicFreeDetector.js";
-import { buildEpicFreeEmbed } from "../epic/epicFreeEmbeds.js";
+import { buildEpicFreeEmbed, buildEpicLinkButtons } from "../epic/epicFreeEmbeds.js";
 import { EpicStoreClient } from "../epic/epicStoreClient.js";
 import { SteamStoreClient } from "../steam/steamStoreClient.js";
 import type { SteamAppDetails } from "../steam/steamFreeTypes.js";
@@ -127,6 +127,7 @@ async function scanEpicCurrentFreeGames(ctx: BotContext): Promise<GameDealFreeIt
       title: candidate.title,
       dedupeKey: epicDedupeKey(candidate),
       embed: buildEpicFreeEmbed(candidate),
+      components: [buildEpicLinkButtons(candidate)],
     });
   }
   return items;

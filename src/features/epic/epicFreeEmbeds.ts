@@ -1,4 +1,4 @@
-import { EmbedBuilder } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
 import type { EpicFreeCandidate, EpicWatcherStatus } from "./epicFreeTypes.js";
 
 function priceText(value: number | null, currency: string | null): string {
@@ -40,6 +40,15 @@ export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): EmbedBuilder {
     .setTimestamp(new Date());
   if (candidate.imageUrl) embed.setImage(candidate.imageUrl);
   return embed;
+}
+
+export function buildEpicLinkButtons(candidate: EpicFreeCandidate): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("Epicで購入")
+      .setStyle(ButtonStyle.Link)
+      .setURL(candidate.url),
+  );
 }
 
 export function buildEpicStatusEmbed(input: {

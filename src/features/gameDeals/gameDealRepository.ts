@@ -40,6 +40,15 @@ type SubRow = {
   active: number;
 };
 
+type NotificationRow = {
+  subscription_id: string;
+  user_id: string;
+  action_pressed: string | null;
+  guild_id: string | null;
+  target_platform: GameDealPlatform | null;
+  target_id: string | null;
+};
+
 type DealWatchRow = {
   id: number;
   guild_id: string;
@@ -172,6 +181,9 @@ export function ensureGameDealSchema(db: DatabaseLib.Database): void {
   ensureColumn(db, "game_deal_watcher_status", "last_steam_search_status", "TEXT");
   ensureColumn(db, "game_deal_watcher_status", "last_steam_search_error", "TEXT");
   ensureColumn(db, "game_deal_watcher_status", "steam_search_cooldown_until", "TEXT");
+  ensureColumn(db, "game_deal_subscription_notifications", "guild_id", "TEXT");
+  ensureColumn(db, "game_deal_subscription_notifications", "target_platform", "TEXT");
+  ensureColumn(db, "game_deal_subscription_notifications", "target_id", "TEXT");
 }
 
 function ensureColumn(db: DatabaseLib.Database, table: string, column: string, definition: string): void {
@@ -490,19 +502,59 @@ export class GameDealRepository {
     return id;
   }
 
+  createTargetNotification(input: {
+    guildId: string;
+    platform: GameDealPlatform;
+    targetId: string;
+    subscriptionId: string;
+    userId: string;
+  }): string {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `
+        INSERT INTO game_deal_subscription_notifications
+          (id, subscription_id, user_id, guild_id, target_platform, target_id, created_at)
+        VALUES (@id, @subscriptionId, @userId, @guildId, @platform, @targetId, @now)
+      `,
+      )
+      .run({ ...input, id, now: sqliteTimestamp() });
+    return id;
+  }
+
   setNotificationMessage(notificationId: string, messageId: string): void {
     this.db
       .prepare("UPDATE game_deal_subscription_notifications SET message_id = ? WHERE id = ?")
       .run(messageId, notificationId);
   }
 
-  getNotification(notificationId: string): { subscriptionId: string; userId: string; actionPressed: string | null } | null {
+  getNotification(notificationId: string): {
+    subscriptionId: string;
+    userId: string;
+    actionPressed: string | null;
+    guildId: string | null;
+    targetPlatform: GameDealPlatform | null;
+    targetId: string | null;
+  } | null {
     const row = this.db
-      .prepare<[string], { subscription_id: string; user_id: string; action_pressed: string | null }>(
-        "SELECT subscription_id, user_id, action_pressed FROM game_deal_subscription_notifications WHERE id = ?",
+      .prepare<[string], NotificationRow>(
+        `
+        SELECT subscription_id, user_id, action_pressed, guild_id, target_platform, target_id
+        FROM game_deal_subscription_notifications
+        WHERE id = ?
+      `,
       )
       .get(notificationId);
-    return row ? { subscriptionId: row.subscription_id, userId: row.user_id, actionPressed: row.action_pressed } : null;
+    return row
+      ? {
+          subscriptionId: row.subscription_id,
+          userId: row.user_id,
+          actionPressed: row.action_pressed,
+          guildId: row.guild_id,
+          targetPlatform: row.target_platform,
+          targetId: row.target_id,
+        }
+      : null;
   }
 
   markNotificationPressed(notificationId: string, action: string): void {
@@ -515,6 +567,28 @@ export class GameDealRepository {
     this.db
       .prepare("UPDATE game_deal_subscriptions SET active = 0, updated_at = ? WHERE id = ?")
       .run(sqliteTimestamp(), subscriptionId);
+  }
+
+  deactivateSubscriptionForTargetUser(input: {
+    guildId: string;
+    userId: string;
+    platform: GameDealPlatform;
+    targetId: string;
+  }): number {
+    const result = this.db
+      .prepare(
+        `
+        UPDATE game_deal_subscriptions
+        SET active = 0, updated_at = @now
+        WHERE guild_id = @guildId
+          AND user_id = @userId
+          AND platform = @platform
+          AND target_id = @targetId
+          AND active = 1
+      `,
+      )
+      .run({ ...input, now: sqliteTimestamp() });
+    return result.changes;
   }
 
   upsertDetectedDeal(input: { source: string; detectedType: string; deal: CheapSharkDeal; dedupeKey: string; markNotified: boolean }): { shouldNotify: boolean } {

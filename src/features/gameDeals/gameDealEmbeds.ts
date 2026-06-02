@@ -61,12 +61,8 @@ export function buildSubscriptionButtons(notificationId: string): ActionRowBuild
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`gameDeals:purchase:${notificationId}`)
-      .setLabel("購入完了!")
+      .setLabel("購入しました!")
       .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`gameDeals:stop:${notificationId}`)
-      .setLabel("お知らせ停止")
-      .setStyle(ButtonStyle.Secondary),
   );
 }
 

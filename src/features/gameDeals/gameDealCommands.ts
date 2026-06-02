@@ -1,4 +1,4 @@
-import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
+import { MessageFlags, type ChatInputCommandInteraction, type GuildMember, type SendableChannels } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
 import { buildGameDealStatusEmbed } from "./gameDealEmbeds.js";
@@ -14,44 +14,73 @@ function chunkItems(items: GameDealFreeItem[], size = 10): GameDealFreeItem[][] 
   return chunks;
 }
 
-async function sendGameDealItemChunks(
+function configuredGameDealChannelId(ctx: BotContext): string | null {
+  return ctx.config.GAME_DEAL_CHANNEL_ID?.trim() || null;
+}
+
+function configuredGameDealRoleId(ctx: BotContext): string | null {
+  return ctx.config.GAME_DEAL_NOTIFY_ROLE_ID?.trim() || null;
+}
+
+async function ensureGameDealCommandChannel(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<string | null> {
+  const channelId = configuredGameDealChannelId(ctx);
+  if (!channelId) {
+    await interaction.reply({ content: "GAME_DEAL_CHANNEL_ID が設定されていません。", flags: MessageFlags.Ephemeral });
+    return null;
+  }
+  if (interaction.channelId !== channelId) {
+    await interaction.reply({ content: `このコマンドは <#${channelId}> でのみ使用できます。`, flags: MessageFlags.Ephemeral });
+    return null;
+  }
+  return channelId;
+}
+
+function gameDealRoleMention(ctx: BotContext): string | undefined {
+  const roleId = configuredGameDealRoleId(ctx);
+  return roleId ? `<@&${roleId}>` : undefined;
+}
+
+function gameDealAllowedMentions(ctx: BotContext): { roles?: string[]; parse: [] } {
+  const roleId = configuredGameDealRoleId(ctx);
+  return roleId ? { roles: [roleId], parse: [] } : { parse: [] };
+}
+
+async function fetchGameDealChannel(interaction: ChatInputCommandInteraction, channelId: string): Promise<SendableChannels | null> {
+  const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
+  if (!channel || !channel.isTextBased() || channel.isDMBased() || !channel.isSendable()) return null;
+  return channel;
+}
+
+async function sendGameDealItemsToChannel(
   interaction: ChatInputCommandInteraction,
   items: GameDealFreeItem[],
-  firstContent: string,
-): Promise<void> {
+  ctx: BotContext,
+  channelId: string,
+): Promise<boolean> {
+  const channel = await fetchGameDealChannel(interaction, channelId);
+  if (!channel) return false;
+  const roleMention = gameDealRoleMention(ctx);
+  const allowedMentions = gameDealAllowedMentions(ctx);
+  if (roleMention) {
+    await channel.send({ content: roleMention, allowedMentions });
+  }
   if (items.some((item) => item.components && item.components.length > 0)) {
-    const [first, ...rest] = items;
-    await interaction.editReply({
-      content: firstContent,
-      embeds: first ? [first.embed] : [],
-      components: first?.components ?? [],
-      allowedMentions: { parse: [] },
-    });
-    for (const item of rest) {
-      await interaction.followUp({
+    for (const item of items) {
+      await channel.send({
         embeds: [item.embed],
         components: item.components ?? [],
         allowedMentions: { parse: [] },
       });
     }
-    return;
+    return true;
   }
-  const chunks = chunkItems(items);
-  const [first, ...rest] = chunks;
-  await interaction.editReply({
-    content: firstContent,
-    embeds: (first ?? []).map((item) => item.embed),
-    allowedMentions: { parse: [] },
-  });
-  let page = 2;
-  for (const chunk of rest) {
-    await interaction.followUp({
-      content: `ゲーム無料候補 続き ${page}/${chunks.length}`,
+  for (const chunk of chunkItems(items)) {
+    await channel.send({
       embeds: chunk.map((item) => item.embed),
       allowedMentions: { parse: [] },
     });
-    page += 1;
   }
+  return true;
 }
 
 function okSourceCount(scan: GameDealScanResult): number {
@@ -73,13 +102,15 @@ export async function handleGameOn(
     await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
+  const channelId = await ensureGameDealCommandChannel(interaction, ctx);
+  if (!channelId) return;
   const repo = new GameDealRepository(ctx.sqlite);
-  const result = repo.enableNotifyChannel(interaction.guildId!, interaction.channelId);
+  const result = repo.enableNotifyChannel(interaction.guildId!, channelId);
   if (result.alreadyEnabledInChannel) {
     await interaction.reply({ content: "既にこのチャンネルでゲーム無料お知らせは有効です", flags: MessageFlags.Ephemeral });
     return;
   }
-  await interaction.deferReply();
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const scan = await scanCurrentFreeGamesDetailed(ctx);
   const items = scan.items;
   for (const item of items) repo.upsertFreeSeen(item, true);
@@ -91,10 +122,11 @@ export async function handleGameOn(
     await interaction.editReply(`このチャンネルでゲーム無料お知らせを有効化しました。現在検出できる無料候補はありません。${steamSourceNote(scan)}`);
     return;
   }
-  await sendGameDealItemChunks(
-    interaction,
-    items,
-    `このチャンネルでゲーム無料お知らせを有効化しました。現在検出できた候補: ${items.length}件${steamSourceNote(scan)}`,
+  const sent = await sendGameDealItemsToChannel(interaction, items, ctx, channelId);
+  await interaction.editReply(
+    sent
+      ? `このチャンネルでゲーム無料お知らせを有効化しました。検出できた候補 ${items.length}件を送信しました。${steamSourceNote(scan)}`
+      : "通知チャンネルを取得できませんでした。",
   );
 }
 
@@ -120,7 +152,9 @@ export async function handleGameNow(
     await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
-  await interaction.deferReply();
+  const channelId = await ensureGameDealCommandChannel(interaction, ctx);
+  if (!channelId) return;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const scan = await scanCurrentFreeGamesDetailed(ctx);
   const items = scan.items;
   if (okSourceCount(scan) === 0) {
@@ -131,7 +165,8 @@ export async function handleGameNow(
     await interaction.editReply(`現在検出できるゲーム無料候補はありません。${steamSourceNote(scan)}`);
     return;
   }
-  await sendGameDealItemChunks(interaction, items, `現在検出できたゲーム無料候補: ${items.length}件${steamSourceNote(scan)}`);
+  const sent = await sendGameDealItemsToChannel(interaction, items, ctx, channelId);
+  await interaction.editReply(sent ? `ゲーム無料候補 ${items.length}件を送信しました。${steamSourceNote(scan)}` : "通知チャンネルを取得できませんでした。");
 }
 
 export async function handleGameStatus(
@@ -159,6 +194,8 @@ export async function handleGameStatus(
 }
 
 export async function handleGameSub(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+  const channelId = await ensureGameDealCommandChannel(interaction, ctx);
+  if (!channelId) return;
   const link = interaction.options.getString("link", true);
   const parsed = parseGameStoreLink(link);
   if (!parsed) {
@@ -170,7 +207,7 @@ export async function handleGameSub(interaction: ChatInputCommandInteraction, ct
   }
   const sub = new GameDealRepository(ctx.sqlite).addSubscription({
     guildId: interaction.guildId!,
-    channelId: interaction.channelId,
+    channelId,
     userId: interaction.user.id,
     platform: parsed.platform,
     targetId: parsed.targetId,

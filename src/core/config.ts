@@ -69,6 +69,8 @@ const profileOverridableKeys = [
   "VC_CREATE_CATEGORY_ID",
   "REACTION_ROLE_UI_CHANNEL_ID",
   "REACTION_ROLE_OUTPUT_CHANNEL_ID",
+  "GAME_DEAL_CHANNEL_ID",
+  "GAME_DEAL_NOTIFY_ROLE_ID",
   "DEEPSEEK_API_KEY",
   "DEEPSEEK_API_BASE",
   "DEEPSEEK_MODEL",
@@ -299,6 +301,8 @@ const envSchema = z.object({
 
   REACTION_ROLE_UI_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   REACTION_ROLE_OUTPUT_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  GAME_DEAL_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  GAME_DEAL_NOTIFY_ROLE_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
     // DiscordBOTv2 Utilities: 冷笑カウント JSON（既定: data/server/json/cold_laugh_counts.json）
 
   COLD_LAUGH_STORE_PATH: z.string().min(1).default("data/server/json/cold_laugh_counts.json"),
