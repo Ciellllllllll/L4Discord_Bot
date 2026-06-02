@@ -12,25 +12,64 @@ on:
     branches:
       - "**"
 
+  issue_comment:
+    types:
+      - created
+
 permissions:
   contents: read
+  issues: read
   pull-requests: write
 
 concurrency:
-  group: deepseek-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: deepseek-review-${{ github.event_name }}-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
   deepseek-review:
-    if: github.event_name == 'push' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
 
     steps:
+      - name: Resolve review target
+        id: target
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let headSha = context.sha;
+            let beforeSha = context.payload.before || "";
+            let prNumber = "";
+            let prHtmlUrl = "";
+            let shouldRun = true;
+
+            if (context.eventName === "pull_request") {
+              shouldRun = context.payload.pull_request.draft === false;
+              headSha = context.payload.pull_request.head.sha;
+              prNumber = String(context.payload.pull_request.number);
+              prHtmlUrl = context.payload.pull_request.html_url;
+            }
+
+            if (context.eventName === "issue_comment" && context.payload.issue?.pull_request) {
+              prNumber = String(context.payload.issue.number);
+              const { data: pull } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.issue.number,
+              });
+              headSha = pull.head.sha;
+              prHtmlUrl = pull.html_url;
+            }
+
+            core.setOutput("head-sha", headSha);
+            core.setOutput("before-sha", beforeSha);
+            core.setOutput("pr-number", prNumber);
+            core.setOutput("pr-html-url", prHtmlUrl);
+            core.setOutput("should-run", String(shouldRun));
+
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.target.outputs.head-sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,6 +77,7 @@ jobs:
           node-version: 20
 
       - name: Run DeepSeek review
+        if: steps.target.outputs.should-run == 'true'
         run: node scripts/deepseek-review.mjs
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -51,14 +91,16 @@ jobs:
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_RUN_ID: ${{ github.run_id }}
 
-          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-          PR_HTML_URL: ${{ github.event.pull_request.html_url || '' }}
+          PR_NUMBER: ${{ steps.target.outputs.pr-number }}
+          PR_HTML_URL: ${{ steps.target.outputs.pr-html-url }}
 
-          BEFORE_SHA: ${{ github.event.before || '' }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE_SHA: ${{ steps.target.outputs.before-sha }}
+          HEAD_SHA: ${{ steps.target.outputs.head-sha }}
 
           DISCORD_REVIEW_WEBHOOK_URL: ${{ secrets.DISCORD_REVIEW_WEBHOOK_URL }}
 
           MAX_DIFF_CHARS: 180000
-          MAX_REVIEW_COMMENTS: 25
+          MAX_REPOSITORY_CHARS: 350000
+          MAX_REVIEW_COMMENTS: 80
+          MAX_DEEPSEEK_TOKENS: 12000
           SKIP_PUSH_REVIEW_IF_OPEN_PR: true
