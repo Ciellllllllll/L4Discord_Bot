@@ -28,7 +28,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   game_off: "2.0.6",
   sub: "2.0.6",
   sub_list: "2.0.6",
-  lol_watch: "2.0.8",
+  lol_watch: "2.0.7",
 };
 
 // プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER
@@ -42,7 +42,7 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   see: "2.1.0",
   reply: "0.1.0",
   nolog: "0.1.0",
-  lol: "2.0.8",
+  lol: "2.0.7",
   pacchi_on: "2.0.6",
   pacchi_off: "2.0.6",
   pacchi_channel: "2.0.6",
