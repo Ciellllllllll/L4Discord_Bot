@@ -116,3 +116,52 @@ export async function handleLolWatchCommand(
     await interaction.editReply(scanSummary(await scanLolWatcher(ctx)));
   }
 }
+
+export async function handleLolAdminAddCommand(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!ensureLolWatcherAdmin(interaction, ctx, member)) return;
+  if (!ctx.config.DEEPLOL_WATCHER_ENABLED) {
+    await interaction.reply({
+      content: "lol watcher は無効です。DEEPLOL_WATCHER_ENABLED=true で有効化してください。",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const accountKey = interaction.options.getString("key", true).trim();
+  const accountKeyNorm = normalizeLolWatcherAccountKey(accountKey);
+  if (!accountKeyNorm || !parseRiotId(accountKey)) {
+    await interaction.reply({ content: "key は Riot ID 形式（例: name#tag）で指定してください。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const repo = new LolWatcherRepository(ctx.sqlite);
+  const result = repo.upsertAccount(accountKey, accountKeyNorm);
+  await interaction.reply({
+    content: result.created ? `監視対象を追加しました: ${accountKeyNorm}` : `監視対象を有効化しました: ${accountKeyNorm}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleLolAdminRemoveCommand(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!ensureLolWatcherAdmin(interaction, ctx, member)) return;
+  if (!ctx.config.DEEPLOL_WATCHER_ENABLED) {
+    await interaction.reply({
+      content: "lol watcher は無効です。DEEPLOL_WATCHER_ENABLED=true で有効化してください。",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const accountKeyNorm = normalizeLolWatcherAccountKey(interaction.options.getString("key", true));
+  const repo = new LolWatcherRepository(ctx.sqlite);
+  const changes = repo.disableAccount(accountKeyNorm);
+  await interaction.reply({
+    content: changes > 0 ? `監視対象を無効化しました: ${accountKeyNorm}` : `監視対象が見つかりません: ${accountKeyNorm}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
