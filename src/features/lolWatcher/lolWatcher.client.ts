@@ -401,6 +401,13 @@ function normalizeTemplateValue(value: string | undefined): string {
   return withoutKey;
 }
 
+function encodeDeepLolAccountKey(input: { accountKey: string; account: LolWatcherApiAccount }): string {
+  const parsed = parseAccountKey(input.accountKey);
+  const gameName = parsed?.gameName ?? input.account.gameName;
+  const tagLine = parsed?.tagLine ?? input.account.tagLine;
+  return `${encodeURIComponent(gameName)}-${encodeURIComponent(tagLine)}`;
+}
+
 export function buildDeepLolDetailUrl(config: AppConfig, input: {
   accountKey: string;
   account: LolWatcherApiAccount;
@@ -410,7 +417,7 @@ export function buildDeepLolDetailUrl(config: AppConfig, input: {
   const template = normalizeTemplateValue(config.DEEPLOL_MATCH_URL_TEMPLATE);
   const generated = template
     .replaceAll("{gameId}", encodeURIComponent(input.game.gameId))
-    .replaceAll("{accountKey}", encodeURIComponent(input.accountKey))
+    .replaceAll("{accountKey}", encodeDeepLolAccountKey(input))
     .replaceAll("{gameName}", encodeURIComponent(input.account.gameName))
     .replaceAll("{tagLine}", encodeURIComponent(input.account.tagLine))
     .replaceAll("{puuid}", encodeURIComponent(input.account.puuid));

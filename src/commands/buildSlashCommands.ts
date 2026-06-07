@@ -178,5 +178,21 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .addSubcommand((sub) => sub.setName("list").setDescription("監視対象と最新statusを表示します"))
       .addSubcommand((sub) => sub.setName("scan_now").setDescription("LoL試合監視を即時scanします"))
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName("lol_add")
+      .setDescription("管理者用: LoL監視対象アカウントを追加します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((o) =>
+        o.setName("key").setDescription("Riot ID（例: name#tag）").setRequired(true).setMaxLength(200),
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("lol_remove")
+      .setDescription("管理者用: LoL監視対象アカウントを無効化します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((o) =>
+        o.setName("key").setDescription("Riot ID（例: name#tag）").setRequired(true).setMaxLength(200),
+      )
+      .toJSON(),
   ];
 }

@@ -37,13 +37,13 @@ export function buildLolWatcherCompletedEmbed(
   game: LolWatcherCompletedGame,
 ): EmbedBuilder {
   const isWin = game.result === "win";
+  const titleIcon = game.aiScore !== null && game.aiScore >= 80 ? "👑" : isWin ? "🏆" : "🔥";
   const embed = new EmbedBuilder()
-    .setTitle(`🏆 ${account.displayName} の試合が終了`)
+    .setTitle(`${titleIcon} ${account.displayName} の試合が終了`)
     .setColor(isWin ? 0x2ecc71 : 0xe74c3c)
     .addFields(
       { name: "ゲームモード", value: game.queueName, inline: true },
       { name: "チャンピオン", value: game.championName, inline: true },
-      { name: "\u200b", value: "\u200b", inline: true },
       { name: "KDA", value: `${game.kills}/${game.deaths}/${game.assists}`, inline: true },
       { name: "AIスコア", value: game.aiScore === null ? "N/A" : String(game.aiScore), inline: true },
     )
