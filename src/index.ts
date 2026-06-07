@@ -78,6 +78,7 @@ import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/sen
 import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
 import { ensureGameDealSchema } from "./features/gameDeals/gameDealRepository.js";
 import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
+import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
 
 let mainStarted = false;
 
@@ -242,6 +243,7 @@ async function main(): Promise<void> {
   let presenceTimer: NodeJS.Timeout | undefined;
   let reminderTimer: NodeJS.Timeout | undefined;
   let gameDealTimer: NodeJS.Timeout | undefined;
+  let lolWatcher: LolWatcherController | null = null;
 
   client.once("clientReady", async () => {
     const u = client.user;
@@ -313,6 +315,7 @@ async function main(): Promise<void> {
     presenceTimer = startPresenceRotation(client, log, config.BOT_VERSION);
     reminderTimer = startReminderScheduler(ctx);
     gameDealTimer = startGameDealWatcher(ctx);
+    lolWatcher = startLolWatcher(ctx);
     log.info("startup tasks from clientReady finished (sync may still be in flight)");
   });
 
@@ -553,6 +556,7 @@ async function main(): Promise<void> {
     if (presenceTimer) clearInterval(presenceTimer);
     if (reminderTimer) clearInterval(reminderTimer);
     if (gameDealTimer) clearInterval(gameDealTimer);
+    lolWatcher?.stop();
     ctx.vcTemp.stopSweep();
     client.destroy();
     await db.destroy();

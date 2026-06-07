@@ -7,6 +7,7 @@ import { buildSetupEntryButtonRow } from "../features/panels/setupWizard.js";
 import { reloadPanelsFromGuildSettings } from "../features/panels/panelService.js";
 import { runNologToggleAndBuildEmbed } from "../features/messageLog/messageLogNolog.js";
 import { handlePacchiPrefixMessage } from "../features/pacchi/pacchi.prefix.js";
+import { LolWatcherRepository } from "../features/lolWatcher/lolWatcher.repository.js";
 
 const PREFIX = "!";
 
@@ -100,6 +101,32 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
       await message.reply("埋め込みの送信に失敗しました。設定は反映済みの場合があります。").catch(() => undefined);
     }
     ctx.log.info({ command: "nolog", userId: message.author.id, channelId: message.channelId }, "prefix command");
+    return true;
+  }
+
+  if (lower === "lol") {
+    if (!isPrefixVersionAllowed(ctx, botVersion, "lol")) {
+      await message.reply(versionBlockedMessage());
+      ctx.log.info({ command: "lol", userId: message.author.id, outcome: "version_blocked" }, "prefix command");
+      return true;
+    }
+    if (!ctx.config.DEEPLOL_WATCHER_ENABLED) {
+      await message.reply("lol watcher は無効です。");
+      return true;
+    }
+    if (!message.guildId || !message.channelId || !message.channel.isSendable()) {
+      await message.reply("このチャンネルはLoL通知先に設定できません。").catch(() => undefined);
+      return true;
+    }
+    const repo = new LolWatcherRepository(ctx.sqlite);
+    const previousChannelId = repo.getNotificationChannelId();
+    repo.setNotificationChannelId(message.channelId);
+    if (previousChannelId) return true;
+    await message.reply("LoL通知先をこのチャンネルに設定しました。");
+    ctx.log.info(
+      { command: "lol", userId: message.author.id, channelId: message.channelId },
+      "prefix command",
+    );
     return true;
   }
 
