@@ -28,6 +28,16 @@ function envOptionalLogDebug(v: unknown): boolean | undefined {
   return undefined;
 }
 
+function envOptionalStringWithoutAssignment(key: string): (v: unknown) => string | undefined {
+  return (v: unknown) => {
+    if (v === "" || v === undefined || v === null) return undefined;
+    const trimmed = String(v).trim();
+    const prefix = `${key}=`;
+    const value = trimmed.toUpperCase().startsWith(prefix) ? trimmed.slice(prefix.length).trim() : trimmed;
+    return value || undefined;
+  };
+}
+
 // 相対パスを package.json があるディレクトリ基準の絶対パスに解決する（cwd ずれ対策）
 
 function findPackageJsonDir(fromFile: string): string {
@@ -99,6 +109,18 @@ const profileOverridableKeys = [
   "DOGCEO_REQUEST_TIMEOUT_MS",
   "SENRYU_KUROMOJI_DICT_PATH",
   "PACCHI_WIKIPEDIA_API_BASE_URL",
+  "DEEPLOL_WATCHER_ENABLED",
+  "RIOT_API_KEY",
+  "RIOT_PLATFORM_ID",
+  "RIOT_REGIONAL_ROUTING",
+  "RIOT_REQUEST_TIMEOUT_MS",
+  "DEEPLOL_BASE_URL",
+  "DEEPLOL_MATCH_URL_TEMPLATE",
+  "DEEPLOL_POLL_INTERVAL_MS",
+  "DEEPLOL_REQUEST_TIMEOUT_MS",
+  "DEEPLOL_ACTIVE_STALE_MS",
+  "DEEPLOL_SCRAPE_DELAY_MIN_MS",
+  "DEEPLOL_SCRAPE_DELAY_MAX_MS",
 ] as const;
 
 function normalizeBotProfile(v: unknown): BotProfile {
@@ -359,6 +381,27 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined ? undefined : v),
     z.string().url().default("https://ja.wikipedia.org/api/rest_v1/page/summary"),
   ),
+  DEEPLOL_WATCHER_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  RIOT_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  RIOT_PLATFORM_ID: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().min(1).default("jp1"),
+  ),
+  RIOT_REGIONAL_ROUTING: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().min(1).default("asia"),
+  ),
+  RIOT_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(12_000),
+  DEEPLOL_BASE_URL: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().min(1).optional()),
+  DEEPLOL_MATCH_URL_TEMPLATE: z.preprocess(
+    envOptionalStringWithoutAssignment("DEEPLOL_MATCH_URL_TEMPLATE"),
+    z.string().min(1).optional(),
+  ),
+  DEEPLOL_POLL_INTERVAL_MS: z.coerce.number().int().min(10_000).default(120_000),
+  DEEPLOL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(12_000),
+  DEEPLOL_ACTIVE_STALE_MS: z.coerce.number().int().min(60_000).default(3_600_000),
+  DEEPLOL_SCRAPE_DELAY_MIN_MS: z.coerce.number().int().min(1_000).default(60_000),
+  DEEPLOL_SCRAPE_DELAY_MAX_MS: z.coerce.number().int().min(1_000).default(180_000),
 });
 
 type ParsedEnvConfig = z.infer<typeof envSchema>;

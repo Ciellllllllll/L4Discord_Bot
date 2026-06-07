@@ -36,6 +36,7 @@ import {
   handleGameSub,
   handleGameSubList,
 } from "../features/gameDeals/gameDealCommands.js";
+import { handleLolWatchCommand } from "../features/lolWatcher/lolWatcher.commands.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -127,6 +128,8 @@ export async function handleSlashCommand(
       return handleGameSub(interaction, ctx);
     case "sub_list":
       return handleGameSubList(interaction, ctx);
+    case "lol_watch":
+      return handleLolWatchCommand(interaction, ctx, member);
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });

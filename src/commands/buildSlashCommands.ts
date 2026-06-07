@@ -159,5 +159,24 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .setName("sub_list")
       .setDescription("自分の割引・無料化監視リストを表示します")
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName("lol_watch")
+      .setDescription("LoL試合監視を管理します")
+      .addSubcommand((sub) =>
+        sub
+          .setName("add")
+          .setDescription("監視対象アカウントを追加します")
+          .addStringOption((o) =>
+            o.setName("key").setDescription("Riot ID（例: name#tag）").setRequired(true).setMaxLength(200),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName("remove")
+          .setDescription("自分の監視対象アカウントを無効化します"),
+      )
+      .addSubcommand((sub) => sub.setName("list").setDescription("監視対象と最新statusを表示します"))
+      .addSubcommand((sub) => sub.setName("scan_now").setDescription("LoL試合監視を即時scanします"))
+      .toJSON(),
   ];
 }
