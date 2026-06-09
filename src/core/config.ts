@@ -108,6 +108,16 @@ const profileOverridableKeys = [
   "DOGCEO_IMAGE_RANDOM_URL",
   "DOGCEO_REQUEST_TIMEOUT_MS",
   "SENRYU_KUROMOJI_DICT_PATH",
+  "JAPANESE_WORKER_ENABLED",
+  "JAPANESE_WORKER_URL",
+  "JAPANESE_WORKER_TIMEOUT_MS",
+  "SENRYU_DETECTOR_MODE",
+  "SENRYU_WORKER_FALLBACK_ENABLED",
+  "SENRYU_WORKER_FALLBACK_ON_NO_MATCH",
+  "PACCHI_LEARNING_ANALYZER",
+  "PACCHI_PATTERN_LEARNING_ENABLED",
+  "PACCHI_GENERATION_MODE",
+  "PACCHI_AI_FINAL_CHECK_ENABLED",
   "PACCHI_WIKIPEDIA_API_BASE_URL",
   "DEEPLOL_WATCHER_ENABLED",
   "RIOT_API_KEY",
@@ -377,6 +387,28 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined ? undefined : v),
     z.string().min(1).optional(),
   ),
+  JAPANESE_WORKER_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  JAPANESE_WORKER_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("http://127.0.0.1:8787"),
+  ),
+  JAPANESE_WORKER_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).default(1_500),
+  SENRYU_DETECTOR_MODE: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.enum(["kuromoji", "go-worker"]).default("kuromoji"),
+  ),
+  SENRYU_WORKER_FALLBACK_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  SENRYU_WORKER_FALLBACK_ON_NO_MATCH: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  PACCHI_LEARNING_ANALYZER: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.enum(["kuromoji", "go-worker"]).default("kuromoji"),
+  ),
+  PACCHI_PATTERN_LEARNING_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
+  PACCHI_GENERATION_MODE: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.enum(["template", "slot-template", "learned-pattern", "mixed"]).default("template"),
+  ),
+  PACCHI_AI_FINAL_CHECK_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
   PACCHI_WIKIPEDIA_API_BASE_URL: z.preprocess(
     (v) => (v === "" || v === undefined ? undefined : v),
     z.string().url().default("https://ja.wikipedia.org/api/rest_v1/page/summary"),
@@ -409,8 +441,13 @@ export type AppConfig = ParsedEnvConfig;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const profiledEnv = applyProfileOverrides(env);
+  const japaneseWorkerEnabled =
+    profiledEnv.JAPANESE_WORKER_ENABLED === undefined || profiledEnv.JAPANESE_WORKER_ENABLED === ""
+      ? profiledEnv.WORKER_ENABLED
+      : profiledEnv.JAPANESE_WORKER_ENABLED;
   const envWithLogDefaults = {
     ...profiledEnv,
+    JAPANESE_WORKER_ENABLED: japaneseWorkerEnabled,
     MESSAGE_LOG_DB_PATH:
       profiledEnv.MESSAGE_LOG_DB_PATH ||
       profiledEnv.LOG_DB_PATH ||

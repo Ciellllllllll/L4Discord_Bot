@@ -9,18 +9,48 @@ import type { PacchiExportData, PacchiRate } from "./pacchi.types.js";
 
 const ADMIN_ONLY = "このコマンドは管理者のみ使用できます。";
 const SAFE_REPLY: MessageMentionOptions = { parse: [] };
+const IMPORT_COUNT_MAX = 100_000_000;
 
 const importSchema = z.object({
   version: z.literal(1),
   exportedAt: z.string(),
-  words: z.array(z.object({ word: z.string().min(1).max(40), count: z.number().int().min(1).max(1_000_000) })).max(1000),
-  phrases: z.array(z.object({ phrase: z.string().min(1).max(80), count: z.number().int().min(1).max(1_000_000) })).max(1000),
+  words: z.array(z.object({ word: z.string().min(1).max(40), count: z.number().int().min(1).max(IMPORT_COUNT_MAX) })).max(1000),
+  phrases: z.array(z.object({ phrase: z.string().min(1).max(80), count: z.number().int().min(1).max(IMPORT_COUNT_MAX) })).max(1000),
   emojis: z.array(z.object({
     key: z.string().min(1).max(80),
     kind: z.enum(["unicode", "custom", "sticker"]),
     display: z.string().min(1).max(120),
-    count: z.number().int().min(1).max(1_000_000),
+    count: z.number().int().min(1).max(IMPORT_COUNT_MAX),
   })).max(1000).default([]),
+  lexicon: z.array(z.object({
+    surface: z.string().min(1).max(80),
+    base: z.string().min(1).max(80),
+    reading: z.string().min(1).max(120),
+    pos: z.array(z.string().min(1).max(40)).min(1).max(8),
+    isProperNoun: z.boolean(),
+    isOov: z.boolean(),
+    source: z.string().min(1).max(40),
+    count: z.number().int().min(1).max(IMPORT_COUNT_MAX),
+  })).max(5000).optional(),
+  cooccurrences: z.array(z.object({
+    wordA: z.string().min(1).max(80),
+    wordB: z.string().min(1).max(80),
+    count: z.number().int().min(1).max(IMPORT_COUNT_MAX),
+  })).max(10000).optional(),
+  userDictionaryEntries: z.array(z.object({
+    surface: z.string().min(1).max(80),
+    reading: z.string().min(1).max(120),
+    reason: z.string().min(1).max(40),
+    count: z.number().int().min(1).max(IMPORT_COUNT_MAX),
+  })).max(5000).optional(),
+  sentencePatterns: z.array(z.object({
+    surfacePattern: z.string().min(1).max(120),
+    slots: z.array(z.string().min(1).max(40)).min(1).max(20),
+    ending: z.string().min(1).max(20),
+    sourceKind: z.string().min(1).max(40),
+    safeLevel: z.number().int().min(1).max(10),
+    count: z.number().int().min(1).max(IMPORT_COUNT_MAX),
+  })).max(5000).optional(),
   settings: z.object({
     enabled: z.boolean(),
     defaultTalkEnabled: z.boolean(),
@@ -285,6 +315,9 @@ async function handleImport(message: Message, ctx: BotContext): Promise<boolean>
   }
   const data: PacchiExportData = parsed.data;
   const result = createPacchiRepository(ctx.sqlite).importData(message.guildId!, data);
-  await replySafe(message, `インポートしました。単語 ${result.words} 件 / 短文 ${result.phrases} 件 / 絵文字 ${result.emojis} 件`);
+  await replySafe(
+    message,
+    `インポートしました。単語 ${result.words} 件 / 短文 ${result.phrases} 件 / 絵文字 ${result.emojis} 件 / 形態素 ${result.lexicon} 件 / 文型 ${result.sentencePatterns} 件`,
+  );
   return true;
 }

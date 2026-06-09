@@ -29,6 +29,7 @@ import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
 import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.js";
 import { startAfkDisconnectCommand } from "../features/vc/afkDisconnect.js";
 import { handlePacchiHelp } from "../features/pacchi/pacchi.slash.js";
+import { checkJapaneseWorkerHealth } from "../features/japaneseAnalysis/japaneseAnalysisClient.js";
 import {
   handleGameNow,
   handleGameOff,
@@ -245,6 +246,18 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
 
 async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const worker = ctx.config.JAPANESE_WORKER_ENABLED
+    ? await checkJapaneseWorkerHealth({
+      baseUrl: ctx.config.JAPANESE_WORKER_URL,
+      timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
+    })
+    : null;
+  const workerLine = worker === null
+    ? "Go worker: **DISABLED**"
+    : worker.ok
+      ? `Go worker: **OK** (${worker.data.ms} ms / ${ctx.config.JAPANESE_WORKER_URL})`
+      : `Go worker: **NG** (${worker.reason} / ${ctx.config.JAPANESE_WORKER_URL})`;
+
   try {
     const { resolved } = readAiBasePromptFiles(ctx.config);
     const thinking = await getAiThinkingEnabled(ctx, interaction.guildId!, interaction.user.id);
@@ -256,10 +269,16 @@ async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotCont
       ],
       { thinking },
     );
-    await interaction.editReply(`DeepSeek 応答時間: **${ms}** ms / Thinking: **${thinking ? "ON" : "OFF"}**`);
+    await interaction.editReply([
+      `DeepSeek 応答時間: **${ms}** ms / Thinking: **${thinking ? "ON" : "OFF"}**`,
+      workerLine,
+    ].join("\n"));
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek ping failed");
-    await interaction.editReply("計測に失敗しました。");
+    await interaction.editReply([
+      "DeepSeek 応答時間: **計測失敗**",
+      workerLine,
+    ].join("\n"));
   }
 }
 

@@ -1,6 +1,7 @@
 import { ChannelType } from "discord.js";
 import type { Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { analyzeSenryu } from "../japaneseAnalysis/japaneseAnalysisClient.js";
 import { pickSenryuCandidate, senryuCandidate575MismatchScore } from "./senryu.detector.js";
 import {
   expandUnknownKatakanaTokens,
@@ -19,6 +20,7 @@ import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
 import { replySenryu } from "./senryu.reply.js";
 import type { SenryuRepository } from "./senryu.repository.js";
+import type { SenryuCandidate } from "./senryu.types.js";
 
 function isPermissionLikeDiscordError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
@@ -114,59 +116,112 @@ export async function runSenryuPipeline(
   const stripped = stripSpoilerMarkers(content);
   const normalized = normalizeSenryuText(stripped);
 
-  if (!isKuromojiTokenizerReady()) {
-    log.warn(base, "senryu: kuromoji not ready");
-    return false;
+  async function detectWithKuromoji(): Promise<SenryuCandidate | null> {
+    if (!isKuromojiTokenizerReady()) {
+      log.warn(base, "senryu: kuromoji not ready");
+      return null;
+    }
+
+    let tokens: import("./senryu.types.js").KuromojiToken[];
+    try {
+      tokens = await fetchKuromojiTokens(normalized);
+    } catch (err) {
+      log.error({ ...base, err }, "senryu tokenize failed");
+      return null;
+    }
+
+    try {
+      tokens = await expandUnknownKatakanaTokens(tokens, fetchKuromojiTokens);
+    } catch (err) {
+      log.error({ ...base, err }, "senryu expand unknown katakana failed");
+      return null;
+    }
+
+    const moraTolerance = config.SENRYU_MORA_TOLERANCE === 1 ? 1 : 0;
+    const kuromojiCandidate = pickSenryuCandidate(tokens, {
+      moraTolerance,
+      bestCandidate: config.SENRYU_BEST_CANDIDATE,
+    });
+    if (!kuromojiCandidate) {
+      return null;
+    }
+
+    if (config.SENRYU_JS_HAIKU_VERIFY_ENABLED) {
+      if (!senryuCandidateMatchesJsHaiku575(tokens, kuromojiCandidate)) {
+        logSkip("js_haiku_mismatch");
+        return null;
+      }
+    }
+
+    if (config.SENRYU_AI_REVIEW_ENABLED) {
+      // API 失敗・JSON 不正時は ai.ok が false のため reject せず、検出結果どおり通過する
+      const contextExcerpt = buildSenryuReviewContextExcerpt(normalized, kuromojiCandidate);
+      const reviewBlock = buildSenryuAiReviewUserBlock(contextExcerpt, tokens, kuromojiCandidate);
+      const ai = await reviewSenryuCandidateWithAi(config, log, reviewBlock);
+      if (ai.ok && ai.verdict === "reject") {
+        log.info(
+          {
+            ...base,
+            candidateFormatted: kuromojiCandidate.formatted,
+            aiReviewMs: ai.ms,
+          },
+          "senryu ai review rejected",
+        );
+        return null;
+      }
+    }
+
+    return kuromojiCandidate;
   }
 
-  let tokens: import("./senryu.types.js").KuromojiToken[];
-  try {
-    tokens = await fetchKuromojiTokens(normalized);
-  } catch (err) {
-    log.error({ ...base, err }, "senryu tokenize failed");
-    return false;
+  async function detectWithWorker(): Promise<SenryuCandidate | null> {
+    if (!config.JAPANESE_WORKER_ENABLED) {
+      logSkip("japanese_worker_disabled");
+      return config.SENRYU_WORKER_FALLBACK_ENABLED ? await detectWithKuromoji() : null;
+    }
+    const result = await analyzeSenryu(normalized, {
+      baseUrl: config.JAPANESE_WORKER_URL,
+      timeoutMs: config.JAPANESE_WORKER_TIMEOUT_MS,
+    });
+    if (!result.ok) {
+      log.warn({ ...base, reason: result.reason, err: result.error }, "senryu worker failed");
+      return config.SENRYU_WORKER_FALLBACK_ENABLED ? await detectWithKuromoji() : null;
+    }
+    if (!result.data.matched) {
+      return config.SENRYU_WORKER_FALLBACK_ON_NO_MATCH ? await detectWithKuromoji() : null;
+    }
+    const phrases = result.data.phrases;
+    if (phrases.length !== 3) {
+      log.warn({ ...base, workerResponse: result.data }, "senryu worker invalid phrases");
+      return config.SENRYU_WORKER_FALLBACK_ENABLED ? await detectWithKuromoji() : null;
+    }
+    if (config.SENRYU_JS_HAIKU_VERIFY_ENABLED) {
+      log.info(base, "senryu worker mode skips js-haiku verify");
+    }
+    if (config.SENRYU_AI_REVIEW_ENABLED) {
+      log.info(base, "senryu worker mode skips ai review");
+    }
+    return {
+      kamigo: phrases[0]!,
+      nakashichi: phrases[1]!,
+      shimogo: phrases[2]!,
+      formatted: result.data.text ?? phrases.join(" "),
+      tokenSpan: { start: 0, end: 0 },
+      moraUsed: [5, 7, 5],
+    };
   }
 
-  try {
-    tokens = await expandUnknownKatakanaTokens(tokens, fetchKuromojiTokens);
-  } catch (err) {
-    log.error({ ...base, err }, "senryu expand unknown katakana failed");
-    return false;
-  }
+  const candidate = config.SENRYU_DETECTOR_MODE === "go-worker"
+    ? await detectWithWorker()
+    : await detectWithKuromoji();
 
-  const moraTolerance = config.SENRYU_MORA_TOLERANCE === 1 ? 1 : 0;
-  const candidate = pickSenryuCandidate(tokens, {
-    moraTolerance,
-    bestCandidate: config.SENRYU_BEST_CANDIDATE,
-  });
   if (!candidate) {
     return false;
   }
 
-  if (config.SENRYU_JS_HAIKU_VERIFY_ENABLED) {
-    if (!senryuCandidateMatchesJsHaiku575(tokens, candidate)) {
-      logSkip("js_haiku_mismatch");
-      return false;
-    }
-  }
-
-  if (config.SENRYU_AI_REVIEW_ENABLED) {
-    // API 失敗・JSON 不正時は ai.ok が false のため reject せず、検出結果どおり通過する
-    const contextExcerpt = buildSenryuReviewContextExcerpt(normalized, candidate);
-    const reviewBlock = buildSenryuAiReviewUserBlock(contextExcerpt, tokens, candidate);
-    const ai = await reviewSenryuCandidateWithAi(config, log, reviewBlock);
-    if (ai.ok && ai.verdict === "reject") {
-      log.info(
-        {
-          ...base,
-          candidateFormatted: candidate.formatted,
-          aiReviewMs: ai.ms,
-        },
-        "senryu ai review rejected",
-      );
-      return false;
-    }
-  }
+  const moraTolerance = config.SENRYU_DETECTOR_MODE === "go-worker"
+    ? 0
+    : config.SENRYU_MORA_TOLERANCE === 1 ? 1 : 0;
 
   log.info(
     {

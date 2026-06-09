@@ -32,5 +32,15 @@ jobs:
             npm ci
             npm run build
 
+            if command -v go >/dev/null 2>&1; then
+              cd workers/japanese-worker
+              go mod download
+              go build -o japanese-worker .
+              cd /opt/L4_DiscordBot
+            else
+              echo "Go is not installed on VPS. Install Go or prebuild workers/japanese-worker/japanese-worker before enabling JAPANESE_WORKER_ENABLED=1."
+              exit 1
+            fi
+
             sudo /bin/systemctl restart l4-discordbot
             sudo /bin/systemctl status l4-discordbot --no-pager

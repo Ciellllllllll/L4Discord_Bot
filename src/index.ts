@@ -76,6 +76,7 @@ import { handlePrefixMessage } from "./message/prefixHandlers.js";
 import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
 import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
+import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "./features/japaneseAnalysis/japaneseWorkerProcess.js";
 import { ensureGameDealSchema } from "./features/gameDeals/gameDealRepository.js";
 import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
 import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
@@ -244,6 +245,7 @@ async function main(): Promise<void> {
   let reminderTimer: NodeJS.Timeout | undefined;
   let gameDealTimer: NodeJS.Timeout | undefined;
   let lolWatcher: LolWatcherController | null = null;
+  let japaneseWorker: JapaneseWorkerController | null = null;
 
   client.once("clientReady", async () => {
     const u = client.user;
@@ -519,6 +521,7 @@ async function main(): Promise<void> {
   if (config.SENRYU_ENABLED) {
     await initKuromojiTokenizer(config.SENRYU_KUROMOJI_DICT_PATH, log);
   }
+  japaneseWorker = await startJapaneseWorkerIfEnabled(config, log);
 
   log.info(
     {
@@ -541,6 +544,9 @@ async function main(): Promise<void> {
   try {
     await client.login(config.DISCORD_TOKEN);
   } catch (err) {
+    await japaneseWorker?.stop().catch((stopErr) => {
+      log.warn({ err: stopErr }, "japanese worker shutdown after login failure failed");
+    });
     if (err instanceof Error && (err as { code?: unknown }).code === "TokenInvalid") {
       throw new Error(
         "DISCORD_TOKEN was rejected by Discord. Regenerate the bot token in Discord Developer Portal > Bot > Reset Token, paste only the raw token into .env, then restart the bot.",
@@ -557,6 +563,7 @@ async function main(): Promise<void> {
     if (reminderTimer) clearInterval(reminderTimer);
     if (gameDealTimer) clearInterval(gameDealTimer);
     lolWatcher?.stop();
+    await japaneseWorker?.stop();
     ctx.vcTemp.stopSweep();
     client.destroy();
     await db.destroy();
