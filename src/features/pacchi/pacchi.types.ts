@@ -69,6 +69,10 @@ export type PacchiExportData = {
   words: { word: string; count: number }[];
   phrases: { phrase: string; count: number }[];
   emojis: { key: string; kind: PacchiEmojiKind; display: string; count: number }[];
+  lexicon?: PacchiLexiconExportEntry[];
+  cooccurrences?: PacchiCooccurrenceExportEntry[];
+  userDictionaryEntries?: PacchiUserDictionaryExportEntry[];
+  sentencePatterns?: PacchiSentencePatternExportEntry[];
   settings: {
     enabled: boolean;
     defaultTalkEnabled: boolean;
@@ -77,4 +81,74 @@ export type PacchiExportData = {
     cooldownSeconds: number;
   } | null;
   ngWords: string[];
+};
+
+export type PacchiLexiconInput = {
+  surface: string;
+  base: string;
+  reading: string;
+  pos: string[];
+  isProperNoun: boolean;
+  isOov: boolean;
+  source: string;
+};
+
+export type PacchiLexiconExportEntry = PacchiLexiconInput & {
+  count: number;
+};
+
+export type PacchiCooccurrenceExportEntry = {
+  wordA: string;
+  wordB: string;
+  count: number;
+};
+
+export type PacchiUserDictionaryExportEntry = {
+  surface: string;
+  reading: string;
+  reason: string;
+  count: number;
+};
+
+export type PacchiLexiconRow = {
+  surface: string;
+  base: string;
+  reading: string;
+  pos_json: string;
+  is_proper_noun: number;
+  is_oov: number;
+  count: number;
+  last_seen_at: string;
+};
+
+export type PacchiSentencePatternInput = {
+  surfacePattern: string;
+  slots: string[];
+  ending: string;
+  sourceKind: string;
+  safeLevel: number;
+};
+
+export type PacchiSentencePatternExportEntry = PacchiSentencePatternInput & {
+  count: number;
+};
+
+export type PacchiSentencePatternRow = {
+  surface_pattern: string;
+  slots_json: string;
+  ending: string;
+  count: number;
+  safe_level: number;
+};
+
+export type PacchiSenryuSubmissionInput = {
+  guildId: string;
+  channelId: string;
+  messageId: string;
+  authorId: string;
+  kamigo: string;
+  nakashichi: string;
+  shimogo: string;
+  formatted: string;
+  sourceContent: string;
 };

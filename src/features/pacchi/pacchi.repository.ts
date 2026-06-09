@@ -2,13 +2,22 @@ import type DatabaseLib from "better-sqlite3";
 import { ulid } from "ulid";
 import type {
   PacchiChannelSettings,
+  PacchiCooccurrenceExportEntry,
   PacchiEmojiRow,
   PacchiExportData,
   PacchiLearnedEmoji,
+  PacchiLexiconExportEntry,
+  PacchiLexiconInput,
+  PacchiLexiconRow,
   PacchiMemoryStats,
   PacchiPhraseRow,
   PacchiRate,
+  PacchiSentencePatternExportEntry,
+  PacchiSenryuSubmissionInput,
+  PacchiSentencePatternInput,
+  PacchiSentencePatternRow,
   PacchiSettings,
+  PacchiUserDictionaryExportEntry,
   PacchiWordRow,
 } from "./pacchi.types.js";
 import { RATE_CONFIG } from "./pacchi.reply.js";
@@ -111,9 +120,81 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
       display = excluded.display,
       last_seen_at = excluded.last_seen_at
   `);
+  const upsertLexiconStmt = sqlite.prepare(`
+    INSERT INTO pacchi_lexicon (
+      id, guild_id, surface, base, reading, pos_json, is_proper_noun, is_oov, source,
+      count, last_seen_at, created_at
+    ) VALUES (
+      @id, @guild_id, @surface, @base, @reading, @pos_json, @is_proper_noun, @is_oov, @source,
+      1, @now, @now
+    )
+    ON CONFLICT(guild_id, base, pos_json) DO UPDATE SET
+      surface = excluded.surface,
+      reading = excluded.reading,
+      is_proper_noun = excluded.is_proper_noun,
+      is_oov = excluded.is_oov,
+      source = excluded.source,
+      count = count + 1,
+      last_seen_at = excluded.last_seen_at
+  `);
+  const upsertCooccurrenceStmt = sqlite.prepare(`
+    INSERT INTO pacchi_cooccurrences (id, guild_id, word_a, word_b, count, last_seen_at, created_at)
+    VALUES (@id, @guild_id, @word_a, @word_b, 1, @now, @now)
+    ON CONFLICT(guild_id, word_a, word_b) DO UPDATE SET
+      count = count + 1,
+      last_seen_at = excluded.last_seen_at
+  `);
+  const upsertUserDictionaryEntryStmt = sqlite.prepare(`
+    INSERT INTO pacchi_user_dictionary_entries (id, guild_id, surface, reading, reason, count, last_seen_at, created_at)
+    VALUES (@id, @guild_id, @surface, @reading, @reason, 1, @now, @now)
+    ON CONFLICT(guild_id, surface, reading) DO UPDATE SET
+      reason = excluded.reason,
+      count = count + 1,
+      last_seen_at = excluded.last_seen_at
+  `);
+  const upsertSentencePatternStmt = sqlite.prepare(`
+    INSERT INTO pacchi_sentence_patterns (
+      id, guild_id, surface_pattern, slots_json, ending, source_kind, count, safe_level, created_at
+    ) VALUES (
+      @id, @guild_id, @surface_pattern, @slots_json, @ending, @source_kind, 1, @safe_level, @now
+    )
+    ON CONFLICT(guild_id, surface_pattern) DO UPDATE SET
+      count = count + 1,
+      safe_level = min(safe_level, excluded.safe_level)
+  `);
+  const insertSenryuSubmissionStmt = sqlite.prepare(`
+    INSERT INTO pacchi_senryu_submissions (
+      id, guild_id, channel_id, message_id, author_id,
+      kamigo, nakashichi, shimogo, formatted, source_content, created_at
+    ) VALUES (
+      @id, @guild_id, @channel_id, @message_id, @author_id,
+      @kamigo, @nakashichi, @shimogo, @formatted, @source_content, @created_at
+    )
+    ON CONFLICT(guild_id, message_id) DO NOTHING
+  `);
   const topWordsStmt = sqlite.prepare(
     "SELECT * FROM pacchi_words WHERE guild_id = ? ORDER BY count DESC, last_seen_at DESC LIMIT ?",
   );
+  const topLexiconByPosStmt = sqlite.prepare(`
+    SELECT * FROM pacchi_lexicon
+    WHERE guild_id = ? AND pos_json LIKE ?
+    ORDER BY count DESC, last_seen_at DESC, random()
+    LIMIT ?
+  `);
+  const topCooccurrenceStmt = sqlite.prepare(`
+    SELECT word_b AS word FROM pacchi_cooccurrences
+    WHERE guild_id = ? AND word_a = ?
+    UNION ALL
+    SELECT word_a AS word FROM pacchi_cooccurrences
+    WHERE guild_id = ? AND word_b = ?
+    LIMIT ?
+  `);
+  const randomPatternStmt = sqlite.prepare(`
+    SELECT * FROM pacchi_sentence_patterns
+    WHERE guild_id = ? AND safe_level <= 2
+    ORDER BY count DESC, random()
+    LIMIT 20
+  `);
   const topPhrasesStmt = sqlite.prepare(
     "SELECT * FROM pacchi_phrases WHERE guild_id = ? ORDER BY count DESC, last_seen_at DESC LIMIT ?",
   );
@@ -259,8 +340,99 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
       tx();
     },
 
+    learnMorph(guildId: string, tokens: PacchiLexiconInput[]): void {
+      if (tokens.length === 0) return;
+      const now = nowIso();
+      const uniqueBases = [...new Set(tokens.map((token) => token.base).filter(Boolean))].sort();
+      const tx = sqlite.transaction(() => {
+        for (const token of tokens) {
+          upsertLexiconStmt.run({
+            id: ulid(),
+            guild_id: guildId,
+            surface: token.surface,
+            base: token.base,
+            reading: token.reading,
+            pos_json: JSON.stringify(token.pos),
+            is_proper_noun: boolInt(token.isProperNoun),
+            is_oov: boolInt(token.isOov),
+            source: token.source,
+            now,
+          });
+          if (token.isProperNoun || token.isOov) {
+            upsertUserDictionaryEntryStmt.run({
+              id: ulid(),
+              guild_id: guildId,
+              surface: token.surface,
+              reading: token.reading,
+              reason: token.isProperNoun ? "proper_noun" : "oov",
+              now,
+            });
+          }
+        }
+        for (let i = 0; i < uniqueBases.length; i++) {
+          for (let j = i + 1; j < uniqueBases.length; j++) {
+            upsertCooccurrenceStmt.run({
+              id: ulid(),
+              guild_id: guildId,
+              word_a: uniqueBases[i],
+              word_b: uniqueBases[j],
+              now,
+            });
+          }
+        }
+        touchLearnedStmt.run(now, now, guildId);
+      });
+      this.getSettings(guildId);
+      tx();
+    },
+
+    learnSentencePattern(guildId: string, pattern: PacchiSentencePatternInput): void {
+      upsertSentencePatternStmt.run({
+        id: ulid(),
+        guild_id: guildId,
+        surface_pattern: pattern.surfacePattern,
+        slots_json: JSON.stringify(pattern.slots),
+        ending: pattern.ending,
+        source_kind: pattern.sourceKind,
+        safe_level: pattern.safeLevel,
+        now: nowIso(),
+      });
+    },
+
+    saveSenryuSubmission(input: PacchiSenryuSubmissionInput): void {
+      insertSenryuSubmissionStmt.run({
+        id: ulid(),
+        guild_id: input.guildId,
+        channel_id: input.channelId,
+        message_id: input.messageId,
+        author_id: input.authorId,
+        kamigo: input.kamigo,
+        nakashichi: input.nakashichi,
+        shimogo: input.shimogo,
+        formatted: input.formatted,
+        source_content: input.sourceContent,
+        created_at: nowIso(),
+      });
+    },
+
     topWords(guildId: string, limit: number): PacchiWordRow[] {
       return topWordsStmt.all(guildId, limit) as PacchiWordRow[];
+    },
+
+    topLexiconByPos(guildId: string, pos: string, limit: number): PacchiLexiconRow[] {
+      return topLexiconByPosStmt.all(guildId, `%${pos}%`, limit) as PacchiLexiconRow[];
+    },
+
+    relatedWords(guildId: string, word: string, limit: number): string[] {
+      const rows = topCooccurrenceStmt.all(guildId, word, guildId, word, limit) as { word: string }[];
+      return rows.map((row) => row.word);
+    },
+
+    randomSentencePattern(guildId: string): PacchiSentencePatternRow | null {
+      const rows = randomPatternStmt.all(guildId) as PacchiSentencePatternRow[];
+      if (rows.length === 0) return null;
+      const weighted = rows.flatMap((row) => Array.from({ length: Math.min(row.count, 3) }, () => row));
+      return weighted[Math.floor(Math.random() * weighted.length)] ?? rows[0] ?? null;
     },
 
     topPhrases(guildId: string, limit: number): PacchiPhraseRow[] {
@@ -360,6 +532,41 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
     exportData(guildId: string): PacchiExportData {
       const settings = this.getSettings(guildId);
       const ngRows = sqlite.prepare("SELECT word FROM pacchi_ng_words ORDER BY word ASC").all() as { word: string }[];
+      const lexiconRows = sqlite.prepare(`
+        SELECT surface, base, reading, pos_json, is_proper_noun, is_oov, source, count
+        FROM pacchi_lexicon
+        WHERE guild_id = ?
+        ORDER BY count DESC, last_seen_at DESC
+        LIMIT 1000
+      `).all(guildId) as (PacchiLexiconRow & { source: string })[];
+      const cooccurrenceRows = sqlite.prepare(`
+        SELECT word_a, word_b, count
+        FROM pacchi_cooccurrences
+        WHERE guild_id = ?
+        ORDER BY count DESC, last_seen_at DESC
+        LIMIT 1000
+      `).all(guildId) as { word_a: string; word_b: string; count: number }[];
+      const userDictionaryRows = sqlite.prepare(`
+        SELECT surface, reading, reason, count
+        FROM pacchi_user_dictionary_entries
+        WHERE guild_id = ?
+        ORDER BY count DESC, last_seen_at DESC
+        LIMIT 1000
+      `).all(guildId) as PacchiUserDictionaryExportEntry[];
+      const patternRows = sqlite.prepare(`
+        SELECT surface_pattern, slots_json, ending, source_kind, count, safe_level
+        FROM pacchi_sentence_patterns
+        WHERE guild_id = ?
+        ORDER BY count DESC, created_at DESC
+        LIMIT 1000
+      `).all(guildId) as {
+        surface_pattern: string;
+        slots_json: string;
+        ending: string;
+        source_kind: string;
+        count: number;
+        safe_level: number;
+      }[];
       return {
         version: 1,
         exportedAt: nowIso(),
@@ -373,6 +580,26 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
           display: r.display,
           count: r.count,
         })),
+        lexicon: lexiconRows.map((r) => ({
+          surface: r.surface,
+          base: r.base,
+          reading: r.reading,
+          pos: JSON.parse(r.pos_json) as string[],
+          isProperNoun: r.is_proper_noun === 1,
+          isOov: r.is_oov === 1,
+          source: r.source,
+          count: r.count,
+        })),
+        cooccurrences: cooccurrenceRows.map((r) => ({ wordA: r.word_a, wordB: r.word_b, count: r.count })),
+        userDictionaryEntries: userDictionaryRows,
+        sentencePatterns: patternRows.map((r) => ({
+          surfacePattern: r.surface_pattern,
+          slots: JSON.parse(r.slots_json) as string[],
+          ending: r.ending,
+          sourceKind: r.source_kind,
+          safeLevel: r.safe_level,
+          count: r.count,
+        })),
         settings: {
           enabled: settings.enabled,
           defaultTalkEnabled: settings.defaultTalkEnabled,
@@ -384,9 +611,43 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
       };
     },
 
-    importData(guildId: string, data: PacchiExportData): { words: number; phrases: number; emojis: number } {
+    importData(guildId: string, data: PacchiExportData): {
+      words: number;
+      phrases: number;
+      emojis: number;
+      lexicon: number;
+      cooccurrences: number;
+      userDictionaryEntries: number;
+      sentencePatterns: number;
+    } {
       const now = nowIso();
       const tx = sqlite.transaction(() => {
+        if (data.settings) {
+          sqlite.prepare(`
+            INSERT INTO pacchi_settings (
+              guild_id, enabled, default_talk_enabled, default_learn_enabled,
+              speak_rate, cooldown_seconds, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+              enabled = excluded.enabled,
+              default_talk_enabled = excluded.default_talk_enabled,
+              default_learn_enabled = excluded.default_learn_enabled,
+              speak_rate = excluded.speak_rate,
+              cooldown_seconds = excluded.cooldown_seconds,
+              updated_at = excluded.updated_at
+          `).run(
+            guildId,
+            boolInt(data.settings.enabled),
+            boolInt(data.settings.defaultTalkEnabled),
+            boolInt(data.settings.defaultLearnEnabled),
+            data.settings.speakRate,
+            data.settings.cooldownSeconds,
+            now,
+            now,
+          );
+        } else {
+          this.getSettings(guildId);
+        }
         for (const word of data.words) {
           sqlite.prepare(`
             INSERT INTO pacchi_words (id, guild_id, word, count, last_seen_at, created_at)
@@ -415,9 +676,94 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
               last_seen_at = excluded.last_seen_at
           `).run(ulid(), guildId, emoji.key, emoji.kind, emoji.display, Math.max(1, emoji.count), now, now);
         }
+        for (const token of (data.lexicon ?? []) as PacchiLexiconExportEntry[]) {
+          sqlite.prepare(`
+            INSERT INTO pacchi_lexicon (
+              id, guild_id, surface, base, reading, pos_json, is_proper_noun, is_oov, source,
+              count, last_seen_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, base, pos_json) DO UPDATE SET
+              surface = excluded.surface,
+              reading = excluded.reading,
+              is_proper_noun = excluded.is_proper_noun,
+              is_oov = excluded.is_oov,
+              source = excluded.source,
+              count = count + excluded.count,
+              last_seen_at = excluded.last_seen_at
+          `).run(
+            ulid(),
+            guildId,
+            token.surface,
+            token.base,
+            token.reading,
+            JSON.stringify(token.pos),
+            boolInt(token.isProperNoun),
+            boolInt(token.isOov),
+            token.source,
+            Math.max(1, token.count),
+            now,
+            now,
+          );
+        }
+        for (const co of (data.cooccurrences ?? []) as PacchiCooccurrenceExportEntry[]) {
+          const a = co.wordA <= co.wordB ? co.wordA : co.wordB;
+          const b = co.wordA <= co.wordB ? co.wordB : co.wordA;
+          sqlite.prepare(`
+            INSERT INTO pacchi_cooccurrences (id, guild_id, word_a, word_b, count, last_seen_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, word_a, word_b) DO UPDATE SET
+              count = count + excluded.count,
+              last_seen_at = excluded.last_seen_at
+          `).run(ulid(), guildId, a, b, Math.max(1, co.count), now, now);
+        }
+        for (const entry of (data.userDictionaryEntries ?? []) as PacchiUserDictionaryExportEntry[]) {
+          sqlite.prepare(`
+            INSERT INTO pacchi_user_dictionary_entries (id, guild_id, surface, reading, reason, count, last_seen_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, surface, reading) DO UPDATE SET
+              reason = excluded.reason,
+              count = count + excluded.count,
+              last_seen_at = excluded.last_seen_at
+          `).run(ulid(), guildId, entry.surface, entry.reading, entry.reason, Math.max(1, entry.count), now, now);
+        }
+        for (const pattern of (data.sentencePatterns ?? []) as PacchiSentencePatternExportEntry[]) {
+          sqlite.prepare(`
+            INSERT INTO pacchi_sentence_patterns (
+              id, guild_id, surface_pattern, slots_json, ending, source_kind, count, safe_level, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, surface_pattern) DO UPDATE SET
+              count = count + excluded.count,
+              safe_level = min(safe_level, excluded.safe_level)
+          `).run(
+            ulid(),
+            guildId,
+            pattern.surfacePattern,
+            JSON.stringify(pattern.slots),
+            pattern.ending,
+            pattern.sourceKind,
+            Math.max(1, pattern.count),
+            pattern.safeLevel,
+            now,
+          );
+        }
+        for (const word of data.ngWords) {
+          sqlite.prepare(`
+            INSERT INTO pacchi_ng_words (id, word, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(word) DO NOTHING
+          `).run(ulid(), word, now);
+        }
       });
       tx();
-      return { words: data.words.length, phrases: data.phrases.length, emojis: data.emojis.length };
+      return {
+        words: data.words.length,
+        phrases: data.phrases.length,
+        emojis: data.emojis.length,
+        lexicon: data.lexicon?.length ?? 0,
+        cooccurrences: data.cooccurrences?.length ?? 0,
+        userDictionaryEntries: data.userDictionaryEntries?.length ?? 0,
+        sentencePatterns: data.sentencePatterns?.length ?? 0,
+      };
     },
   };
 }
