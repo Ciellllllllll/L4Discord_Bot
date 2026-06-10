@@ -73,17 +73,23 @@ export async function buildVerifiedPacchiPoem(
   const candidates = buildPacchiPoemCandidates(pattern, words);
   if (candidates.length === 0) return { ok: false, reason: "invalid_pattern" };
 
+  const matchedPoems = new Set<string>();
+  let matchedCount = 0;
   for (const candidate of candidates) {
     const result = await analyzeSenryu(candidate, options);
     if (!result.ok) {
       return { ok: false, reason: "worker_failed", workerReason: result.reason, error: result.error };
     }
     if (result.data.matched && result.data.phrases.length === 3) {
-      return { ok: true, poem: result.data.phrases.join("\n") };
+      matchedCount++;
+      matchedPoems.add(result.data.phrases.join("\n"));
+      if (matchedPoems.size >= 8 || matchedCount >= 16) break;
     }
   }
 
-  return { ok: false, reason: "no_match" };
+  const poems = [...matchedPoems];
+  if (poems.length === 0) return { ok: false, reason: "no_match" };
+  return { ok: true, poem: poems[Math.floor(Math.random() * poems.length)]! };
 }
 
 export function pacchiVerifiedPoemFailureMessage(result: Exclude<PacchiVerifiedPoemResult, { ok: true }>): string {
