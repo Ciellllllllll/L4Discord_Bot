@@ -15,22 +15,53 @@ async function run(): Promise<void> {
   assert.deepEqual(buildPacchiPoemCandidates("777", ["コード"]), []);
 
   const calls: string[] = [];
-  const matched = await buildVerifiedPacchiPoem("575", ["コード"], {
+  const originalRandom = Math.random;
+  Math.random = () => 0.99;
+  try {
+    const matched = await buildVerifiedPacchiPoem("575", ["コード"], {
+      baseUrl: "http://127.0.0.1:8787",
+      timeoutMs: 100,
+      fetchImpl: async (_input, init) => {
+        calls.push(String(init?.body));
+        return responseJson({
+          matched: calls.length === 1 || calls.length === 3,
+          text: calls.length === 1
+            ? "春風に コードが揺れて バグが咲く"
+            : calls.length === 3
+              ? "月あかり コードを探す 風ひかる"
+              : null,
+          phrases: calls.length === 1
+            ? ["春風に", "コードが揺れて", "バグが咲く"]
+            : calls.length === 3
+              ? ["月あかり", "コードを探す", "風ひかる"]
+              : [],
+          error: null,
+        });
+      },
+    });
+    assert.equal(matched.ok, true);
+    assert.equal(matched.ok ? matched.poem : "", "月あかり\nコードを探す\n風ひかる");
+    assert.equal(calls.length, candidates.length);
+  } finally {
+    Math.random = originalRandom;
+  }
+
+  let cappedCalls = 0;
+  const capped = await buildVerifiedPacchiPoem("575", ["コード"], {
     baseUrl: "http://127.0.0.1:8787",
     timeoutMs: 100,
-    fetchImpl: async (_input, init) => {
-      calls.push(String(init?.body));
+    fetchImpl: async () => {
+      cappedCalls++;
       return responseJson({
-        matched: calls.length === 2,
-        text: calls.length === 2 ? "春風に コードが揺れて バグが咲く" : null,
-        phrases: calls.length === 2 ? ["春風に", "コードが揺れて", "バグが咲く"] : [],
+        matched: true,
+        text: `春風に コードが揺れて バグ${cappedCalls}`,
+        phrases: ["春風に", "コードが揺れて", `バグ${cappedCalls}`],
         error: null,
       });
     },
   });
-  assert.equal(matched.ok, true);
-  assert.equal(matched.ok ? matched.poem : "", "春風に\nコードが揺れて\nバグが咲く");
-  assert.equal(calls.length, 2);
+  assert.equal(capped.ok, true);
+  assert.equal(cappedCalls, 8);
 
   const invalid = await buildVerifiedPacchiPoem("777", ["コード"], {
     baseUrl: "http://127.0.0.1:8787",

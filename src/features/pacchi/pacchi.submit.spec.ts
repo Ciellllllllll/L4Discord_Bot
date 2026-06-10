@@ -148,7 +148,7 @@ async function run(): Promise<void> {
   });
   assert.equal(generated.handled, true);
   assert.deepEqual(generated.replies, ["春風に\nコードが揺れて\nバグが咲く"]);
-  assert.equal(workerRequests.length, 1);
+  assert.equal(workerRequests.length, 16);
   assert.match(workerRequests[0]!, /"rule":\[5,7,5\]/);
 }
 
