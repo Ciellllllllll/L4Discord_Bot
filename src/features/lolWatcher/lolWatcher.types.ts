@@ -51,10 +51,6 @@ export type LolWatcherFetchResult =
   | { ok: true; state: LolWatcherRiotState }
   | { ok: false; error: string; httpStatus?: number };
 
-export type LolWatcherDeepLolResult =
-  | { ok: true; aiScore: number | null; detailUrl: string; templateName: string }
-  | { ok: false; error: string; detailUrl: string | null; templateName: string; httpStatus?: number };
-
 export type LolWatcherActiveStatus = "active" | "missing" | "stale" | "completed" | "error";
 
 export type LolWatcherActiveGame = {
@@ -84,8 +80,6 @@ export type LolWatcherNotification = {
   notificationType: LolWatcherNotificationType;
   status: LolWatcherNotificationStatus;
   errorMessage: string | null;
-  deepLolStatus: "pending" | "enriched" | "not_found" | "failed";
-  deepLolRetryCount: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -102,7 +96,6 @@ export type LolWatcherScanResult = {
   startedGames: number;
   completedGames: number;
   staleGames: number;
-  deepLolEnrichedGames: number;
   errors: string[];
 };
 
