@@ -26,11 +26,11 @@ function makeCtx(sqlite: Database.Database): BotContext {
   } as unknown as BotContext;
 }
 
-function makeMessage(content: string, replies: string[]): Message {
+function makeMessage(content: string, replies: string[], channelId = "channel"): Message {
   return {
     id: "message",
     guildId: "guild",
-    channelId: "channel",
+    channelId,
     author: { id: "author", bot: false },
     content,
     attachments: { size: 0 },
@@ -85,6 +85,25 @@ async function runCase(fetchImpl: typeof fetch): Promise<{
   }
 }
 
+async function runGenerationCase(fetchImpl: typeof fetch): Promise<{
+  handled: boolean;
+  replies: string[];
+}> {
+  const db = new Database(":memory:");
+  const replies: string[] = [];
+  try {
+    const handled = await withFetch(fetchImpl, async () => {
+      return handlePacchiMessage(
+        makeCtx(db),
+        makeMessage("ぱっちぃ 575", replies, "generation-channel"),
+      );
+    });
+    return { handled, replies };
+  } finally {
+    db.close();
+  }
+}
+
 async function run(): Promise<void> {
   const matched = await runCase(async () => responseJson({
     matched: true,
@@ -116,6 +135,21 @@ async function run(): Promise<void> {
   assert.equal(workerError.replies.length, 1);
   assert.match(workerError.replies[0]!, /数えられない/);
   assert.deepEqual(workerError.submissions, []);
+
+  const workerRequests: string[] = [];
+  const generated = await runGenerationCase(async (_input, init) => {
+    workerRequests.push(String(init?.body));
+    return responseJson({
+      matched: true,
+      text: "春風に コードが揺れて バグが咲く",
+      phrases: ["春風に", "コードが揺れて", "バグが咲く"],
+      error: null,
+    });
+  });
+  assert.equal(generated.handled, true);
+  assert.deepEqual(generated.replies, ["春風に\nコードが揺れて\nバグが咲く"]);
+  assert.equal(workerRequests.length, 1);
+  assert.match(workerRequests[0]!, /"rule":\[5,7,5\]/);
 }
 
 void run()

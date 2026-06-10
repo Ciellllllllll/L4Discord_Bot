@@ -2,7 +2,7 @@ import type { Client, GuildTextBasedChannel } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { buildLolWatcherCompletedEmbed, buildLolWatcherStartEmbed } from "./lolWatcher.embeds.js";
-import { buildDeepLolDetailUrl, LolWatcherDeepLolScraper, LolWatcherRiotClient } from "./lolWatcher.client.js";
+import { buildDeepLolDetailUrl, LolWatcherRiotClient } from "./lolWatcher.client.js";
 import { ensureLolWatcherSchema, LolWatcherRepository } from "./lolWatcher.repository.js";
 import type {
   LolWatcherActiveGame,
@@ -13,7 +13,6 @@ import type {
 } from "./lolWatcher.types.js";
 
 const STARTUP_SCAN_DELAY_MS = 8_000;
-const DEEPLOL_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 type ThreadResult =
   | { ok: true; channel: GuildTextBasedChannel }
@@ -34,7 +33,6 @@ function emptyScanResult(): LolWatcherScanResult {
     startedGames: 0,
     completedGames: 0,
     staleGames: 0,
-    deepLolEnrichedGames: 0,
     errors: [],
   };
 }
@@ -205,87 +203,6 @@ function withDeepLolDetailUrl(
   return input.game;
 }
 
-async function updateCompletedEmbedWithDeepLol(
-  ctx: BotContext,
-  repo: LolWatcherRepository,
-  thread: GuildTextBasedChannel,
-  input: {
-    accountKey: string;
-    accountKeyNorm: string;
-    account: LolWatcherApiAccount;
-    game: LolWatcherCompletedGame;
-    retryCount: number;
-  },
-): Promise<boolean> {
-  const notification = repo.getNotification(input.accountKeyNorm, input.game.gameId);
-  if (!notification?.messageId || notification.deepLolStatus === "enriched") return false;
-  const scraped = await new LolWatcherDeepLolScraper(ctx.config).scrapeCompleted(input.accountKey, input.account, input.game);
-  if (!scraped.ok) {
-    repo.updateDeepLolStatus({
-      accountKeyNorm: input.accountKeyNorm,
-      gameId: input.game.gameId,
-      status: input.retryCount >= 1 ? "failed" : "pending",
-      retryCount: input.retryCount,
-      errorMessage: scraped.error,
-    });
-    ctx.log.warn(
-      {
-        accountKeyNorm: input.accountKeyNorm,
-        gameId: input.game.gameId,
-        httpStatus: scraped.httpStatus,
-        error: scraped.error,
-        templateName: scraped.templateName,
-        generatedUrl: scraped.detailUrl,
-      },
-      "lol watcher deeplol scrape failed",
-    );
-    return false;
-  }
-  if (scraped.aiScore === null) {
-    repo.updateDeepLolStatus({
-      accountKeyNorm: input.accountKeyNorm,
-      gameId: input.game.gameId,
-      status: input.retryCount >= 1 ? "not_found" : "pending",
-      retryCount: input.retryCount,
-      errorMessage: "AI score not found",
-    });
-    return false;
-  }
-  const message = await thread.messages.fetch(notification.messageId).catch((err) => {
-    ctx.log.warn({ err, accountKeyNorm: input.accountKeyNorm, gameId: input.game.gameId }, "lol watcher deeplol message fetch failed");
-    return null;
-  });
-  if (!message) {
-    repo.updateDeepLolStatus({
-      accountKeyNorm: input.accountKeyNorm,
-      gameId: input.game.gameId,
-      status: "failed",
-      retryCount: input.retryCount,
-      errorMessage: "message fetch failed",
-    });
-    return false;
-  }
-  const enrichedGame = { ...input.game, aiScore: scraped.aiScore, detailUrl: scraped.detailUrl ?? input.game.detailUrl };
-  const edited = await message
-    .edit({ embeds: [buildLolWatcherCompletedEmbed(input.account, enrichedGame)] })
-    .then(() => true)
-    .catch((err) => {
-      ctx.log.warn({ err, accountKeyNorm: input.accountKeyNorm, gameId: input.game.gameId }, "lol watcher deeplol edit failed");
-      return false;
-    });
-  repo.updateDeepLolStatus({
-    accountKeyNorm: input.accountKeyNorm,
-    gameId: input.game.gameId,
-    status: edited ? "enriched" : "failed",
-    retryCount: input.retryCount,
-    errorMessage: edited ? null : "DeepLOL enriched edit failed",
-  });
-  if (edited) {
-    ctx.log.info({ accountKeyNorm: input.accountKeyNorm, gameId: input.game.gameId }, "lol watcher deeplol enriched");
-  }
-  return edited;
-}
-
 async function editCompletedEmbed(
   ctx: BotContext,
   repo: LolWatcherRepository,
@@ -351,12 +268,6 @@ async function handleCompletedGame(
   accountKeyNorm: string,
   account: LolWatcherApiAccount,
   game: LolWatcherCompletedGame,
-  scheduleDeepLol: (input: {
-    accountKey: string;
-    accountKeyNorm: string;
-    account: LolWatcherApiAccount;
-    game: LolWatcherCompletedGame;
-  }) => void,
 ): Promise<boolean> {
   if (repo.hasNotification(accountKeyNorm, game.gameId)) return false;
   const active = findActiveGameForCompleted(repo, accountKeyNorm, game.gameId);
@@ -384,7 +295,6 @@ async function handleCompletedGame(
       notificationType: "completed_without_start",
     });
   }
-  if (completed) scheduleDeepLol({ accountKey, accountKeyNorm, account, game });
   return completed;
 }
 
@@ -408,12 +318,6 @@ function updateMissingAndStale(repo: LolWatcherRepository, accountKeyNorm: strin
 
 export async function scanLolWatcher(
   ctx: BotContext,
-  scheduleDeepLol: (input: {
-    accountKey: string;
-    accountKeyNorm: string;
-    account: LolWatcherApiAccount;
-    game: LolWatcherCompletedGame;
-  }) => void = () => undefined,
 ): Promise<LolWatcherScanResult> {
   const result = emptyScanResult();
   const repo = new LolWatcherRepository(ctx.sqlite);
@@ -466,7 +370,6 @@ export async function scanLolWatcher(
           watchAccount.accountKeyNorm,
           fetched.state.account,
           completed,
-          scheduleDeepLol,
         )
       ) {
         result.completedGames += 1;
@@ -502,54 +405,14 @@ export async function scanLolWatcher(
 export function startLolWatcher(ctx: BotContext): LolWatcherController | null {
   if (!validateAndPrepareLolWatcher(ctx)) return null;
   let timer: NodeJS.Timeout | undefined;
-  const deepLolTimers = new Set<NodeJS.Timeout>();
   let stopped = false;
   let running = false;
-
-  const scheduleDeepLol = (input: {
-    accountKey: string;
-    accountKeyNorm: string;
-    account: LolWatcherApiAccount;
-    game: LolWatcherCompletedGame;
-  }) => {
-    const delayMs =
-      ctx.config.DEEPLOL_SCRAPE_DELAY_MIN_MS
-      + Math.floor(Math.random() * Math.max(1, ctx.config.DEEPLOL_SCRAPE_DELAY_MAX_MS - ctx.config.DEEPLOL_SCRAPE_DELAY_MIN_MS));
-    const scheduleAttempt = (attemptDelayMs: number, retryCount: number) => {
-      if (stopped) return;
-      const handle = setTimeout(() => {
-        deepLolTimers.delete(handle);
-        void (async () => {
-          const repo = new LolWatcherRepository(ctx.sqlite);
-          const notificationChannelId = repo.getNotificationChannelId();
-          if (!notificationChannelId) {
-            repo.setStatus("deeplol_channel_error", "notification channel is not set");
-            return;
-          }
-          const channelResult = await fetchLolWatcherChannel(ctx.client, notificationChannelId);
-          if (!channelResult.ok) {
-            repo.setStatus("deeplol_channel_error", channelResult.error);
-            return;
-          }
-          const enriched = await updateCompletedEmbedWithDeepLol(ctx, repo, channelResult.channel, {
-            ...input,
-            retryCount,
-          });
-          if (!enriched && retryCount < 1) {
-            scheduleAttempt(DEEPLOL_RETRY_DELAY_MS, retryCount + 1);
-          }
-        })();
-      }, attemptDelayMs);
-      deepLolTimers.add(handle);
-    };
-    scheduleAttempt(delayMs, 0);
-  };
 
   const runOnce = async (): Promise<LolWatcherScanResult | null> => {
     if (running) return null;
     running = true;
     try {
-      return await scanLolWatcher(ctx, scheduleDeepLol);
+      return await scanLolWatcher(ctx);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.log.warn({ err }, "lol watcher scan failed");
@@ -583,8 +446,6 @@ export function startLolWatcher(ctx: BotContext): LolWatcherController | null {
     stop() {
       stopped = true;
       if (timer) clearTimeout(timer);
-      for (const handle of deepLolTimers) clearTimeout(handle);
-      deepLolTimers.clear();
       currentController = null;
       ctx.log.info("lol watcher stopped");
     },

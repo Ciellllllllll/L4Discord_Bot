@@ -6,7 +6,6 @@ import type {
   LolWatcherActiveStatus,
   LolWatcherNotificationStatus,
   LolWatcherNotificationType,
-  LolWatcherNotification,
   LolWatcherStatus,
 } from "./lolWatcher.types.js";
 
@@ -36,19 +35,6 @@ type ActiveGameRow = {
 type StatusRow = {
   key: string;
   value: string | null;
-  updated_at: string;
-};
-
-type NotificationRow = {
-  account_key_norm: string;
-  game_id: string;
-  message_id: string | null;
-  notification_type: LolWatcherNotificationType;
-  status: LolWatcherNotificationStatus;
-  error_message: string | null;
-  deeplol_status: "pending" | "enriched" | "not_found" | "failed";
-  deeplol_retry_count: number;
-  created_at: string;
   updated_at: string;
 };
 
@@ -100,8 +86,6 @@ export function ensureLolWatcherSchema(db: DatabaseLib.Database): void {
     CREATE INDEX IF NOT EXISTS idx_lol_watcher_active_games_status
       ON lol_watcher_active_games (status, account_key_norm);
   `);
-  ensureColumn(db, "lol_watcher_notifications", "deeplol_status", "TEXT NOT NULL DEFAULT 'pending'");
-  ensureColumn(db, "lol_watcher_notifications", "deeplol_retry_count", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "lol_watcher_accounts", "user_id", "TEXT");
   ensureColumn(db, "lol_watcher_accounts", "channel_id", "TEXT");
   db.exec(`
@@ -140,21 +124,6 @@ function toActiveGame(row: ActiveGameRow): LolWatcherActiveGame {
     lastSeenAt: row.last_seen_at,
     missingSince: row.missing_since,
     errorMessage: row.error_message,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function toNotification(row: NotificationRow): LolWatcherNotification {
-  return {
-    accountKeyNorm: row.account_key_norm,
-    gameId: row.game_id,
-    messageId: row.message_id,
-    notificationType: row.notification_type,
-    status: row.status,
-    errorMessage: row.error_message,
-    deepLolStatus: row.deeplol_status,
-    deepLolRetryCount: row.deeplol_retry_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -428,20 +397,6 @@ export class LolWatcherRepository {
     return !!row;
   }
 
-  getNotification(accountKeyNorm: string, gameId: string): LolWatcherNotification | null {
-    const row = this.db
-      .prepare<[string, string], NotificationRow>(
-        `
-        SELECT account_key_norm, game_id, message_id, notification_type, status,
-               error_message, deeplol_status, deeplol_retry_count, created_at, updated_at
-        FROM lol_watcher_notifications
-        WHERE account_key_norm = ? AND game_id = ?
-      `,
-      )
-      .get(accountKeyNorm, gameId);
-    return row ? toNotification(row) : null;
-  }
-
   saveNotification(input: {
     accountKeyNorm: string;
     gameId: string;
@@ -471,34 +426,5 @@ export class LolWatcherRepository {
       `,
       )
       .run({ ...input, errorMessage: input.errorMessage ?? null, now });
-  }
-
-  updateDeepLolStatus(input: {
-    accountKeyNorm: string;
-    gameId: string;
-    status: "pending" | "enriched" | "not_found" | "failed";
-    retryCount?: number;
-    errorMessage?: string | null;
-  }): void {
-    const now = sqliteTimestamp();
-    this.db
-      .prepare(
-        `
-        UPDATE lol_watcher_notifications
-        SET deeplol_status = @status,
-            deeplol_retry_count = COALESCE(@retryCount, deeplol_retry_count),
-            error_message = COALESCE(@errorMessage, error_message),
-            updated_at = @now
-        WHERE account_key_norm = @accountKeyNorm AND game_id = @gameId
-      `,
-      )
-      .run({
-        accountKeyNorm: input.accountKeyNorm,
-        gameId: input.gameId,
-        status: input.status,
-        retryCount: input.retryCount ?? null,
-        errorMessage: input.errorMessage ?? null,
-        now,
-      });
   }
 }

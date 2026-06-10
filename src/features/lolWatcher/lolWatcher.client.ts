@@ -2,7 +2,6 @@ import type { AppConfig } from "../../core/config.js";
 import type {
   LolWatcherCompletedGame,
   LolWatcherApiAccount,
-  LolWatcherDeepLolResult,
   LolWatcherFetchResult,
   LolWatcherLiveGame,
 } from "./lolWatcher.types.js";
@@ -281,17 +280,16 @@ function riotHeaders(config: AppConfig): Record<string, string> {
   };
 }
 
-async function fetchJson<T>(url: string, config: AppConfig, hostKind: "riot" | "deeplol"): Promise<
+async function fetchJson<T>(url: string, config: AppConfig): Promise<
   | { ok: true; json: T }
   | { ok: false; error: string; httpStatus?: number; text?: string }
 > {
   const controller = new AbortController();
-  const timeoutMs = hostKind === "riot" ? config.RIOT_REQUEST_TIMEOUT_MS : config.DEEPLOL_REQUEST_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), config.RIOT_REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: hostKind === "riot" ? riotHeaders(config) : { "User-Agent": "L4_DiscordBot/1.0 LolWatcher" },
+      headers: riotHeaders(config),
     });
     const text = await response.text();
     if (!response.ok) return { ok: false, error: `HTTP ${response.status}`, httpStatus: response.status, text };
@@ -300,33 +298,6 @@ async function fetchJson<T>(url: string, config: AppConfig, hostKind: "riot" | "
     } catch {
       return { ok: false, error: "JSON parse failed" };
     }
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error && err.name === "AbortError" ? "request timeout" : err instanceof Error ? err.message : String(err),
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function fetchText(url: string, config: AppConfig): Promise<
-  | { ok: true; text: string }
-  | { ok: false; error: string; httpStatus?: number }
-> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.DEEPLOL_REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.7,en;q=0.6",
-        "User-Agent": "L4_DiscordBot/1.0 LolWatcher",
-      },
-    });
-    if (!response.ok) return { ok: false, error: `HTTP ${response.status}`, httpStatus: response.status };
-    return { ok: true, text: await response.text() };
   } catch (err) {
     return {
       ok: false,
@@ -433,21 +404,6 @@ export function buildDeepLolDetailUrl(config: AppConfig, input: {
   }
 }
 
-function extractAiScore(html: string): number | null {
-  const patterns = [
-    /AI\s*(?:score|スコア)[^0-9]{0,40}([0-9]{1,3})(?:\.[0-9]+)?/i,
-    /(?:score|スコア)["']?\s*[:=]\s*["']?([0-9]{1,3})(?:\.[0-9]+)?/i,
-    /"aiScore"\s*:\s*([0-9]{1,3})(?:\.[0-9]+)?/i,
-  ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (!match?.[1]) continue;
-    const score = Number(match[1]);
-    if (Number.isFinite(score)) return score;
-  }
-  return null;
-}
-
 export class LolWatcherRiotClient {
   constructor(private readonly config: AppConfig) {}
 
@@ -455,7 +411,7 @@ export class LolWatcherRiotClient {
     const riotId = parseAccountKey(accountKey);
     if (!riotId) return { ok: false, error: "accountKey must be Riot ID format: gameName#tagLine" };
     const accountUrl = `https://${regionalHost(this.config)}/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(riotId.gameName)}/${encodeURIComponent(riotId.tagLine)}`;
-    const accountResult = await fetchJson<RiotAccountDto>(accountUrl, this.config, "riot");
+    const accountResult = await fetchJson<RiotAccountDto>(accountUrl, this.config);
     if (!accountResult.ok) return accountResult;
     const puuid = stringOrNull(accountResult.json.puuid);
     const gameName = stringOrNull(accountResult.json.gameName) ?? riotId.gameName;
@@ -471,14 +427,12 @@ export class LolWatcherRiotClient {
     const liveResult = await fetchJson<RiotCurrentGameDto>(
       `https://${platformHost(this.config)}/lol/spectator/v5/active-games/by-summoner/${encodeURIComponent(puuid)}`,
       this.config,
-      "riot",
     );
     const liveGame = liveResult.ok ? liveFromSpectator(this.config, account, liveResult.json) : null;
 
     const idsResult = await fetchJson<RiotMatchIds>(
       `https://${regionalHost(this.config)}/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids?start=0&count=5`,
       this.config,
-      "riot",
     );
     if (!idsResult.ok) {
       return {
@@ -491,33 +445,11 @@ export class LolWatcherRiotClient {
       const matchResult = await fetchJson<RiotMatchDto>(
         `https://${regionalHost(this.config)}/lol/match/v5/matches/${encodeURIComponent(matchId)}`,
         this.config,
-        "riot",
       );
       if (!matchResult.ok) continue;
       const completed = completedFromMatch(account, matchResult.json);
       if (completed) completedGames.push(completed);
     }
     return { ok: true, state: { account, liveGame, completedGames } };
-  }
-}
-
-export class LolWatcherDeepLolScraper {
-  constructor(private readonly config: AppConfig) {}
-
-  async scrapeCompleted(accountKey: string, account: LolWatcherApiAccount, game: LolWatcherCompletedGame): Promise<LolWatcherDeepLolResult> {
-    const detailUrl = buildDeepLolDetailUrl(this.config, { accountKey, account, game });
-    if (!detailUrl.ok) {
-      return {
-        ok: false,
-        error: `DeepLOL URL parse failed: ${detailUrl.error}`,
-        detailUrl: detailUrl.url,
-        templateName: detailUrl.templateName,
-      };
-    }
-    const response = await fetchText(detailUrl.url, this.config);
-    if (!response.ok) {
-      return { ok: false, error: response.error, httpStatus: response.httpStatus, detailUrl: detailUrl.url, templateName: detailUrl.templateName };
-    }
-    return { ok: true, aiScore: extractAiScore(response.text), detailUrl: detailUrl.url, templateName: detailUrl.templateName };
   }
 }
