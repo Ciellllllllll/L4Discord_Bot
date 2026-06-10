@@ -6,7 +6,7 @@ import { extractPhrase, extractWords, isLearnableMessage } from "./pacchi.filter
 import { buildPacchiGeneratedReply } from "./pacchi.generator.js";
 import { buildSentencePattern, toLearnableLexiconTokens } from "./pacchi.japaneseLearning.js";
 import { createPacchiRepository, type PacchiRepository } from "./pacchi.repository.js";
-import { appendRandomEmojiAtEnd, buildPacchiReply, buildPoem, formatDuration, janken, RATE_CONFIG } from "./pacchi.reply.js";
+import { appendRandomEmojiAtEnd, buildPacchiReply, formatDuration, janken, RATE_CONFIG } from "./pacchi.reply.js";
 import { isUnsafeForPacchiLearning } from "./pacchi.safety.js";
 import {
   extractJanken,
@@ -16,6 +16,7 @@ import {
   isWorkStart,
 } from "./pacchi.triggers.js";
 import { handleWorkEnd, handleWorkStart } from "./pacchi.prefix.js";
+import { buildVerifiedPacchiPoem, pacchiVerifiedPoemFailureMessage } from "./pacchi.poem.js";
 import type { PacchiLearnedEmoji } from "./pacchi.types.js";
 
 const lastSpokeByChannel = new Map<string, number>();
@@ -295,7 +296,16 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
 
     const poemPattern = extractNaturalPoem(content);
     if (poemPattern && canSpeak(message.channelId, cooldownSeconds)) {
-      const reply = buildPoem(poemPattern, repo.topWords(message.guildId, 20).map((w) => w.word)) ?? "ぱっちぃには作れない";
+      const result = ctx.config.JAPANESE_WORKER_ENABLED
+        ? await buildVerifiedPacchiPoem(poemPattern, repo.topWords(message.guildId, 20).map((w) => w.word), {
+          baseUrl: ctx.config.JAPANESE_WORKER_URL,
+          timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
+        })
+        : { ok: false as const, reason: "worker_failed" as const, workerReason: undefined, error: undefined };
+      if (!result.ok && result.reason === "worker_failed") {
+        ctx.log.warn({ reason: result.workerReason, err: result.error }, "pacchi 575 generation worker failed");
+      }
+      const reply = result.ok ? result.poem : pacchiVerifiedPoemFailureMessage(result);
       await sendPacchiReply(message, reply, replyEmoji);
       markSpoke(message.channelId);
       repo.touchSpoke(message.guildId);

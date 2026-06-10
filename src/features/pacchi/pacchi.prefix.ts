@@ -2,8 +2,9 @@ import { AttachmentBuilder, EmbedBuilder, type Message, type MessageMentionOptio
 import { z } from "zod";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
+import { buildVerifiedPacchiPoem, pacchiVerifiedPoemFailureMessage } from "./pacchi.poem.js";
 import { createPacchiRepository } from "./pacchi.repository.js";
-import { buildPoem, formatDuration, RATE_CONFIG } from "./pacchi.reply.js";
+import { formatDuration, RATE_CONFIG } from "./pacchi.reply.js";
 import { parseLimit, sanitizeForReply } from "./pacchi.filters.js";
 import type { PacchiExportData, PacchiRate } from "./pacchi.types.js";
 
@@ -263,8 +264,16 @@ async function handleForget(message: Message, ctx: BotContext, args: string[]): 
 async function handlePoem(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
   const pattern = args[0] ?? "";
   const repo = createPacchiRepository(ctx.sqlite);
-  const poem = buildPoem(pattern, repo.topWords(message.guildId!, 20).map((w) => w.word));
-  await replySafe(message, poem ?? "使い方: `!pacchi_poem 575`");
+  const result = ctx.config.JAPANESE_WORKER_ENABLED
+    ? await buildVerifiedPacchiPoem(pattern, repo.topWords(message.guildId!, 20).map((w) => w.word), {
+      baseUrl: ctx.config.JAPANESE_WORKER_URL,
+      timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
+    })
+    : { ok: false as const, reason: "worker_failed" as const, workerReason: undefined, error: undefined };
+  if (!result.ok && result.reason === "worker_failed") {
+    ctx.log.warn({ reason: result.workerReason, err: result.error }, "pacchi 575 generation worker failed");
+  }
+  await replySafe(message, result.ok ? result.poem : pacchiVerifiedPoemFailureMessage(result));
   return true;
 }
 
