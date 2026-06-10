@@ -1,12 +1,122 @@
-import { EmbedBuilder, type GuildMember, type Message, type PartialGuildMember } from "discord.js";
+import { EmbedBuilder, type APIEmbed, type GuildMember, type Message, type PartialGuildMember } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 
 const MESSAGE_LINK_RE =
   /https?:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/(\d+)\/(\d+)\/(\d+)/g;
+const MAX_EXPANDED_EMBEDS = 10;
 
 // メンバー退出通知は `MOD_LOG_CHANNEL_ID`（.env）のみへ送信
+
+type MessageLinkExpansionPayload = {
+  embeds: EmbedBuilder[];
+  files: { attachment: string; name: string }[];
+};
+
+function truncateText(value: string | null | undefined, max: number): string | null {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+function copyMessageEmbed(raw: APIEmbed): EmbedBuilder | null {
+  const embed = new EmbedBuilder();
+  let used = false;
+
+  const title = truncateText(raw.title, 256);
+  if (title) {
+    embed.setTitle(title);
+    used = true;
+  }
+  if (raw.url) embed.setURL(raw.url);
+
+  const description = truncateText(raw.description, 4096);
+  if (description) {
+    embed.setDescription(description);
+    used = true;
+  }
+
+  if (typeof raw.color === "number") embed.setColor(raw.color);
+  if (raw.timestamp) embed.setTimestamp(new Date(raw.timestamp));
+  if (raw.image?.url) {
+    embed.setImage(raw.image.url);
+    used = true;
+  }
+  if (raw.thumbnail?.url) {
+    embed.setThumbnail(raw.thumbnail.url);
+    used = true;
+  }
+  if (raw.author?.name) {
+    embed.setAuthor({
+      name: truncateText(raw.author.name, 256) ?? raw.author.name,
+      iconURL: raw.author.icon_url,
+      url: raw.author.url,
+    });
+    used = true;
+  }
+  if (raw.footer?.text) {
+    embed.setFooter({
+      text: truncateText(raw.footer.text, 2048) ?? raw.footer.text,
+      iconURL: raw.footer.icon_url,
+    });
+    used = true;
+  }
+  if (Array.isArray(raw.fields) && raw.fields.length > 0) {
+    embed.addFields(raw.fields.slice(0, 25).map((field) => ({
+      name: truncateText(field.name, 256) ?? "-",
+      value: truncateText(field.value, 1024) ?? "-",
+      inline: field.inline,
+    })));
+    used = true;
+  }
+
+  return used ? embed : null;
+}
+
+export function buildMessageLinkExpansionPayload(
+  targetMessage: Message,
+  channelName: string,
+): MessageLinkExpansionPayload {
+  const embeds: EmbedBuilder[] = [];
+  const content = truncateText(targetMessage.content, 4096);
+  if (content || targetMessage.embeds.length === 0) {
+    embeds.push(
+      new EmbedBuilder()
+        .setDescription(content ?? "")
+        .setTimestamp(targetMessage.createdAt)
+        .setColor(0x34_98_db)
+        .setAuthor({
+          name:
+            targetMessage.member?.displayName ??
+            targetMessage.author?.username ??
+            "Unknown",
+          iconURL: targetMessage.author?.displayAvatarURL() ?? undefined,
+        })
+        .setFooter({ text: `${channelName || "channel"} による引用` }),
+    );
+  }
+
+  for (const sourceEmbed of targetMessage.embeds) {
+    if (embeds.length >= MAX_EXPANDED_EMBEDS) break;
+    const copied = copyMessageEmbed(sourceEmbed.toJSON());
+    if (copied) embeds.push(copied);
+  }
+
+  const files: { attachment: string; name: string }[] = [];
+  for (const attachment of targetMessage.attachments.values()) {
+    const ctype = attachment.contentType || "";
+    if (ctype.startsWith("image/")) {
+      if (embeds.length < MAX_EXPANDED_EMBEDS) {
+        embeds.push(new EmbedBuilder().setImage(attachment.url).setColor(0x34_98_db));
+      }
+    } else {
+      files.push({ attachment: attachment.url, name: attachment.name || "attachment" });
+    }
+  }
+
+  return { embeds, files };
+}
 
 export async function sendMemberLeaveEmbed(
   ctx: BotContext,
@@ -76,43 +186,22 @@ export class LeaveNotifierMessageHandler {
 
         const targetMessage = await fetchedChannel.messages.fetch(messageId);
 
-        const embed = new EmbedBuilder()
-          .setDescription(targetMessage.content || "")
-          .setTimestamp(targetMessage.createdAt)
-          .setColor(0x34_98_db)
-          .setAuthor({
-            name:
-              targetMessage.member?.displayName ??
-              targetMessage.author?.username ??
-              "Unknown",
-            iconURL: targetMessage.author?.displayAvatarURL() ?? undefined,
-          })
-          .setFooter({
-            text: `${"name" in fetchedChannel ? fetchedChannel.name : "channel"} による引用`,
-          });
-
-        const files: { attachment: string; name: string }[] = [];
-        let firstImage = true;
-        for (const attachment of targetMessage.attachments.values()) {
-          const ctype = attachment.contentType || "";
-          if (ctype.startsWith("image/")) {
-            if (firstImage) {
-              embed.setImage(attachment.url);
-              firstImage = false;
-            }
-          } else if (ctype.startsWith("video/")) {
-            files.push({ attachment: attachment.url, name: attachment.name || "video" });
-          }
-        }
+        const payload = buildMessageLinkExpansionPayload(
+          targetMessage,
+          "name" in fetchedChannel ? fetchedChannel.name : "channel",
+        );
 
         const replyCh = message.channel;
         if (!replyCh.isTextBased() || replyCh.isDMBased()) {
           continue;
         }
-        if (files.length > 0) {
-          await replyCh.send({ embeds: [embed], files });
+        if (payload.embeds.length === 0 && payload.files.length === 0) {
+          continue;
+        }
+        if (payload.files.length > 0) {
+          await replyCh.send({ embeds: payload.embeds, files: payload.files });
         } else {
-          await replyCh.send({ embeds: [embed] });
+          await replyCh.send({ embeds: payload.embeds });
         }
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "message link fetch failed");

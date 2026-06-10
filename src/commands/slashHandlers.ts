@@ -9,10 +9,8 @@ import {
   type GuildMember,
   PermissionFlagsBits,
 } from "discord.js";
-import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { BotContext } from "../bot/context.js";
-import { sqliteTimestamp } from "../core/db/sqliteTimestamp.js";
 import { getGuildSettingsData, upsertGuildSettingsData } from "../core/guildSettings.js";
 import { isAdmin } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
@@ -42,6 +40,7 @@ import {
   handleLolAdminRemoveCommand,
   handleLolWatchCommand,
 } from "../features/lolWatcher/lolWatcher.commands.js";
+import { handleWerewolfCreate, handleWerewolfEnd } from "../features/werewolf/werewolfGame.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -103,9 +102,9 @@ export async function handleSlashCommand(
       return handleVcRank(interaction, ctx);
     case "afk":
       return startAfkDisconnectCommand(interaction, ctx);
-    case "create_werewolfgame":
+    case "create_werewolf":
       return handleWerewolfCreate(interaction, ctx, member);
-    case "end_werewolfgame":
+    case "end_werewolf":
       return handleWerewolfEnd(interaction, ctx, member);
     case "処刑":
       return handleExecutionSlash(interaction, ctx, member);
@@ -115,8 +114,6 @@ export async function handleSlashCommand(
       return handleDisableEmoji(interaction, ctx, member);
     case "enable_emoji":
       return handleEnableEmoji(interaction, ctx, member);
-    case "stamp_count":
-      return handleStampCount(interaction, ctx);
     case "stamp_rank":
       return handleStampRanking(interaction, ctx);
     case "ticket_users":
@@ -342,65 +339,6 @@ async function handleVcRank(interaction: ChatInputCommandInteraction, ctx: BotCo
     allowedMentions: { parse: ["users"] },
   });
 }
-async function handleWerewolfCreate(
-  interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
-  member: GuildMember | null,
-): Promise<void> {
-  if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
-    return;
-  }
-  const guildId = interaction.guildId!;
-  const channelId = interaction.channelId;
-  if (!channelId) {
-    await interaction.reply({ content: "チャンネルが不明です。", flags: MessageFlags.Ephemeral });
-    return;
-  }
-  const id = randomUUID();
-  await ctx.db
-    .insertInto("werewolf_games")
-    .values({
-      id,
-      guild_id: guildId,
-      channel_id: channelId,
-      host_id: interaction.user.id,
-      phase: "lobby",
-      state: JSON.stringify({ participants: [] }) as unknown as Record<string, unknown>,
-      created_at: sqliteTimestamp() as unknown as Date,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .execute();
-  await interaction.reply({
-    content: `人狼募集を開始しました（ロビー）。ゲームID: \`${id.slice(0, 8)}\` / <#${channelId}>`,
-  });
-}
-
-async function handleWerewolfEnd(
-  interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
-  member: GuildMember | null,
-): Promise<void> {
-  if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
-    return;
-  }
-  const guildId = interaction.guildId!;
-  const channelId = interaction.channelId;
-  const r = await ctx.db
-    .updateTable("werewolf_games")
-    .set({ phase: "ended", updated_at: sqliteTimestamp() as unknown as Date })
-    .where("guild_id", "=", guildId)
-    .where("channel_id", "=", channelId ?? "")
-    .where("phase", "!=", "ended")
-    .executeTakeFirst();
-  const n = Number(r.numUpdatedRows ?? 0);
-  await interaction.reply({
-    content: n > 0 ? "このチャンネルの人狼募集を終了しました。" : "終了対象のゲームがありません。",
-    flags: MessageFlags.Ephemeral,
-  });
-}
-
 async function handleExecutionSlash(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
@@ -453,20 +391,8 @@ async function handleEnableEmoji(
   await interaction.reply({ content: `絵文字制限を解除: ${target.tag}`, flags: MessageFlags.Ephemeral });
 }
 
-async function handleStampCount(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
-  const guildId = interaction.guildId!;
-  const user = interaction.options.getUser("user") ?? interaction.user;
-  const rows = await ctx.db
-    .selectFrom("stamp_usage")
-    .select("count")
-    .where("guild_id", "=", guildId)
-    .where("user_id", "=", user.id)
-    .execute();
-  const total = rows.reduce((acc, r) => acc + Number(r.count), 0);
-  await interaction.reply({ content: `<@${user.id}> のスタンプ利用合計: **${total}**`, flags: MessageFlags.Ephemeral });
-}
-
 async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+  await interaction.deferReply();
   const guildId = interaction.guildId!;
   const rows = await ctx.db
     .selectFrom("stamp_usage")
@@ -474,14 +400,21 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
     .where("guild_id", "=", guildId)
     .groupBy("user_id")
     .orderBy(sql`sum(count)`, "desc")
-    .limit(15)
+    .limit(10)
     .execute();
   if (rows.length === 0) {
-    await interaction.reply({ content: "まだデータがありません。", flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ content: "スタンプランキングデータがありません。" });
     return;
   }
-  const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> — ${r.total}`);
-  await interaction.reply({ content: lines.join("\n").slice(0, 2000), flags: MessageFlags.Ephemeral });
+  const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> - ${Number(r.total).toLocaleString("ja-JP")}回`);
+  const embed = new EmbedBuilder()
+    .setTitle("スタンプ利用ランキング TOP10")
+    .setColor(0x3498db)
+    .setDescription(lines.join("\n"));
+  await interaction.editReply({
+    embeds: [embed],
+    allowedMentions: { parse: ["users"] },
+  });
 }
 
 async function handleTicketUsers(
