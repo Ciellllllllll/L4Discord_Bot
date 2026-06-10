@@ -55,6 +55,7 @@ import { getDetecterService, DETECTER_REASON_INPUT_ID } from "../features/detect
 import { handleExecutionFlowButton } from "../features/execution/executionFlow.js";
 import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
 import { handleGameDealButton } from "../features/gameDeals/gameDealWatcher.js";
+import { handleWerewolfButton, handleWerewolfStringSelect } from "../features/werewolf/werewolfGame.js";
 import { parseCustomId } from "./parseCustomId.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
@@ -119,6 +120,7 @@ export async function handleDetecterButton(
 export async function routeButton(interaction: ButtonInteraction, ctx: BotContext): Promise<void> {
   if (await handleExecutionFlowButton(interaction, ctx)) return;
   if (await handleTimeoutExtendFlowButton(interaction, ctx)) return;
+  if (await handleWerewolfButton(interaction, ctx)) return;
   if (await handleAutoModRaidButton(interaction, ctx)) return;
   if (await handleReminderHubButton(interaction, ctx)) return;
   if (await handleAiHistoryClearButton(interaction, ctx)) return;
@@ -183,6 +185,7 @@ export async function routeStringSelectMenu(
   ctx: BotContext,
 ): Promise<void> {
   if (await handleAutoModStringSelect(interaction, ctx)) return;
+  if (await handleWerewolfStringSelect(interaction, ctx)) return;
   if (await handleReminderHubStringSelect(interaction, ctx)) return;
   if (await handleAiHistoryAdminStringSelect(interaction, ctx)) return;
   if (await handleReactionRoleStringSelect(interaction, ctx)) return;

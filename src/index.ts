@@ -80,6 +80,7 @@ import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "./f
 import { ensureGameDealSchema } from "./features/gameDeals/gameDealRepository.js";
 import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
 import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
+import { reconcileWerewolfGames } from "./features/werewolf/werewolfGame.js";
 
 let mainStarted = false;
 
@@ -290,6 +291,12 @@ async function main(): Promise<void> {
         log.info({ guildId: g.id }, "timeout-extend flows reconciled at startup");
       } catch (err) {
         log.error({ err, guildId: g.id }, "timeout-extend flow reconcile at startup failed");
+      }
+      try {
+        await reconcileWerewolfGames(ctx);
+        log.info({ guildId: g.id }, "werewolf games reconciled at startup");
+      } catch (err) {
+        log.error({ err, guildId: g.id }, "werewolf reconcile at startup failed");
       }
       try {
         reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);

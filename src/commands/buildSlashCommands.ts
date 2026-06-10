@@ -46,12 +46,12 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName("create_werewolfgame")
+      .setName("create_werewolf")
       .setDescription("人狼募集開始")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName("end_werewolfgame")
+      .setName("end_werewolf")
       .setDescription("人狼募集終了")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .toJSON(),
@@ -81,7 +81,6 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
 
     new SlashCommandBuilder().setName("stamp_rank").setDescription("スタンプランキング").toJSON(),
-    new SlashCommandBuilder().setName("stamp_count").setDescription("スタンプ使用回数を表示").toJSON(),
 
     new SlashCommandBuilder()
       .setName("ticket_users")
