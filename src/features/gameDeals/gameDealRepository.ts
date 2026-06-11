@@ -8,6 +8,10 @@ import type {
   GameDealStatus,
   GameDealSubscription,
   GameDealSubscriptionHit,
+  SteamAppCatalogChange,
+  SteamAppCatalogEntry,
+  SteamFreeEvent,
+  SteamPaidPriceHistory,
 } from "./gameDealTypes.js";
 import type { CheapSharkDeal } from "./cheapSharkTypes.js";
 
@@ -63,6 +67,43 @@ type DealWatchRow = {
   last_checked_at: string | null;
   last_notified_at: string | null;
   enabled: number;
+};
+
+type SteamAppCatalogRow = {
+  appid: string;
+  name: string | null;
+  last_modified: number | null;
+  price_change_number: number | null;
+};
+
+type SteamPaidPriceHistoryRow = {
+  appid: string;
+  title: string | null;
+  normal_price_cents: number | null;
+  normal_price_display: string | null;
+  source: string;
+};
+
+type SteamFreeEventRow = {
+  appid: string;
+  title: string;
+  state_key: string;
+  price_change_number: number | null;
+  last_modified: number | null;
+  normal_price_cents: number | null;
+  current_price_cents: number;
+  discount_percent: number | null;
+  evidence_json: string;
+  steam_url: string;
+  image_url: string | null;
+};
+
+type SteamVerifyQueueRow = {
+  appid: string;
+  reason: string;
+  price_change_number: number | null;
+  last_modified: number | null;
+  attempts: number;
 };
 
 export function ensureGameDealSchema(db: DatabaseLib.Database): void {
@@ -177,6 +218,57 @@ export function ensureGameDealSchema(db: DatabaseLib.Database): void {
 
     INSERT OR IGNORE INTO game_deal_status (id, last_detected_count)
     VALUES (1, 0);
+
+    CREATE TABLE IF NOT EXISTS steam_app_catalog (
+      appid TEXT PRIMARY KEY,
+      name TEXT,
+      last_modified INTEGER,
+      price_change_number INTEGER,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS steam_paid_price_history (
+      appid TEXT PRIMARY KEY,
+      title TEXT,
+      normal_price_cents INTEGER,
+      normal_price_display TEXT,
+      source TEXT NOT NULL,
+      first_paid_seen_at TEXT NOT NULL,
+      last_paid_seen_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS steam_free_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      appid TEXT NOT NULL,
+      title TEXT NOT NULL,
+      state_key TEXT NOT NULL UNIQUE,
+      price_change_number INTEGER,
+      last_modified INTEGER,
+      normal_price_cents INTEGER,
+      current_price_cents INTEGER NOT NULL DEFAULT 0,
+      discount_percent INTEGER,
+      evidence_json TEXT NOT NULL,
+      steam_url TEXT NOT NULL,
+      image_url TEXT,
+      first_detected_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      notified_at TEXT,
+      active INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS steam_verify_queue (
+      appid TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      price_change_number INTEGER,
+      last_modified INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NOT NULL,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   ensureColumn(db, "game_deal_watcher_status", "last_steam_search_status", "TEXT");
   ensureColumn(db, "game_deal_watcher_status", "last_steam_search_error", "TEXT");
@@ -184,6 +276,32 @@ export function ensureGameDealSchema(db: DatabaseLib.Database): void {
   ensureColumn(db, "game_deal_subscription_notifications", "guild_id", "TEXT");
   ensureColumn(db, "game_deal_subscription_notifications", "target_platform", "TEXT");
   ensureColumn(db, "game_deal_subscription_notifications", "target_id", "TEXT");
+}
+
+function toSteamPaidHistory(row: SteamPaidPriceHistoryRow): SteamPaidPriceHistory {
+  return {
+    appid: row.appid,
+    title: row.title,
+    normalPriceCents: row.normal_price_cents,
+    normalPriceDisplay: row.normal_price_display,
+    source: row.source,
+  };
+}
+
+function toSteamFreeEvent(row: SteamFreeEventRow): SteamFreeEvent {
+  return {
+    appid: row.appid,
+    title: row.title,
+    stateKey: row.state_key,
+    priceChangeNumber: row.price_change_number,
+    lastModified: row.last_modified,
+    normalPriceCents: row.normal_price_cents,
+    currentPriceCents: row.current_price_cents,
+    discountPercent: row.discount_percent,
+    evidenceJson: row.evidence_json,
+    steamUrl: row.steam_url,
+    imageUrl: row.image_url,
+  };
 }
 
 function ensureColumn(db: DatabaseLib.Database, table: string, column: string, definition: string): void {
@@ -820,5 +938,240 @@ export class GameDealRepository {
       )
       .get();
     return row?.cheapshark_cooldown_until ?? null;
+  }
+
+  hasSteamAppCatalog(): boolean {
+    const row = this.db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM steam_app_catalog").get();
+    return (row?.count ?? 0) > 0;
+  }
+
+  upsertSteamAppCatalog(apps: SteamAppCatalogEntry[]): { baselineCreated: boolean; changes: SteamAppCatalogChange[] } {
+    const now = sqliteTimestamp();
+    const baselineCreated = !this.hasSteamAppCatalog();
+    const changes: SteamAppCatalogChange[] = [];
+    const select = this.db
+      .prepare<[string], SteamAppCatalogRow>(
+        "SELECT appid, name, last_modified, price_change_number FROM steam_app_catalog WHERE appid = ?",
+      );
+    const upsert = this.db.prepare(
+      `
+      INSERT INTO steam_app_catalog (appid, name, last_modified, price_change_number, first_seen_at, last_seen_at)
+      VALUES (@appid, @name, @lastModified, @priceChangeNumber, @now, @now)
+      ON CONFLICT(appid) DO UPDATE SET
+        name = excluded.name,
+        last_modified = excluded.last_modified,
+        price_change_number = excluded.price_change_number,
+        last_seen_at = excluded.last_seen_at
+    `,
+    );
+    const tx = this.db.transaction((entries: SteamAppCatalogEntry[]) => {
+      for (const app of entries) {
+        const previous = select.get(app.appid);
+        if (
+          previous &&
+          (previous.last_modified !== app.lastModified || previous.price_change_number !== app.priceChangeNumber)
+        ) {
+          changes.push({
+            ...app,
+            previousLastModified: previous.last_modified,
+            previousPriceChangeNumber: previous.price_change_number,
+          });
+        }
+        upsert.run({ ...app, now });
+      }
+    });
+    tx(apps);
+    return { baselineCreated, changes: baselineCreated ? [] : changes };
+  }
+
+  enqueueSteamVerify(input: {
+    appid: string;
+    reason: string;
+    priceChangeNumber: number | null;
+    lastModified: number | null;
+    delayMs?: number;
+    lastError?: string | null;
+  }): void {
+    const now = sqliteTimestamp();
+    const nextAttemptAt = new Date(Date.now() + (input.delayMs ?? 0)).toISOString();
+    this.db
+      .prepare(
+        `
+        INSERT INTO steam_verify_queue
+          (appid, reason, price_change_number, last_modified, attempts, next_attempt_at, last_error, created_at, updated_at)
+        VALUES
+          (@appid, @reason, @priceChangeNumber, @lastModified, 0, @nextAttemptAt, @lastError, @now, @now)
+        ON CONFLICT(appid) DO UPDATE SET
+          reason = excluded.reason,
+          price_change_number = excluded.price_change_number,
+          last_modified = excluded.last_modified,
+          next_attempt_at = excluded.next_attempt_at,
+          last_error = excluded.last_error,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run({
+        appid: input.appid,
+        reason: input.reason.slice(0, 200),
+        priceChangeNumber: input.priceChangeNumber,
+        lastModified: input.lastModified,
+        nextAttemptAt,
+        lastError: input.lastError?.slice(0, 1000) ?? null,
+        now,
+      });
+  }
+
+  listDueSteamVerifyQueue(limit: number): SteamAppCatalogChange[] {
+    const now = sqliteTimestamp();
+    const rows = this.db
+      .prepare<[string], SteamVerifyQueueRow>(
+        `
+        SELECT appid, reason, price_change_number, last_modified, attempts
+        FROM steam_verify_queue
+        WHERE next_attempt_at <= ?
+        ORDER BY updated_at ASC
+        LIMIT ${Math.max(1, Math.min(100, limit))}
+      `,
+      )
+      .all(now);
+    return rows.map((row) => ({
+      appid: row.appid,
+      name: "",
+      lastModified: row.last_modified,
+      priceChangeNumber: row.price_change_number,
+      previousLastModified: -1,
+      previousPriceChangeNumber: -1,
+    }));
+  }
+
+  removeSteamVerifyQueue(appid: string): void {
+    this.db.prepare("DELETE FROM steam_verify_queue WHERE appid = ?").run(appid);
+  }
+
+  markSteamVerifyRetry(appid: string, reason: string, lastError: string | null): void {
+    const row = this.db.prepare<[string], { attempts: number }>("SELECT attempts FROM steam_verify_queue WHERE appid = ?").get(appid);
+    const attempts = (row?.attempts ?? 0) + 1;
+    const delayMs = Math.min(60 * 60 * 1000, 60_000 * attempts);
+    this.db
+      .prepare(
+        `
+        UPDATE steam_verify_queue
+        SET reason = @reason,
+            attempts = @attempts,
+            next_attempt_at = @nextAttemptAt,
+            last_error = @lastError,
+            updated_at = @now
+        WHERE appid = @appid
+      `,
+      )
+      .run({
+        appid,
+        reason: reason.slice(0, 200),
+        attempts,
+        nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
+        lastError: lastError?.slice(0, 1000) ?? null,
+        now: sqliteTimestamp(),
+      });
+  }
+
+  getSteamPaidPriceHistory(appid: string): SteamPaidPriceHistory | null {
+    const row = this.db
+      .prepare<[string], SteamPaidPriceHistoryRow>(
+        `
+        SELECT appid, title, normal_price_cents, normal_price_display, source
+        FROM steam_paid_price_history
+        WHERE appid = ?
+      `,
+      )
+      .get(appid);
+    return row ? toSteamPaidHistory(row) : null;
+  }
+
+  upsertSteamPaidPriceHistory(input: {
+    appid: string;
+    title: string;
+    normalPriceCents: number;
+    normalPriceDisplay: string | null;
+    source: string;
+  }): void {
+    if (input.normalPriceCents <= 0) return;
+    const now = sqliteTimestamp();
+    this.db
+      .prepare(
+        `
+        INSERT INTO steam_paid_price_history
+          (appid, title, normal_price_cents, normal_price_display, source, first_paid_seen_at, last_paid_seen_at, updated_at)
+        VALUES
+          (@appid, @title, @normalPriceCents, @normalPriceDisplay, @source, @now, @now, @now)
+        ON CONFLICT(appid) DO UPDATE SET
+          title = excluded.title,
+          normal_price_cents = MAX(steam_paid_price_history.normal_price_cents, excluded.normal_price_cents),
+          normal_price_display = COALESCE(excluded.normal_price_display, steam_paid_price_history.normal_price_display),
+          source = excluded.source,
+          last_paid_seen_at = excluded.last_paid_seen_at,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run({ ...input, now });
+  }
+
+  upsertSteamFreeEvent(input: SteamFreeEvent): { shouldNotify: boolean } {
+    const now = sqliteTimestamp();
+    const row = this.db
+      .prepare<[string], { notified_at: string | null }>("SELECT notified_at FROM steam_free_events WHERE state_key = ?")
+      .get(input.stateKey);
+    const shouldNotify = !row || !row.notified_at;
+    if (!row) {
+      this.db
+        .prepare(
+          `
+          INSERT INTO steam_free_events (
+            appid, title, state_key, price_change_number, last_modified, normal_price_cents,
+            current_price_cents, discount_percent, evidence_json, steam_url, image_url,
+            first_detected_at, last_seen_at, notified_at, active
+          )
+          VALUES (
+            @appid, @title, @stateKey, @priceChangeNumber, @lastModified, @normalPriceCents,
+            @currentPriceCents, @discountPercent, @evidenceJson, @steamUrl, @imageUrl,
+            @now, @now, NULL, 1
+          )
+        `,
+        )
+        .run({ ...input, now });
+      return { shouldNotify };
+    }
+    this.db
+      .prepare(
+        `
+        UPDATE steam_free_events
+        SET title = @title,
+            last_seen_at = @now,
+            evidence_json = @evidenceJson,
+            active = 1
+        WHERE state_key = @stateKey
+      `,
+      )
+      .run({ title: input.title, evidenceJson: input.evidenceJson, stateKey: input.stateKey, now });
+    return { shouldNotify };
+  }
+
+  markSteamFreeEventNotified(stateKey: string): void {
+    this.db.prepare("UPDATE steam_free_events SET notified_at = ? WHERE state_key = ?").run(sqliteTimestamp(), stateKey);
+  }
+
+  listActiveSteamFreeEvents(limit = 20): SteamFreeEvent[] {
+    return this.db
+      .prepare<[], SteamFreeEventRow>(
+        `
+        SELECT appid, title, state_key, price_change_number, last_modified, normal_price_cents,
+               current_price_cents, discount_percent, evidence_json, steam_url, image_url
+        FROM steam_free_events
+        WHERE active = 1
+        ORDER BY last_seen_at DESC
+        LIMIT ${Math.max(1, Math.min(100, limit))}
+      `,
+      )
+      .all()
+      .map(toSteamFreeEvent);
   }
 }

@@ -1,6 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
-import type { CheapSharkDeal } from "./cheapSharkTypes.js";
-import type { GameDealSubscriptionHit } from "./gameDealTypes.js";
+import type { GameDealSubscriptionHit, SteamFreeEvent } from "./gameDealTypes.js";
 
 function priceText(value: number | null): string {
   if (value === null) return "不明";
@@ -39,33 +38,60 @@ export function buildSubscriptionButtons(notificationId: string): ActionRowBuild
   );
 }
 
-function usdPrice(value: number | null): string {
+function centsPriceText(value: number | null): string {
   if (value === null) return "不明";
-  if (value === 0) return "$0.00";
-  return `$${value.toFixed(2)}`;
+  if (value === 0) return "無料 / 0円";
+  return `${Math.round(value / 100).toLocaleString("ja-JP")}円`;
 }
 
-export function buildCheapSharkSteamFreeEmbed(deal: CheapSharkDeal): EmbedBuilder {
+function steamEvidenceText(evidenceJson: string): string {
+  try {
+    const parsed = JSON.parse(evidenceJson) as Array<{ source?: unknown }>;
+    const labels = parsed
+      .map((item): string | null => {
+        switch (item.source) {
+          case "steam_appdetails":
+            return "Steam appdetails";
+          case "steam_search":
+            return "Steam search";
+          case "cheapshark":
+            return "CheapShark補助";
+          case "db_paid_history":
+            return "DB paid history";
+          default:
+            return null;
+        }
+      })
+      .filter((value): value is string => value !== null);
+    return [...new Set(labels)].join(" / ") || "不明";
+  } catch {
+    return "不明";
+  }
+}
+
+export function buildSteamFreeEventEmbed(event: SteamFreeEvent): EmbedBuilder {
+  const discount = event.discountPercent !== null && event.discountPercent >= 100 ? "100%" : event.discountPercent !== null ? `${event.discountPercent}%` : "Free to Keep";
   const embed = new EmbedBuilder()
-    .setTitle("Steam 期間限定無料")
+    .setTitle("Steam 無料配布")
     .setColor(0x2ecc71)
-    .setDescription(`**${deal.title}**\n通常有料ゲームがSteamで期間限定無料または100%OFFの可能性があります。`)
+    .setDescription(`**${event.title}**\n通常有料ゲームがSteamで無料配布または100%OFFになっています。`)
     .addFields(
-      { name: "通常価格", value: usdPrice(deal.normalPrice), inline: true },
-      { name: "現在価格", value: usdPrice(deal.salePrice), inline: true },
-      { name: "割引率", value: `${deal.savings.toFixed(1)}%`, inline: true },
-      { name: "Steam購入リンク", value: deal.steamUrl, inline: false },
+      { name: "通常価格", value: centsPriceText(event.normalPriceCents), inline: true },
+      { name: "現在価格", value: centsPriceText(event.currentPriceCents), inline: true },
+      { name: "割引率", value: discount, inline: true },
+      { name: "検証根拠", value: steamEvidenceText(event.evidenceJson), inline: false },
+      { name: "Steam URL", value: event.steamUrl, inline: false },
     )
     .setTimestamp(new Date());
-  if (deal.thumb) embed.setImage(deal.thumb);
+  if (event.imageUrl) embed.setImage(event.imageUrl);
   return embed;
 }
 
-export function buildCheapSharkLinkButtons(deal: CheapSharkDeal): ActionRowBuilder<ButtonBuilder> {
+export function buildSteamLinkButtons(event: Pick<SteamFreeEvent, "steamUrl">): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setLabel("Steamで購入")
       .setStyle(ButtonStyle.Link)
-      .setURL(deal.steamUrl),
+      .setURL(event.steamUrl),
   );
 }

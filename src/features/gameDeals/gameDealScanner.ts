@@ -4,10 +4,7 @@ import { buildEpicFreeEmbed, buildEpicLinkButtons } from "../epic/epicFreeEmbeds
 import { EpicStoreClient } from "../epic/epicStoreClient.js";
 import { SteamStoreClient } from "../steam/steamStoreClient.js";
 import type { SteamAppDetails } from "../steam/steamFreeTypes.js";
-import { CheapSharkClient, CheapSharkHttpError } from "./cheapSharkClient.js";
-import { buildCheapSharkLinkButtons, buildCheapSharkSteamFreeEmbed } from "./gameDealEmbeds.js";
-import { GameDealRepository } from "./gameDealRepository.js";
-import { detectSteamDeal } from "./steamDealDetector.js";
+import { listActiveSteamFreeItems } from "./steamFreeScanner.js";
 import type {
   GameDealFreeItem,
   GameDealPlatform,
@@ -16,8 +13,6 @@ import type {
   GameDealSubscription,
   GameDealSubscriptionHit,
 } from "./gameDealTypes.js";
-
-const CHEAPSHARK_DEFAULT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 function epicDedupeKey(candidate: ReturnType<typeof detectEpicFreeCandidates>[number]): string {
   return `epic:${candidate.dedupeKey}`;
@@ -47,44 +42,7 @@ export async function scanCurrentFreeGamesDetailed(ctx: BotContext): Promise<Gam
 async function scanSteamCurrentFreeGamesWithStatus(
   ctx: BotContext,
 ): Promise<{ items: GameDealFreeItem[]; source: GameDealSourceStatus }> {
-  const repo = new GameDealRepository(ctx.sqlite);
-  const cooldownUntil = repo.getCheapSharkCooldownUntil();
-  if (cooldownUntil && Date.parse(cooldownUntil) > Date.now()) {
-    return {
-      items: [],
-      source: {
-        platform: "steam",
-        status: "cooldown",
-        message: "Steam側の取得は一時停止中です。",
-        cooldownUntil,
-      },
-    };
-  }
-  try {
-    const items = await scanSteamCurrentFreeGames(ctx);
-    repo.updateDealStatus({ cheapSharkCooldownUntil: null });
-    return { items, source: { platform: "steam", status: "ok" } };
-  } catch (err) {
-    if (err instanceof CheapSharkHttpError && (err.status === 429 || err.status >= 500)) {
-      const cooldownMs = err.retryAfterSeconds ? err.retryAfterSeconds * 1000 : CHEAPSHARK_DEFAULT_COOLDOWN_MS;
-      const nextCooldownUntil = new Date(Date.now() + cooldownMs).toISOString();
-      repo.updateDealStatus({ lastError: `CheapShark HTTP ${err.status}`, cheapSharkCooldownUntil: nextCooldownUntil });
-      ctx.log.warn(
-        { status: err.status, url: err.url, bodyPreview: err.bodyPreview, cooldownUntil: nextCooldownUntil },
-        "cheapshark steam source unavailable; cooldown started",
-      );
-      return {
-        items: [],
-        source: {
-          platform: "steam",
-          status: "unavailable",
-          message: "Steam側の取得に失敗しました。Epicなど取得できた情報のみ表示します。",
-          cooldownUntil: nextCooldownUntil,
-        },
-      };
-    }
-    throw err;
-  }
+  return { items: listActiveSteamFreeItems(ctx), source: { platform: "steam", status: "ok" } };
 }
 
 async function scanEpicCurrentFreeGamesWithStatus(
@@ -92,23 +50,6 @@ async function scanEpicCurrentFreeGamesWithStatus(
 ): Promise<{ items: GameDealFreeItem[]; source: GameDealSourceStatus }> {
   const items = await scanEpicCurrentFreeGames(ctx);
   return { items, source: { platform: "epic", status: "ok" } };
-}
-
-async function scanSteamCurrentFreeGames(ctx: BotContext): Promise<GameDealFreeItem[]> {
-  const deals = await new CheapSharkClient(ctx.log).fetchFreeSteamDeals(60);
-  const items: GameDealFreeItem[] = [];
-  for (const deal of deals) {
-    const detected = detectSteamDeal(deal);
-    if (detected.detectedType !== "steam_limited_free" || !detected.dedupeKey || !detected.deal) continue;
-    items.push({
-      platform: "steam",
-      title: deal.title,
-      dedupeKey: detected.dedupeKey,
-      embed: buildCheapSharkSteamFreeEmbed(deal),
-      components: [buildCheapSharkLinkButtons(deal)],
-    });
-  }
-  return items;
 }
 
 async function scanEpicCurrentFreeGames(ctx: BotContext): Promise<GameDealFreeItem[]> {

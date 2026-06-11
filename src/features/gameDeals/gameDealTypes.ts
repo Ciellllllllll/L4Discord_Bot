@@ -27,6 +27,40 @@ export type GameDealFreeItem = {
   components?: ActionRowBuilder<ButtonBuilder>[];
 };
 
+export type SteamAppCatalogEntry = {
+  appid: string;
+  name: string;
+  lastModified: number | null;
+  priceChangeNumber: number | null;
+};
+
+export type SteamAppCatalogChange = SteamAppCatalogEntry & {
+  previousLastModified: number | null;
+  previousPriceChangeNumber: number | null;
+};
+
+export type SteamPaidPriceHistory = {
+  appid: string;
+  title: string | null;
+  normalPriceCents: number | null;
+  normalPriceDisplay: string | null;
+  source: string;
+};
+
+export type SteamFreeEvent = {
+  appid: string;
+  title: string;
+  stateKey: string;
+  priceChangeNumber: number | null;
+  lastModified: number | null;
+  normalPriceCents: number | null;
+  currentPriceCents: number;
+  discountPercent: number | null;
+  evidenceJson: string;
+  steamUrl: string;
+  imageUrl: string | null;
+};
+
 export type GameDealSubscription = {
   id: string;
   guildId: string;

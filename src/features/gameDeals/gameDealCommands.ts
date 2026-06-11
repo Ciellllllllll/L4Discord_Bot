@@ -3,6 +3,7 @@ import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
 import { GameDealRepository } from "./gameDealRepository.js";
 import { parseGameStoreLink, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
+import { initializeSteamAppBaseline } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealScanResult } from "./gameDealTypes.js";
 
 function chunkItems(items: GameDealFreeItem[], size = 10): GameDealFreeItem[][] {
@@ -92,6 +93,10 @@ function steamSourceNote(scan: GameDealScanResult): string {
   return "\nSteam側の取得に失敗しました。Epicなど取得できた情報のみ表示します。";
 }
 
+function steamWatchNote(): string {
+  return "Steamは価格変更差分を監視し、次回以降の無料化を検証して通知します。";
+}
+
 export async function handleGameOn(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
@@ -110,21 +115,26 @@ export async function handleGameOn(
     return;
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const baseline = await initializeSteamAppBaseline(ctx).catch((err) => {
+    ctx.log.warn({ err }, "steam baseline initialization failed from game_on");
+    return null;
+  });
   const scan = await scanCurrentFreeGamesDetailed(ctx);
-  const items = scan.items;
+  const items = scan.items.filter((item) => item.platform === "epic");
   for (const item of items) repo.upsertFreeSeen(item, true);
   if (okSourceCount(scan) === 0) {
-    await interaction.editReply("ゲーム無料情報の取得に失敗しました。時間をおいて再度試してください。");
+    await interaction.editReply(`ゲーム無料情報の取得に失敗しました。時間をおいて再度試してください。\n${steamWatchNote()}`);
     return;
   }
+  const baselineNote = baseline?.created ? `Steam AppList baselineを作成しました（${baseline.appCount}件）。` : "Steam AppList baselineは作成済みです。";
   if (items.length === 0) {
-    await interaction.editReply(`このチャンネルでゲーム無料お知らせを有効化しました。現在検出できる無料候補はありません。${steamSourceNote(scan)}`);
+    await interaction.editReply(`このチャンネルでゲーム無料お知らせを有効化しました。Epicの現在無料候補はありません。\n${baselineNote}\n${steamWatchNote()}${steamSourceNote(scan)}`);
     return;
   }
   const sent = await sendGameDealItemsToChannel(interaction, items, ctx, channelId);
   await interaction.editReply(
     sent
-      ? `このチャンネルでゲーム無料お知らせを有効化しました。検出できた候補 ${items.length}件を送信しました。${steamSourceNote(scan)}`
+      ? `このチャンネルでゲーム無料お知らせを有効化しました。Epicの現在無料候補 ${items.length}件を送信しました。\n${baselineNote}\n${steamWatchNote()}${steamSourceNote(scan)}`
       : "通知チャンネルを取得できませんでした。",
   );
 }

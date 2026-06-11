@@ -28,10 +28,3 @@ export type CheapSharkDeal = {
   steamUrl: string;
 };
 
-export type SteamDealDetectedType = "steam_limited_free" | "steam_discount" | "excluded_always_free" | "excluded_invalid";
-
-export type SteamDealCandidate = {
-  detectedType: SteamDealDetectedType;
-  deal: CheapSharkDeal | null;
-  dedupeKey: string | null;
-};
