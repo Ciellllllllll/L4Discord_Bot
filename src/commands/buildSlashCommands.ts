@@ -135,7 +135,7 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
     new SlashCommandBuilder()
       .setName("game_now")
-      .setDescription("Steam/Epicの無料ゲーム候補を即時取得します")
+      .setDescription("Steamの100%割引商品を即時取得して投稿します")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .toJSON(),
     new SlashCommandBuilder()

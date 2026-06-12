@@ -204,6 +204,7 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
     repo.markScanStarted();
     repo.updateDealStatus({ lastScanAt: new Date().toISOString() });
     let detectedCount = 0;
+    let notifiedCount = 0;
     try {
       const now = Date.now();
       if (now - lastSteamAppListAt >= ctx.config.GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS) {
@@ -217,7 +218,7 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
           return [];
         });
         detectedCount += steamItems.length;
-        detectedCount += await notifyFreeGameDealItems(ctx, steamItems);
+        notifiedCount += await notifyFreeGameDealItems(ctx, steamItems);
       }
       if (now - lastEpicAt >= ctx.config.GAME_DEAL_EPIC_INTERVAL_MS) {
         lastEpicAt = now;
@@ -227,7 +228,7 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
         });
         const epicItems = scan.items.filter((item) => item.platform === "epic");
         detectedCount += epicItems.length;
-        detectedCount += await notifyFreeGameDealItems(ctx, epicItems);
+        notifiedCount += await notifyFreeGameDealItems(ctx, epicItems);
       }
       if (now - lastSubscriptionAt >= ctx.config.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS) {
         lastSubscriptionAt = now;
@@ -236,7 +237,7 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
       const successAt = new Date().toISOString();
       repo.markScanSuccess(detectedCount, successAt);
       repo.updateDealStatus({ lastScanAt: successAt, lastSuccessAt: successAt, lastError: null, lastDetectedCount: detectedCount });
-      ctx.log.info({ detectedCount }, "game deal watcher tick completed");
+      ctx.log.info({ detectedCount, notifiedCount }, "game deal watcher tick completed");
     } catch (err) {
       repo.markScanError(err instanceof Error ? err.message : String(err));
       repo.updateDealStatus({ lastError: err instanceof Error ? err.message : String(err) });

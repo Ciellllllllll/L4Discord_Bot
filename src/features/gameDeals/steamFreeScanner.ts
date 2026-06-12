@@ -9,6 +9,10 @@ import type { GameDealFreeItem, SteamAppCatalogChange, SteamFreeEvent } from "./
 import { detectSteamFreeEvent } from "./steamFreeDetector.js";
 
 export const DEFAULT_STEAM_VERIFY_BATCH_SIZE = 20;
+const DEFAULT_STEAM_NOW_LIMIT = 20;
+const EXCLUDED_TYPE_WORDS = ["dlc", "demo", "soundtrack", "software", "tool", "video", "hardware"];
+const FREE_PLAY_TEXT = /free\s*weekend|play\s*for\s*free|無料プレイ|週末無料|フリーウィークエンド/i;
+const F2P_TEXT = /free\s*to\s*play|基本プレイ無料|無料プレイ可/i;
 
 type SteamScanSummary = {
   appListCount: number;
@@ -64,7 +68,64 @@ function upsertPaidEvidence(repo: GameDealRepository, appid: string, title: stri
   }
 }
 
-async function fetchCheapSharkDeals(ctx: BotContext, appid: string) {
+function searchItemIsFullDiscount(item: SteamSearchItem): boolean {
+  return (
+    typeof item.originalPrice === "number" &&
+    item.originalPrice > 0 &&
+    item.finalPrice === 0 &&
+    (item.discountPercent ?? 0) >= 100
+  );
+}
+
+function normalizedWords(details: SteamAppDetails | null): string[] {
+  return [
+    details?.type,
+    ...(details?.categories ?? []),
+    ...(details?.genres ?? []),
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.toLowerCase());
+}
+
+function textIncludesAny(values: Array<string | undefined>, matcher: RegExp): boolean {
+  return values.some((value) => !!value && matcher.test(value));
+}
+
+function steamNowExclusionReason(item: SteamSearchItem, details: SteamAppDetails | null): string | null {
+  if (!searchItemIsFullDiscount(item)) return "not_full_discount";
+  if (!details) return "missing_appdetails";
+  if (details.type && details.type !== "game") return "excluded_non_game_type";
+  if (normalizedWords(details).some((word) => EXCLUDED_TYPE_WORDS.some((excluded) => word.includes(excluded)))) {
+    return "excluded_non_game_content";
+  }
+
+  const textValues = [details.name, item.name, item.rawPriceText, ...(details.categories ?? []), ...(details.genres ?? [])];
+  if (textIncludesAny(textValues, FREE_PLAY_TEXT)) return "excluded_free_weekend_or_play_free";
+  if (textIncludesAny(textValues, F2P_TEXT)) return "excluded_free_to_play";
+  return null;
+}
+
+function steamNowEvent(item: SteamSearchItem, details: SteamAppDetails): SteamFreeEvent {
+  const po = details.priceOverview;
+  const normalPriceCents = typeof po?.initial === "number" && po.initial > 0
+    ? po.initial
+    : Math.round(item.originalPrice! * 100);
+  return {
+    appid: item.appid,
+    title: details.name || item.name,
+    stateKey: `steam_now:${item.appid}:${item.discountPercent ?? 100}:${normalPriceCents}`,
+    priceChangeNumber: null,
+    lastModified: null,
+    normalPriceCents,
+    currentPriceCents: 0,
+    discountPercent: 100,
+    evidenceJson: JSON.stringify([{ source: "steam_search", normalPriceCents, currentPriceCents: 0, discountPercent: 100 }]),
+    steamUrl: item.storeUrl || `https://store.steampowered.com/app/${item.appid}/`,
+    imageUrl: details.headerImage ?? details.capsuleImage ?? null,
+  };
+}
+
+async function fetchCheapSharkAuxiliaryDeals(ctx: BotContext, appid: string) {
   try {
     return await new CheapSharkClient(ctx.log).fetchSteamDealsByAppId(appid);
   } catch (err) {
@@ -91,7 +152,7 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
     }
     const title = details.name || searchItem?.name || change.name || `Steam ${change.appid}`;
     upsertPaidEvidence(repo, change.appid, title, details, searchItem);
-    const cheapSharkDeals = await fetchCheapSharkDeals(ctx, change.appid);
+    const cheapSharkDeals = await fetchCheapSharkAuxiliaryDeals(ctx, change.appid);
     const cheapSharkPaid = cheapSharkDeals.find((deal) => deal.normalPrice > 0 && deal.salePrice === 0 && deal.savings >= 99.9);
     if (cheapSharkPaid) {
       repo.upsertSteamPaidPriceHistory({
@@ -107,6 +168,15 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
     if (!detected.shouldNotify) {
       excludedCount += 1;
       excludedReasons[detected.reason] = (excludedReasons[detected.reason] ?? 0) + 1;
+      ctx.log.debug(
+        {
+          appid: change.appid,
+          title,
+          reason: detected.reason,
+          evidenceSources: detected.evidence.map((item) => item.source),
+        },
+        "steam free candidate excluded",
+      );
       repo.removeSteamVerifyQueue(change.appid);
       continue;
     }
@@ -180,7 +250,10 @@ export async function scanSteamAppListChanges(ctx: BotContext): Promise<SteamSca
     };
   } catch (err) {
     if (err instanceof SteamAppListHttpError) {
-      ctx.log.warn({ status: err.status, bodyPreview: err.bodyPreview }, "steam app list fetch failed");
+      ctx.log.warn(
+        { status: err.status, bodyPreview: err.bodyPreview, retryAfterSeconds: err.retryAfterSeconds },
+        "steam app list fetch failed",
+      );
     } else {
       ctx.log.warn({ err }, "steam app list fetch failed");
     }
@@ -195,6 +268,37 @@ export async function processSteamVerifyQueue(ctx: BotContext, batchSize = DEFAU
   const searchByAppid = await fetchSearchByAppid(ctx);
   const { items, summary } = await verifyChanges(ctx, changes, searchByAppid);
   ctx.log.info({ queuedBatch: changes.length, ...summary }, "steam verify queue processed");
+  return items;
+}
+
+export async function scanSteamNowFullDiscountItems(ctx: BotContext, limit = DEFAULT_STEAM_NOW_LIMIT): Promise<GameDealFreeItem[]> {
+  const store = new SteamStoreClient(ctx.log);
+  const searchItems = (await store.fetchSearchItems()).filter(searchItemIsFullDiscount);
+  if (searchItems.length === 0) return [];
+
+  const detailsByAppid = await store.fetchAppDetails(searchItems.map((item) => item.appid));
+  const items: GameDealFreeItem[] = [];
+  const excludedReasons: Record<string, number> = {};
+
+  for (const searchItem of searchItems) {
+    const details = detailsByAppid.get(searchItem.appid) ?? null;
+    const exclusionReason = steamNowExclusionReason(searchItem, details);
+    if (exclusionReason) {
+      excludedReasons[exclusionReason] = (excludedReasons[exclusionReason] ?? 0) + 1;
+      ctx.log.debug(
+        { appid: searchItem.appid, title: searchItem.name, reason: exclusionReason },
+        "steam now full discount candidate excluded",
+      );
+      continue;
+    }
+    items.push(toFreeItem(steamNowEvent(searchItem, details!)));
+    if (items.length >= limit) break;
+  }
+
+  ctx.log.info(
+    { searchCandidates: searchItems.length, itemCount: items.length, excludedReasons },
+    "steam now full discount scan completed",
+  );
   return items;
 }
 

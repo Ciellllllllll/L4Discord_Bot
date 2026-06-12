@@ -3,7 +3,7 @@ import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
 import { GameDealRepository } from "./gameDealRepository.js";
 import { parseGameStoreLink, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
-import { initializeSteamAppBaseline } from "./steamFreeScanner.js";
+import { initializeSteamAppBaseline, scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealScanResult } from "./gameDealTypes.js";
 
 function chunkItems(items: GameDealFreeItem[], size = 10): GameDealFreeItem[][] {
@@ -164,18 +164,20 @@ export async function handleGameNow(
   const channelId = await ensureGameDealCommandChannel(interaction, ctx);
   if (!channelId) return;
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const scan = await scanCurrentFreeGamesDetailed(ctx);
-  const items = scan.items;
-  if (okSourceCount(scan) === 0) {
-    await interaction.editReply("ゲーム無料情報の取得に失敗しました。時間をおいて再度試してください。");
+  const items = await scanSteamNowFullDiscountItems(ctx).catch((err) => {
+    ctx.log.warn({ err }, "steam now full discount scan failed");
+    return null;
+  });
+  if (items === null) {
+    await interaction.editReply("Steamの100%割引商品の取得に失敗しました。時間をおいて再度試してください。");
     return;
   }
   if (items.length === 0) {
-    await interaction.editReply(`現在検出できるゲーム無料候補はありません。${steamSourceNote(scan)}`);
+    await interaction.editReply("現在検出できるSteamの100%割引商品はありません。");
     return;
   }
   const sent = await sendGameDealItemsToChannel(interaction, items, ctx, channelId);
-  await interaction.editReply(sent ? `ゲーム無料候補 ${items.length}件を送信しました。${steamSourceNote(scan)}` : "通知チャンネルを取得できませんでした。");
+  await interaction.editReply(sent ? `Steamの100%割引商品 ${items.length}件を送信しました。` : "通知チャンネルを取得できませんでした。");
 }
 
 export async function handleGameSub(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {

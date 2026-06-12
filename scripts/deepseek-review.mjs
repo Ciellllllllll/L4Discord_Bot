@@ -212,7 +212,13 @@ function containsAllReviewDirective(text) {
 }
 
 async function shouldReviewAllRepository() {
-  const values = [eventPayload.comment?.body];
+  const values = [
+    eventPayload.comment?.body,
+    eventPayload.head_commit?.message,
+    ...(Array.isArray(eventPayload.commits)
+      ? eventPayload.commits.map((commit) => commit?.message)
+      : []),
+  ];
 
   try {
     const commit = await getHeadCommit();
@@ -501,7 +507,7 @@ async function requestDeepSeekReview(diffText, options = {}) {
           role: "user",
           content: [
             reviewAll
-              ? "以下のgit diffとリポジトリスナップショットをレビューしてください。"
+              ? "以下のリポジトリスナップショット全体をレビューしてください。"
               : "以下のgit diffをレビューしてください。",
             "",
             "次のJSON形式だけで返してください。",
@@ -524,10 +530,9 @@ async function requestDeepSeekReview(diffText, options = {}) {
             "重大な問題を優先してください。",
             "問題がない場合はcommentsを空配列にしてください。",
             "",
-            "```diff",
-            diffText,
-            "```",
-            reviewAll ? "" : null,
+            reviewAll ? null : "```diff",
+            reviewAll ? null : diffText,
+            reviewAll ? null : "```",
             reviewAll ? "```text" : null,
             reviewAll ? repositoryText : null,
             reviewAll ? "```" : null,

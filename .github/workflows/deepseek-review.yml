@@ -1,20 +1,9 @@
 name: DeepSeek Code Review
 
 on:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
-
   push:
     branches:
-      - "**"
-
-  issue_comment:
-    types:
-      - created
+      - develop
 
 permissions:
   contents: read
@@ -40,24 +29,6 @@ jobs:
             let prNumber = "";
             let prHtmlUrl = "";
             let shouldRun = true;
-
-            if (context.eventName === "pull_request") {
-              shouldRun = context.payload.pull_request.draft === false;
-              headSha = context.payload.pull_request.head.sha;
-              prNumber = String(context.payload.pull_request.number);
-              prHtmlUrl = context.payload.pull_request.html_url;
-            }
-
-            if (context.eventName === "issue_comment" && context.payload.issue?.pull_request) {
-              prNumber = String(context.payload.issue.number);
-              const { data: pull } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: context.payload.issue.number,
-              });
-              headSha = pull.head.sha;
-              prHtmlUrl = pull.html_url;
-            }
 
             core.setOutput("head-sha", headSha);
             core.setOutput("before-sha", beforeSha);

@@ -941,8 +941,8 @@ export class GameDealRepository {
   }
 
   hasSteamAppCatalog(): boolean {
-    const row = this.db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM steam_app_catalog").get();
-    return (row?.count ?? 0) > 0;
+    const row = this.db.prepare<[], { found: number }>("SELECT 1 AS found FROM steam_app_catalog LIMIT 1").get();
+    return !!row;
   }
 
   upsertSteamAppCatalog(apps: SteamAppCatalogEntry[]): { baselineCreated: boolean; changes: SteamAppCatalogChange[] } {

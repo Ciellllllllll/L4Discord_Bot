@@ -1,3 +1,4 @@
+import Bottleneck from "bottleneck";
 import type pino from "pino";
 import type { SteamAppCatalogEntry } from "../gameDeals/gameDealTypes.js";
 
@@ -5,6 +6,13 @@ const APP_LIST_URL = "https://api.steampowered.com/IStoreService/GetAppList/v1/"
 const USER_AGENT = "L4DiscordBot/0.1 SteamAppListWatcher (+https://store.steampowered.com/)";
 const REQUEST_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_RESULTS = 50_000;
+const APP_LIST_PAGE_DELAY_MS = 750;
+const APP_LIST_MAX_RETRIES = 3;
+const APP_LIST_BASE_RETRY_DELAY_MS = 1_000;
+const appListLimiter = new Bottleneck({
+  maxConcurrent: 1,
+  minTime: APP_LIST_PAGE_DELAY_MS,
+});
 
 type FetchOptions = {
   signal?: AbortSignal;
@@ -23,6 +31,7 @@ export class SteamAppListHttpError extends Error {
     readonly status: number,
     readonly url: string,
     readonly bodyPreview: string,
+    readonly retryAfterSeconds: number | null,
   ) {
     super(message);
     this.name = "SteamAppListHttpError";
@@ -71,9 +80,32 @@ async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
   });
   const text = await res.text();
   if (!res.ok) {
-    throw new SteamAppListHttpError(`Steam AppList request failed: ${res.status}`, res.status, url, text.slice(0, 300));
+    const retryAfter = res.headers.get("Retry-After");
+    const retryAfterSeconds = retryAfter && Number.isFinite(Number(retryAfter)) ? Number(retryAfter) : null;
+    throw new SteamAppListHttpError(
+      `Steam AppList request failed: ${res.status}`,
+      res.status,
+      url,
+      text.slice(0, 300),
+      retryAfterSeconds,
+    );
   }
   return JSON.parse(text) as T;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetriableStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function retryDelayMs(err: SteamAppListHttpError, attempt: number): number {
+  if (err.retryAfterSeconds !== null && err.retryAfterSeconds >= 0) {
+    return err.retryAfterSeconds * 1000;
+  }
+  return APP_LIST_BASE_RETRY_DELAY_MS * attempt;
 }
 
 async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -100,7 +132,7 @@ export class SteamAppListClient {
       url.searchParams.set("max_results", String(maxResults));
       if (lastAppid > 0) url.searchParams.set("last_appid", String(lastAppid));
       if (this.apiKey?.trim()) url.searchParams.set("key", this.apiKey.trim());
-      const json = await withTimeout((signal) => fetchJson<AppListRaw>(url.toString(), { signal }));
+      const json = await this.fetchAppListPage(url.toString());
       const rawApps = Array.isArray(json.response?.apps) ? json.response.apps : Array.isArray(json.apps) ? json.apps : [];
       const apps = rawApps.map(normalizeApp).filter((value): value is SteamAppCatalogEntry => value !== null);
       for (const app of apps) byAppid.set(app.appid, app);
@@ -112,5 +144,21 @@ export class SteamAppListClient {
       if (apps.length < maxResults) break;
     }
     return [...byAppid.values()].sort((a, b) => Number(a.appid) - Number(b.appid));
+  }
+
+  private async fetchAppListPage(url: string): Promise<AppListRaw> {
+    for (let attempt = 1; attempt <= APP_LIST_MAX_RETRIES; attempt += 1) {
+      try {
+        return await appListLimiter.schedule(() => withTimeout((signal) => fetchJson<AppListRaw>(url, { signal })));
+      } catch (err) {
+        if (!(err instanceof SteamAppListHttpError) || !isRetriableStatus(err.status) || attempt >= APP_LIST_MAX_RETRIES) {
+          throw err;
+        }
+        const delayMs = retryDelayMs(err, attempt);
+        this.log.warn({ status: err.status, attempt, delayMs }, "steam app list page fetch retry scheduled");
+        await delay(delayMs);
+      }
+    }
+    throw new Error("unreachable steam app list retry state");
   }
 }
