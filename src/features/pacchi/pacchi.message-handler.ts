@@ -36,6 +36,10 @@ type WikipediaSummary = {
   };
 };
 
+function isSelfAuthoredMessage(ctx: BotContext, message: Message): boolean {
+  return message.author.bot || message.author.id === ctx.client.user?.id || Boolean(message.webhookId) || message.system;
+}
+
 async function sendPacchiReply(message: Message, content: string, emoji: string | null): Promise<void> {
   await message.reply({ content: appendRandomEmojiAtEnd(content, emoji), allowedMentions: { parse: [] } });
 }
@@ -195,7 +199,7 @@ async function tryHandlePacchiSenryuSubmission(
 }
 
 export async function handlePacchiMessage(ctx: BotContext, message: Message): Promise<boolean> {
-  if (message.author.bot) return false;
+  if (isSelfAuthoredMessage(ctx, message)) return false;
   if (!message.guildId || message.guildId !== ctx.config.GUILD_ID) return false;
 
   const repo = createPacchiRepository(ctx.sqlite);
@@ -297,7 +301,7 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
     const poemPattern = extractNaturalPoem(content);
     if (poemPattern && canSpeak(message.channelId, cooldownSeconds)) {
       const result = ctx.config.JAPANESE_WORKER_ENABLED
-        ? await buildVerifiedPacchiPoem(poemPattern, repo.topWords(message.guildId, 20).map((w) => w.word), {
+        ? await buildVerifiedPacchiPoem(poemPattern, repo.randomWords(message.guildId, 40).map((w) => w.word), {
           baseUrl: ctx.config.JAPANESE_WORKER_URL,
           timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
         })

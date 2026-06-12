@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import type { Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { handlePacchiMessage } from "./pacchi.message-handler.js";
+import { ensurePacchiSchemaOnce } from "./pacchi.schema.js";
 
 function makeCtx(sqlite: Database.Database): BotContext {
   return {
@@ -23,15 +24,23 @@ function makeCtx(sqlite: Database.Database): BotContext {
       info: () => undefined,
       debug: () => undefined,
     },
+    client: {
+      user: { id: "bot-user" },
+    },
   } as unknown as BotContext;
 }
 
-function makeMessage(content: string, replies: string[], channelId = "channel"): Message {
+function makeMessage(
+  content: string,
+  replies: string[],
+  channelId = "channel",
+  author = { id: "author", bot: false },
+): Message {
   return {
     id: "message",
     guildId: "guild",
     channelId,
-    author: { id: "author", bot: false },
+    author,
     content,
     attachments: { size: 0 },
     stickers: { values: () => [][Symbol.iterator]() },
@@ -105,6 +114,24 @@ async function runGenerationCase(fetchImpl: typeof fetch): Promise<{
 }
 
 async function run(): Promise<void> {
+  {
+    const db = new Database(":memory:");
+    const replies: string[] = [];
+    try {
+      ensurePacchiSchemaOnce(db);
+      const handled = await handlePacchiMessage(
+        makeCtx(db),
+        makeMessage("ぱっちぃが覚えそうな言葉", replies, "channel", { id: "bot-user", bot: false }),
+      );
+      assert.equal(handled, false);
+      assert.deepEqual(replies, []);
+      const wordCount = db.prepare("SELECT count(*) AS count FROM pacchi_words").get() as { count: number };
+      assert.equal(wordCount.count, 0);
+    } finally {
+      db.close();
+    }
+  }
+
   const matched = await runCase(async () => responseJson({
     matched: true,
     text: "春風に コードが揺れて バグが咲く",
