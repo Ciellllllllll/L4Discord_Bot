@@ -74,28 +74,35 @@ function copyMessageEmbed(raw: APIEmbed): EmbedBuilder | null {
   return used ? embed : null;
 }
 
+function buildMessageLinkHeaderEmbed(targetMessage: Message, channelName: string): EmbedBuilder {
+  const content = truncateText(targetMessage.content, 4096);
+  const embed = new EmbedBuilder()
+    .setTimestamp(targetMessage.createdAt)
+    .setColor(0x34_98_db)
+    .setAuthor({
+      name:
+        targetMessage.member?.displayName ??
+        targetMessage.author?.username ??
+        "Unknown",
+      iconURL: targetMessage.author?.displayAvatarURL() ?? undefined,
+    })
+    .setFooter({ text: `${channelName || "channel"} による引用` });
+
+  if (content) {
+    embed.setDescription(content);
+  } else if (targetMessage.embeds.length === 0 && targetMessage.attachments.size === 0) {
+    embed.setDescription("(本文なし)");
+  }
+
+  return embed;
+}
+
 export function buildMessageLinkExpansionPayload(
   targetMessage: Message,
   channelName: string,
 ): MessageLinkExpansionPayload {
   const embeds: EmbedBuilder[] = [];
-  const content = truncateText(targetMessage.content, 4096);
-  if (content || targetMessage.embeds.length === 0) {
-    embeds.push(
-      new EmbedBuilder()
-        .setDescription(content ?? "")
-        .setTimestamp(targetMessage.createdAt)
-        .setColor(0x34_98_db)
-        .setAuthor({
-          name:
-            targetMessage.member?.displayName ??
-            targetMessage.author?.username ??
-            "Unknown",
-          iconURL: targetMessage.author?.displayAvatarURL() ?? undefined,
-        })
-        .setFooter({ text: `${channelName || "channel"} による引用` }),
-    );
-  }
+  embeds.push(buildMessageLinkHeaderEmbed(targetMessage, channelName));
 
   for (const sourceEmbed of targetMessage.embeds) {
     if (embeds.length >= MAX_EXPANDED_EMBEDS) break;
@@ -160,7 +167,8 @@ export class LeaveNotifierMessageHandler {
   constructor(private readonly ctx: BotContext) {}
 
   async onMessage(message: Message): Promise<void> {
-    if (message.author?.bot) {
+    const isOwnBotMessage = message.author?.id === this.ctx.client.user?.id;
+    if (message.author?.bot && !isOwnBotMessage) {
       return;
     }
     if (!message.guild || message.guild.id !== this.ctx.config.GUILD_ID) {

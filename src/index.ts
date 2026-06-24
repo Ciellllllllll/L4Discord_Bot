@@ -73,6 +73,7 @@ import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
 import { handlePrefixMessage } from "./message/prefixHandlers.js";
+import { handleZigAutoReply } from "./features/zig/zigAutoReply.js";
 import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
 import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
@@ -417,6 +418,7 @@ async function main(): Promise<void> {
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
       if (await handlePrefixMessage(message, ctx)) return;
+      if (await handleZigAutoReply(message, ctx)) return;
       if (await handlePacchiMessage(ctx, message)) return;
       await runUtilitiesMessageChain(utilitiesBundle, message);
       if (await handleSenryuMessage(ctx, message)) return;
