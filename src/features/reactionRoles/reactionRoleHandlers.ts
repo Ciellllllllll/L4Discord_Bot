@@ -84,6 +84,11 @@ function parseEntryIdFromEditModal(customId: string): string | null {
   return entryId || null;
 }
 
+function textInputPlaceholder(value: string, fallback: string): string {
+  const text = String(value || "").trim() || fallback;
+  return text.length <= 100 ? text : `${text.slice(0, 99)}…`;
+}
+
 function showCreateModal(interaction: ButtonInteraction, defaultChannelId?: string): Promise<void> {
   const modal = new ModalBuilder().setCustomId(ADMIN_CREATE_MODAL_ID).setTitle("Reaction Role 作成");
 
@@ -166,7 +171,7 @@ function showEditModal(interaction: StringSelectMenuInteraction, entry: Reaction
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(false)
     .setMaxLength(1000)
-    .setPlaceholder(formatRolesForInput(entry.roles));
+    .setPlaceholder(textInputPlaceholder(formatRolesForInput(entry.roles), "roleId|label|emoji"));
   const roleLines = formatRolesForInput(entry.roles).slice(0, 1000);
   if (roleLines) rolesInput.setValue(roleLines);
 
@@ -307,7 +312,15 @@ export async function handleReactionRoleStringSelect(
     await replyEphemeral(interaction, "entry_id が見つかりません。");
     return true;
   }
-  await showEditModal(interaction, entry);
+  try {
+    await showEditModal(interaction, entry);
+  } catch (err) {
+    ctx.log.warn(
+      { err, guildId: interaction.guild.id, userId: interaction.user.id, entryId },
+      "reaction role edit modal failed",
+    );
+    await replyEphemeral(interaction, "編集画面を開けませんでした。登録内容を確認してください。");
+  }
   return true;
 }
 
