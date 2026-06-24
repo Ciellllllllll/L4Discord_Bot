@@ -614,18 +614,6 @@ export async function startExecutionFlow(
     return;
   }
 
-  let invokerMember: GuildMember;
-  try {
-    invokerMember = await guild.members.fetch(interaction.user.id);
-  } catch {
-    await interaction.editReply({ content: "メンバー情報を取得できませんでした。" });
-    return;
-  }
-  if (!isAdmin(invokerMember, ctx.config)) {
-    await interaction.editReply({ content: "権限がありません。" });
-    return;
-  }
-
   const targetUser = interaction.options.getUser("target", true);
 
   let targetMember: GuildMember;

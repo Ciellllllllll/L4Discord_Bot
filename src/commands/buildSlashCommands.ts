@@ -58,13 +58,11 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     new SlashCommandBuilder()
       .setName("処刑")
       .setDescription("処刑投票フローを開始")
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("target").setDescription("対象").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("タイムアウト延長")
       .setDescription("タイムアウト延長の投票フロー")
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("target").setDescription("対象（タイムアウト中のユーザー）").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
