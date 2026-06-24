@@ -23,7 +23,7 @@ import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 import { getAiThinkingEnabled, setAiThinkingEnabled } from "../features/ai/thinkingSettings.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
 import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
-import { muteChannelForSenryu } from "../features/senryu/senryu.filters.js";
+import { muteChannelForSenryuPersisted } from "../features/senryu/senryu.filters.js";
 import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.js";
 import { startAfkDisconnectCommand } from "../features/vc/afkDisconnect.js";
 import { handlePacchiHelp } from "../features/pacchi/pacchi.slash.js";
@@ -465,9 +465,9 @@ async function handleSenryuMute(
     return;
   }
   const channelId = interaction.channelId;
-  muteChannelForSenryu(channelId);
+  const mutedChannelIds = await muteChannelForSenryuPersisted(ctx.db, interaction.guildId!, channelId);
   ctx.log.info(
-    { channelId, userId: interaction.user.id, command: "mute" },
+    { channelId, userId: interaction.user.id, command: "mute", mutedChannelCount: mutedChannelIds.length },
     "senryu: channel muted via slash command",
   );
   await interaction.reply({

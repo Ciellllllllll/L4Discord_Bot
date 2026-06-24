@@ -9,6 +9,7 @@ export type GuildSettingsData = {
   appeal_instructions_url?: string;
   auto_reply_excluded_channel_ids?: string[];
   message_log_excluded_channel_ids?: string[];
+  senryu_muted_channel_ids?: string[];
   member_leave_channel_id?: string;
   cold_keywords?: string[];
   keyword_replies?: Record<string, string>;

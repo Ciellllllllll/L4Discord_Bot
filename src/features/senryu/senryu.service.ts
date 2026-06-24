@@ -9,10 +9,12 @@ import {
   isKuromojiTokenizerReady,
 } from "./senryu.kuromoji.js";
 import {
+  isChannelMutedBySettings,
   isChannelMutedForSenryu,
   isDetectionOptedOut,
-  muteChannelForSenryu,
+  muteChannelForSenryuPersisted,
 } from "./senryu.filters.js";
+import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { buildSenryuAiReviewUserBlock, reviewSenryuCandidateWithAi } from "./senryu.aiReview.js";
 import { buildSenryuReviewContextExcerpt } from "./senryu.reviewContext.js";
 import { senryuCandidateMatchesJsHaiku575 } from "./senryu.jsHaikuVerify.js";
@@ -33,13 +35,23 @@ function isPermissionLikeDiscordError(err: unknown): boolean {
   return false;
 }
 
-function isSenryuChannelMuted(message: Message): boolean {
-  if (isChannelMutedForSenryu(message.channel.id)) return true;
+async function isSenryuChannelMuted(ctx: BotContext, message: Message): Promise<boolean> {
+  const channelIds = [message.channel.id];
   if (message.channel.isThread()) {
     const p = message.channel.parentId;
-    if (p && isChannelMutedForSenryu(p)) return true;
+    if (p) channelIds.push(p);
   }
-  return false;
+  if (channelIds.some((channelId) => isChannelMutedForSenryu(channelId))) return true;
+
+  const guildId = message.guild?.id ?? message.guildId;
+  if (!guildId || !("db" in ctx) || !ctx.db) return false;
+  try {
+    const settings = await getGuildSettingsData(ctx.db, guildId);
+    return channelIds.some((channelId) => isChannelMutedBySettings(channelId, settings.senryu_muted_channel_ids));
+  } catch (err) {
+    ctx.log.warn({ err, guildId, channelId: message.channel.id }, "senryu muted channel settings load failed");
+    return false;
+  }
 }
 
 export async function runSenryuPipeline(
@@ -99,7 +111,7 @@ export async function runSenryuPipeline(
     logSkip("content_too_long");
     return false;
   }
-  if (isSenryuChannelMuted(message)) {
+  if (await isSenryuChannelMuted(ctx, message)) {
     logSkip("channel_muted");
     return false;
   }
@@ -293,7 +305,9 @@ export async function runSenryuPipeline(
     }
 
     if (config.SENRYU_AUTO_MUTE_ON_PERMISSION_ERROR && isPermissionLikeDiscordError(err)) {
-      muteChannelForSenryu(message.channel.id);
+      await muteChannelForSenryuPersisted(ctx.db, message.guild!.id, message.channel.id).catch((persistErr) => {
+        log.warn({ ...base, err: persistErr, channelId: message.channel.id }, "senryu auto-mute persist failed");
+      });
       log.warn({ ...base, channelId: message.channel.id }, "senryu auto-muted channel after permission error");
     }
 
