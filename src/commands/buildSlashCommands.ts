@@ -58,13 +58,11 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     new SlashCommandBuilder()
       .setName("処刑")
       .setDescription("処刑投票フローを開始")
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("target").setDescription("対象").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("タイムアウト延長")
       .setDescription("タイムアウト延長の投票フロー")
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("target").setDescription("対象（タイムアウト中のユーザー）").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
@@ -135,7 +133,7 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
     new SlashCommandBuilder()
       .setName("game_now")
-      .setDescription("Steam/Epicの無料ゲーム候補を即時取得します")
+      .setDescription("Steamの100%割引商品を即時取得して投稿します")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .toJSON(),
     new SlashCommandBuilder()

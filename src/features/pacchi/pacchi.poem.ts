@@ -26,6 +26,11 @@ const sevenLineTemplates = [
   "みんなで{word}",
 ] as const;
 
+function pickRandom<T>(items: readonly T[]): T | null {
+  if (items.length === 0) return null;
+  return items[Math.floor(Math.random() * items.length)] ?? null;
+}
+
 function buildLineCandidates(words: string[], templates: readonly string[]): string[] {
   const out = new Set<string>();
   for (const word of words) {
@@ -53,13 +58,18 @@ export function buildPacchiPoemCandidates(pattern: string, words: string[], maxC
   const fiveLines = buildLineCandidates(source, fiveLineTemplates);
   const sevenLines = buildLineCandidates(source, sevenLineTemplates);
   const candidates: string[] = [];
+  const seen = new Set<string>();
 
-  for (let i = 0; i < maxCandidates; i++) {
-    const upper = fiveLines[i % fiveLines.length];
-    const middle = sevenLines[(i * 3 + 1) % sevenLines.length];
-    const lower = fiveLines[(i * 5 + 2) % fiveLines.length];
+  const maxAttempts = maxCandidates * 4;
+  for (let i = 0; candidates.length < maxCandidates && i < maxAttempts; i++) {
+    const upper = pickRandom(fiveLines);
+    const middle = pickRandom(sevenLines);
+    const lower = pickRandom(fiveLines);
     if (!upper || !middle || !lower) break;
-    candidates.push(`${upper}\n${middle}\n${lower}`);
+    const candidate = `${upper}\n${middle}\n${lower}`;
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    candidates.push(candidate);
   }
 
   return candidates;

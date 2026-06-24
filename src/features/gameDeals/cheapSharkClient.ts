@@ -121,15 +121,6 @@ function cheapSharkErrorLogFields(err: unknown): Record<string, unknown> {
 export class CheapSharkClient {
   constructor(private readonly log: pino.Logger) {}
 
-  async fetchFreeSteamDeals(pageSize = 60): Promise<CheapSharkDeal[]> {
-    return await this.fetchDeals({
-      storeID: "1",
-      upperPrice: "0",
-      pageSize: String(pageSize),
-      sortBy: "Savings",
-    });
-  }
-
   async fetchSteamDealsByAppId(steamAppId: string): Promise<CheapSharkDeal[]> {
     if (!/^\d+$/.test(steamAppId)) return [];
     return await this.fetchDeals({

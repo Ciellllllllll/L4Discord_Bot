@@ -265,7 +265,7 @@ async function handlePoem(message: Message, ctx: BotContext, args: string[]): Pr
   const pattern = args[0] ?? "";
   const repo = createPacchiRepository(ctx.sqlite);
   const result = ctx.config.JAPANESE_WORKER_ENABLED
-    ? await buildVerifiedPacchiPoem(pattern, repo.topWords(message.guildId!, 20).map((w) => w.word), {
+    ? await buildVerifiedPacchiPoem(pattern, repo.randomWords(message.guildId!, 40).map((w) => w.word), {
       baseUrl: ctx.config.JAPANESE_WORKER_URL,
       timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
     })

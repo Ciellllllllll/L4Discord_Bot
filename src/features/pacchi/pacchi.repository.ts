@@ -175,6 +175,9 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
   const topWordsStmt = sqlite.prepare(
     "SELECT * FROM pacchi_words WHERE guild_id = ? ORDER BY count DESC, last_seen_at DESC LIMIT ?",
   );
+  const randomWordsStmt = sqlite.prepare(
+    "SELECT * FROM pacchi_words WHERE guild_id = ? ORDER BY random() LIMIT ?",
+  );
   const topLexiconByPosStmt = sqlite.prepare(`
     SELECT * FROM pacchi_lexicon
     WHERE guild_id = ? AND pos_json LIKE ?
@@ -417,6 +420,10 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
 
     topWords(guildId: string, limit: number): PacchiWordRow[] {
       return topWordsStmt.all(guildId, limit) as PacchiWordRow[];
+    },
+
+    randomWords(guildId: string, limit: number): PacchiWordRow[] {
+      return randomWordsStmt.all(guildId, limit) as PacchiWordRow[];
     },
 
     topLexiconByPos(guildId: string, pos: string, limit: number): PacchiLexiconRow[] {
