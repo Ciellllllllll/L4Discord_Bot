@@ -15,7 +15,7 @@ function pgLiteral(value: BindValue): string {
     if (!Number.isFinite(value)) return "NULL";
     return String(value);
   }
-  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "bigint") return pgLiteral(value.toString());
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (value instanceof Date) return pgLiteral(value.toISOString());
   if (Buffer.isBuffer(value)) return `decode('${value.toString("hex")}', 'hex')`;
@@ -178,14 +178,37 @@ export class SyncPostgresCompatDatabase {
   private psql(sql: string): string {
     const searchPath = `${quotePgIdent(this.schema)},public`;
     const fullSql = `SET search_path TO ${searchPath};\n${sql}`;
-    return execFileSync("psql", [this.connectionString, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", fullSql], {
+    const url = new URL(this.connectionString);
+    return execFileSync(
+      "psql",
+      [
+        "-h",
+        url.hostname,
+        "-p",
+        url.port || "5432",
+        "-U",
+        decodeURIComponent(url.username),
+        "-d",
+        decodeURIComponent(url.pathname.replace(/^\//, "")),
+        "-X",
+        "-q",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-t",
+        "-A",
+        "-c",
+        fullSql,
+      ],
+      {
       encoding: "utf8",
       env: {
         ...process.env,
+        PGPASSWORD: decodeURIComponent(url.password),
       },
       maxBuffer: 32 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
+      },
+    ).trim();
   }
 }
 
