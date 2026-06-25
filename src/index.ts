@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import "dotenv/config";
+import type DatabaseLib from "better-sqlite3";
 
 if (process.platform === "win32") {
   try {
@@ -28,6 +29,7 @@ import {
 } from "./core/db/kysely.js";
 import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
 import { createSqliteDatabase } from "./core/db/sqlite.js";
+import { createSyncPostgresCompatDatabase } from "./core/db/syncPostgresCompat.js";
 import { createLogger } from "./core/logger.js";
 import { getDetecterService } from "./features/detecter/detecterService.js";
 import { handleAutoModerationMessage } from "./features/moderation/autoModerationMessage.js";
@@ -88,6 +90,7 @@ import { ensureGameDealSchema } from "./features/gameDeals/gameDealRepository.js
 import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
 import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
 import { reconcileWerewolfGames } from "./features/werewolf/werewolfGame.js";
+import type { RuntimeSqlDatabase } from "./bot/context.js";
 
 let mainStarted = false;
 
@@ -133,47 +136,57 @@ async function main(): Promise<void> {
     "config loaded (BOT_VERSION = code default or env override; release bundle from TypeScript)",
   );
 
-  const sqlite = createSqliteDatabase(config.DATABASE_PATH);
-  const ticketSqlite = createSqliteDatabase(config.TICKET_DATABASE_PATH);
-  const messageLogSqlite = createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
-    // 19桁スノーフレークを Number で読むと精度が落ち、添付ストア検索が一致しない
+  const usePostgres = config.DB_DRIVER === "postgres";
+  const createRuntimeSqlDatabase = (sqlitePath: string, postgresSchema: string): RuntimeSqlDatabase =>
+    usePostgres
+      ? (createSyncPostgresCompatDatabase(config.DATABASE_URL!, postgresSchema) as unknown as RuntimeSqlDatabase)
+      : createSqliteDatabase(sqlitePath);
 
+  const sqlite = createRuntimeSqlDatabase(config.DATABASE_PATH, config.POSTGRES_MAIN_SCHEMA);
+  const ticketSqlite = createRuntimeSqlDatabase(config.TICKET_DATABASE_PATH, config.POSTGRES_TICKET_SCHEMA);
+  const messageLogSqlite = createRuntimeSqlDatabase(config.MESSAGE_LOG_DB_PATH, config.POSTGRES_MESSAGE_LOG_SCHEMA);
+  // 19桁スノーフレークを Number で読むと精度が落ち、添付ストア検索が一致しない
   messageLogSqlite.defaultSafeIntegers(true);
-  const messageAttachmentStoreSqlite = createSqliteDatabase(config.MESSAGE_ATTACHMENT_STORE_DB_PATH);
-  const vcTimeSqlite = createSqliteDatabase(config.VC_TIME_DATABASE_PATH);
-  const aiHistorySqlite = createSqliteDatabase(config.AI_HISTORY_DATABASE_PATH);
-  const automodSqlite = createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
-  ensureTicketDatabaseSchema(ticketSqlite);
-  ensureVcTimeSchema(vcTimeSqlite);
-  ensurePacchiSchemaOnce(sqlite);
-  ensureGameDealSchema(sqlite);
-  ensureAiHistorySchema(aiHistorySqlite);
-  ensureAutomoderationSchema(automodSqlite);
-  prepareMessageLogsDatabase(messageLogSqlite);
-  prepareMessageAttachmentStore(messageAttachmentStoreSqlite);
+  const messageAttachmentStoreSqlite = createRuntimeSqlDatabase(
+    config.MESSAGE_ATTACHMENT_STORE_DB_PATH,
+    config.POSTGRES_MESSAGE_ATTACHMENT_SCHEMA,
+  );
+  const vcTimeSqlite = createRuntimeSqlDatabase(config.VC_TIME_DATABASE_PATH, config.POSTGRES_VC_TIME_SCHEMA);
+  const aiHistorySqlite = createRuntimeSqlDatabase(config.AI_HISTORY_DATABASE_PATH, config.POSTGRES_AI_HISTORY_SCHEMA);
+  const automodSqlite = createRuntimeSqlDatabase(config.AUTOMODERATION_DATABASE_PATH, config.POSTGRES_AUTOMOD_SCHEMA);
+  if (!usePostgres) {
+    ensureTicketDatabaseSchema(ticketSqlite as DatabaseLib.Database);
+    ensureVcTimeSchema(vcTimeSqlite as DatabaseLib.Database);
+    ensurePacchiSchemaOnce(sqlite as DatabaseLib.Database);
+    ensureGameDealSchema(sqlite as DatabaseLib.Database);
+    ensureAiHistorySchema(aiHistorySqlite as DatabaseLib.Database);
+    ensureAutomoderationSchema(automodSqlite as DatabaseLib.Database);
+    prepareMessageLogsDatabase(messageLogSqlite as DatabaseLib.Database);
+    prepareMessageAttachmentStore(messageAttachmentStoreSqlite as DatabaseLib.Database);
+  }
   const db =
-    config.DB_DRIVER === "postgres"
+    usePostgres
       ? createPostgresMainKysely({
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_MAIN_SCHEMA,
         })
       : createKysely(sqlite);
   const ticketDb =
-    config.DB_DRIVER === "postgres"
+    usePostgres
       ? createPostgresTicketKysely({
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_TICKET_SCHEMA,
         })
       : createTicketKysely(ticketSqlite);
   const aiHistoryDb =
-    config.DB_DRIVER === "postgres"
+    usePostgres
       ? createPostgresAiHistoryKysely({
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_AI_HISTORY_SCHEMA,
         })
       : createAiHistoryKysely(aiHistorySqlite);
   const automodDb =
-    config.DB_DRIVER === "postgres"
+    usePostgres
       ? createPostgresAutomoderationKysely({
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_AUTOMOD_SCHEMA,
@@ -188,7 +201,7 @@ async function main(): Promise<void> {
     vcTimeSqlite.prepare("SELECT 1").get();
     aiHistorySqlite.prepare("SELECT 1").get();
     automodSqlite.prepare("SELECT 1").get();
-    if (config.DB_DRIVER === "postgres") {
+    if (usePostgres) {
       await pingPostgresKysely("main", db as Kysely<unknown>, config.POSTGRES_MAIN_SCHEMA);
       await pingPostgresKysely("ticket", ticketDb as Kysely<unknown>, config.POSTGRES_TICKET_SCHEMA);
       await pingPostgresKysely("aiHistory", aiHistoryDb as Kysely<unknown>, config.POSTGRES_AI_HISTORY_SCHEMA);
@@ -205,7 +218,7 @@ async function main(): Promise<void> {
         automoderation: config.AUTOMODERATION_DATABASE_PATH,
         reminderLazy: config.REMINDER_DATABASE_PATH,
       },
-      config.DB_DRIVER === "postgres" ? "database connection ok (postgres kysely + sqlite legacy)" : "sqlite connection ok",
+      config.DB_DRIVER === "postgres" ? "database connection ok (postgres runtime)" : "sqlite connection ok",
     );
   } catch (e) {
     log.error({ err: e }, "database ping failed");
@@ -213,40 +226,42 @@ async function main(): Promise<void> {
   }
 
   try {
-    const beforeV = getSqliteUserVersion(sqlite);
-    const applied = applyPendingSqliteMigrations(sqlite, {
-      beforeApplyVersion(version, mainDb) {
-        if (version === 10) {
-          copyTicketDataFromMainToTicketDb(mainDb, ticketSqlite);
-        }
-        if (version === 11) {
-          copyAiHistoryFromMainToDedicatedDb(mainDb, aiHistorySqlite);
-        }
-        if (version === 12) {
-          const rs = createSqliteDatabase(config.REMINDER_DATABASE_PATH);
-          try {
-            copyRemindersFromMainToReminderDb(mainDb, rs);
-          } finally {
-            rs.close();
-          }
-        }
-      },
-    });
-    const afterV = getSqliteUserVersion(sqlite);
-    if (applied.length > 0) {
+    if (usePostgres) {
       log.info(
-        { applied, userVersion: afterV, previousVersion: beforeV, dbDriver: config.DB_DRIVER },
-        config.DB_DRIVER === "postgres"
-          ? "sqlite migrations applied for legacy repositories"
-          : "sqlite migrations applied",
+        {
+          mainSchema: config.POSTGRES_MAIN_SCHEMA,
+          ticketSchema: config.POSTGRES_TICKET_SCHEMA,
+          messageLogSchema: config.POSTGRES_MESSAGE_LOG_SCHEMA,
+          vcTimeSchema: config.POSTGRES_VC_TIME_SCHEMA,
+        },
+        "sqlite migrations skipped because runtime databases are postgres",
       );
     } else {
-      log.info(
-        { userVersion: afterV, dbDriver: config.DB_DRIVER },
-        config.DB_DRIVER === "postgres"
-          ? "sqlite schema up to date for legacy repositories (no pending migrations)"
-          : "sqlite schema up to date (no pending migrations)",
-      );
+      const beforeV = getSqliteUserVersion(sqlite as DatabaseLib.Database);
+      const applied = applyPendingSqliteMigrations(sqlite as DatabaseLib.Database, {
+        beforeApplyVersion(version, mainDb) {
+          if (version === 10) {
+            copyTicketDataFromMainToTicketDb(mainDb, ticketSqlite);
+          }
+          if (version === 11) {
+            copyAiHistoryFromMainToDedicatedDb(mainDb, aiHistorySqlite);
+          }
+          if (version === 12) {
+            const rs = createSqliteDatabase(config.REMINDER_DATABASE_PATH);
+            try {
+              copyRemindersFromMainToReminderDb(mainDb, rs);
+            } finally {
+              rs.close();
+            }
+          }
+        },
+      });
+      const afterV = getSqliteUserVersion(sqlite as DatabaseLib.Database);
+      if (applied.length > 0) {
+        log.info({ applied, userVersion: afterV, previousVersion: beforeV, dbDriver: config.DB_DRIVER }, "sqlite migrations applied");
+      } else {
+        log.info({ userVersion: afterV, dbDriver: config.DB_DRIVER }, "sqlite schema up to date (no pending migrations)");
+      }
     }
   } catch (e) {
     log.error({ err: e }, "sqlite migration failed");
@@ -268,8 +283,8 @@ async function main(): Promise<void> {
     },
     "discord client created",
   );
-  const vcTemp = new VcTemporaryChannelManager(log, client, config, sqlite);
-  bindSenryuRepository(sqlite);
+  const vcTemp = new VcTemporaryChannelManager(log, client, config, sqlite as DatabaseLib.Database);
+  bindSenryuRepository(sqlite as DatabaseLib.Database);
 
   const ctx: BotContext = {
     config,
@@ -286,7 +301,7 @@ async function main(): Promise<void> {
     automodSqlite,
     log,
     client,
-    vcRanking: new SqliteVcRankingRepository(vcTimeSqlite, config.VC_TIME_RANKING_TIMEZONE),
+    vcRanking: new SqliteVcRankingRepository(vcTimeSqlite as DatabaseLib.Database, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
   };
   const utilitiesBundle = createUtilitiesMessageHandlers(ctx);

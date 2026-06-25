@@ -7,31 +7,33 @@ import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabas
 import type { IVcRankingRepository } from "../adapters/legacyDb/vcRankingRepository.js";
 import type { VcTemporaryChannelManager } from "../features/vc/vcTemporaryChannelManager.js";
 
+export type RuntimeSqlDatabase = DatabaseLib.Database;
+
 export type BotContext = {
   config: AppConfig;
   db: Kysely<Database>;
-  sqlite: DatabaseLib.Database;
-    // Modmail / 異議申し立て / 汎用 tickets（ticket.db）
+  sqlite: RuntimeSqlDatabase;
+  // Modmail / 異議申し立て / 汎用 tickets（ticket.db）
 
   ticketDb: Kysely<TicketDatabase>;
-  ticketSqlite: DatabaseLib.Database;
-    // メッセージログ専用（message.db）
+  ticketSqlite: RuntimeSqlDatabase;
+  // メッセージログ専用（message.db）
 
-  messageLogSqlite: DatabaseLib.Database;
-    // 添付ローカル複製のメタ（message_attachment_store.db）。message.db とは別ファイル
+  messageLogSqlite: RuntimeSqlDatabase;
+  // 添付ローカル複製のメタ（message_attachment_store.db）。message.db とは別ファイル
 
-  messageAttachmentStoreSqlite: DatabaseLib.Database;
-    // VC 滞在時間（sessions）専用（vc_time.db）
+  messageAttachmentStoreSqlite: RuntimeSqlDatabase;
+  // VC 滞在時間（sessions）専用（vc_time.db）
 
-  vcTimeSqlite: DatabaseLib.Database;
-    // /q 会話履歴（AI_History.db）
+  vcTimeSqlite: RuntimeSqlDatabase;
+  // /q 会話履歴（AI_History.db）
 
   aiHistoryDb: Kysely<AiHistoryDatabase>;
-  aiHistorySqlite: DatabaseLib.Database;
-    // 自動モデレーション設定（Automoderation.db）
+  aiHistorySqlite: RuntimeSqlDatabase;
+  // 自動モデレーション設定（Automoderation.db）
 
   automodDb: Kysely<AutomoderationDatabase>;
-  automodSqlite: DatabaseLib.Database;
+  automodSqlite: RuntimeSqlDatabase;
   log: pino.Logger;
   client: Client;
   vcRanking: IVcRankingRepository;
