@@ -41,7 +41,7 @@ export function mergedIntervalSeconds(intervals: VcRankingInterval[]): number {
 
 function normalizeUserId(userId: string | bigint | number): string {
   if (typeof userId === "string") return userId.trim();
-  return bigIntToSnowflake(typeof userId === "bigint" ? userId : BigInt(Math.trunc(userId)));
+  return bigIntToSnowflake(userId);
 }
 
 export class SqliteVcRankingRepository implements IVcRankingRepository {

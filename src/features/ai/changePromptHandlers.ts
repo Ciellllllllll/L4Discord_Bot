@@ -2,6 +2,7 @@ import { MessageFlags, type Attachment, type ModalSubmitInteraction } from "disc
 import type { BotContext } from "../../bot/context.js";
 import { AiQueryService } from "./aiQueryService.js";
 import { CHANGE_PROMPT_FILE_ID, CHANGE_PROMPT_MODAL_ID, CHANGE_PROMPT_TEXT_ID } from "./changePromptIds.js";
+import { readResponseArrayBufferWithLimit } from "./fetchWithLimits.js";
 
 // モーダル経由のプロンプト用テキスト添付の最大バイト（本文のみ）
 
@@ -13,17 +14,22 @@ function isTxtOrMdFilename(name: string): boolean {
 }
 
 async function fetchAttachmentAsUtf8(att: Attachment, log: BotContext["log"]): Promise<string | null> {
+  if (att.size > MAX_PROMPT_ATTACHMENT_BYTES) {
+    log.warn({ size: att.size }, "change_prompt attachment too large");
+    return null;
+  }
   try {
-    const res = await fetch(att.url, { signal: AbortSignal.timeout(45_000) });
+    const res = await fetch(att.url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
       log.warn({ status: res.status }, "change_prompt attachment fetch failed");
       return null;
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) {
-      log.warn({ size: buf.byteLength }, "change_prompt attachment too large");
+    const contentLength = Number(res.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > MAX_PROMPT_ATTACHMENT_BYTES) {
+      log.warn({ size: contentLength }, "change_prompt attachment too large");
       return null;
     }
+    const buf = Buffer.from(await readResponseArrayBufferWithLimit(res, MAX_PROMPT_ATTACHMENT_BYTES));
     if (buf.byteLength === 0) return "";
     return buf.toString("utf8");
   } catch (e) {

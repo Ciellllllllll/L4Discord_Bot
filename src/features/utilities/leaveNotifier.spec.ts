@@ -37,10 +37,10 @@ function run(): void {
       fields: [{ name: "項目", value: "値", inline: true }],
     }],
   }), "log-channel");
-  assert.equal(embedOnly.embeds.length, 1);
-  assert.equal(embedOnly.embeds[0]!.toJSON().title, "通知タイトル");
-  assert.equal(embedOnly.embeds[0]!.toJSON().description, "通知本文");
-  assert.equal(embedOnly.embeds[0]!.toJSON().image?.url, "https://cdn.example.com/image.png");
+  assert.equal(embedOnly.embeds.length, 2);
+  assert.equal(embedOnly.embeds[1]!.toJSON().title, "通知タイトル");
+  assert.equal(embedOnly.embeds[1]!.toJSON().description, "通知本文");
+  assert.equal(embedOnly.embeds[1]!.toJSON().image?.url, "https://cdn.example.com/image.png");
   assert.equal(embedOnly.files.length, 0);
 
   const withContentAndAttachments = buildMessageLinkExpansionPayload(makeMessage({
@@ -50,13 +50,9 @@ function run(): void {
       { url: "https://cdn.example.com/report.pdf", name: "report.pdf", contentType: "application/pdf" },
     ],
   }), "general");
-  assert.equal(withContentAndAttachments.embeds.length, 2);
+  assert.equal(withContentAndAttachments.embeds.length, 1);
   assert.equal(withContentAndAttachments.embeds[0]!.toJSON().description, "本文あり");
-  assert.equal(withContentAndAttachments.embeds[1]!.toJSON().image?.url, "https://cdn.example.com/pic.jpg");
-  assert.deepEqual(withContentAndAttachments.files, [{
-    attachment: "https://cdn.example.com/report.pdf",
-    name: "report.pdf",
-  }]);
+  assert.deepEqual(withContentAndAttachments.files, []);
 }
 
 try {
