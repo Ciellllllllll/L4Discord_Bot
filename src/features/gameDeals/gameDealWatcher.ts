@@ -159,7 +159,10 @@ async function scanAndNotifySubscriptions(ctx: BotContext): Promise<number> {
     for (const group of subNotifyGroups.values()) {
       const { hit } = group;
       if (!configuredChannelId) {
-        ctx.log.warn({ subscriptionIds: group.subscriptionIds }, "game deal subscription notification skipped because GAME_DEAL_CHANNEL_ID is not configured");
+        ctx.log.warn(
+          { botProfile: ctx.config.BOT_PROFILE, subscriptionIds: group.subscriptionIds },
+          "game deal subscription notification skipped because profile GAME_DEAL_CHANNEL_ID is not configured",
+        );
         continue;
       }
       const channel = await fetchTextChannel(ctx.client, configuredChannelId);
@@ -246,7 +249,15 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
       running = false;
     }
   };
-  ctx.log.info({ intervalMs }, "game deal watcher started");
+  ctx.log.info(
+    {
+      intervalMs,
+      botProfile: ctx.config.BOT_PROFILE,
+      gameDealChannelId: configuredGameDealChannelId(ctx),
+      gameDealNotifyRoleId: configuredGameDealRoleId(ctx),
+    },
+    "game deal watcher started",
+  );
   setTimeout(() => void tick().catch((err) => ctx.log.warn({ err }, "game deal startup scan failed")), 8_000);
   return setInterval(() => void tick().catch((err) => ctx.log.warn({ err }, "game deal watcher tick failed")), intervalMs);
 }
