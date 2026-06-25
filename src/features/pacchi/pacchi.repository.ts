@@ -102,21 +102,21 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
     INSERT INTO pacchi_words (id, guild_id, word, count, last_seen_at, created_at)
     VALUES (@id, @guild_id, @word, 1, @now, @now)
     ON CONFLICT(guild_id, word) DO UPDATE SET
-      count = count + 1,
+      count = pacchi_words.count + 1,
       last_seen_at = excluded.last_seen_at
   `);
   const upsertPhraseStmt = sqlite.prepare(`
     INSERT INTO pacchi_phrases (id, guild_id, phrase, count, last_seen_at, created_at)
     VALUES (@id, @guild_id, @phrase, 1, @now, @now)
     ON CONFLICT(guild_id, phrase) DO UPDATE SET
-      count = count + 1,
+      count = pacchi_phrases.count + 1,
       last_seen_at = excluded.last_seen_at
   `);
   const upsertEmojiStmt = sqlite.prepare(`
     INSERT INTO pacchi_emojis (id, guild_id, emoji_key, kind, display, count, last_seen_at, created_at)
     VALUES (@id, @guild_id, @emoji_key, @kind, @display, 1, @now, @now)
     ON CONFLICT(guild_id, emoji_key) DO UPDATE SET
-      count = count + 1,
+      count = pacchi_emojis.count + 1,
       display = excluded.display,
       last_seen_at = excluded.last_seen_at
   `);
@@ -134,14 +134,14 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
       is_proper_noun = excluded.is_proper_noun,
       is_oov = excluded.is_oov,
       source = excluded.source,
-      count = count + 1,
+      count = pacchi_lexicon.count + 1,
       last_seen_at = excluded.last_seen_at
   `);
   const upsertCooccurrenceStmt = sqlite.prepare(`
     INSERT INTO pacchi_cooccurrences (id, guild_id, word_a, word_b, count, last_seen_at, created_at)
     VALUES (@id, @guild_id, @word_a, @word_b, 1, @now, @now)
     ON CONFLICT(guild_id, word_a, word_b) DO UPDATE SET
-      count = count + 1,
+      count = pacchi_cooccurrences.count + 1,
       last_seen_at = excluded.last_seen_at
   `);
   const upsertUserDictionaryEntryStmt = sqlite.prepare(`
@@ -149,7 +149,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
     VALUES (@id, @guild_id, @surface, @reading, @reason, 1, @now, @now)
     ON CONFLICT(guild_id, surface, reading) DO UPDATE SET
       reason = excluded.reason,
-      count = count + 1,
+      count = pacchi_user_dictionary_entries.count + 1,
       last_seen_at = excluded.last_seen_at
   `);
   const upsertSentencePatternStmt = sqlite.prepare(`
@@ -159,8 +159,8 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
       @id, @guild_id, @surface_pattern, @slots_json, @ending, @source_kind, 1, @safe_level, @now
     )
     ON CONFLICT(guild_id, surface_pattern) DO UPDATE SET
-      count = count + 1,
-      safe_level = min(safe_level, excluded.safe_level)
+      count = pacchi_sentence_patterns.count + 1,
+      safe_level = min(pacchi_sentence_patterns.safe_level, excluded.safe_level)
   `);
   const insertSenryuSubmissionStmt = sqlite.prepare(`
     INSERT INTO pacchi_senryu_submissions (
@@ -660,7 +660,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
             INSERT INTO pacchi_words (id, guild_id, word, count, last_seen_at, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, word) DO UPDATE SET
-              count = count + excluded.count,
+              count = pacchi_words.count + excluded.count,
               last_seen_at = excluded.last_seen_at
           `).run(ulid(), guildId, word.word, Math.max(1, word.count), now, now);
         }
@@ -669,7 +669,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
             INSERT INTO pacchi_phrases (id, guild_id, phrase, count, last_seen_at, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, phrase) DO UPDATE SET
-              count = count + excluded.count,
+              count = pacchi_phrases.count + excluded.count,
               last_seen_at = excluded.last_seen_at
           `).run(ulid(), guildId, phrase.phrase, Math.max(1, phrase.count), now, now);
         }
@@ -678,7 +678,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
             INSERT INTO pacchi_emojis (id, guild_id, emoji_key, kind, display, count, last_seen_at, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, emoji_key) DO UPDATE SET
-              count = count + excluded.count,
+              count = pacchi_emojis.count + excluded.count,
               display = excluded.display,
               last_seen_at = excluded.last_seen_at
           `).run(ulid(), guildId, emoji.key, emoji.kind, emoji.display, Math.max(1, emoji.count), now, now);
@@ -695,7 +695,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
               is_proper_noun = excluded.is_proper_noun,
               is_oov = excluded.is_oov,
               source = excluded.source,
-              count = count + excluded.count,
+              count = pacchi_lexicon.count + excluded.count,
               last_seen_at = excluded.last_seen_at
           `).run(
             ulid(),
@@ -719,7 +719,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
             INSERT INTO pacchi_cooccurrences (id, guild_id, word_a, word_b, count, last_seen_at, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, word_a, word_b) DO UPDATE SET
-              count = count + excluded.count,
+              count = pacchi_cooccurrences.count + excluded.count,
               last_seen_at = excluded.last_seen_at
           `).run(ulid(), guildId, a, b, Math.max(1, co.count), now, now);
         }
@@ -729,7 +729,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, surface, reading) DO UPDATE SET
               reason = excluded.reason,
-              count = count + excluded.count,
+              count = pacchi_user_dictionary_entries.count + excluded.count,
               last_seen_at = excluded.last_seen_at
           `).run(ulid(), guildId, entry.surface, entry.reading, entry.reason, Math.max(1, entry.count), now, now);
         }
@@ -739,8 +739,8 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
               id, guild_id, surface_pattern, slots_json, ending, source_kind, count, safe_level, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, surface_pattern) DO UPDATE SET
-              count = count + excluded.count,
-              safe_level = min(safe_level, excluded.safe_level)
+              count = pacchi_sentence_patterns.count + excluded.count,
+              safe_level = min(pacchi_sentence_patterns.safe_level, excluded.safe_level)
           `).run(
             ulid(),
             guildId,

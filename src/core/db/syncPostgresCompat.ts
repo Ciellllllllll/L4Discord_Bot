@@ -49,8 +49,16 @@ function pragmaTableInfoName(sql: string): string | null {
   return match?.[1] ?? null;
 }
 
+function quoteCamelCaseAliases(sql: string): string {
+  return sql.replace(/\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b/g, (match, alias: string) => {
+    if (!/[A-Z]/.test(alias)) return match;
+    return `AS ${quotePgIdent(alias)}`;
+  });
+}
+
 function translateSql(sql: string): string {
   let next = stripTrailingSemicolon(sql);
+  next = quoteCamelCaseAliases(next);
   next = next.replace(/\bINSERT\s+OR\s+IGNORE\s+INTO\b/gi, "INSERT INTO");
   if (/^\s*INSERT\s+INTO\b/i.test(next) && !/\bON\s+CONFLICT\b/i.test(next)) {
     next += " ON CONFLICT DO NOTHING";
@@ -58,6 +66,10 @@ function translateSql(sql: string): string {
   next = next.replace(
     /MAX\(\s*steam_paid_price_history\.normal_price_cents\s*,\s*excluded\.normal_price_cents\s*\)/gi,
     "GREATEST(steam_paid_price_history.normal_price_cents, excluded.normal_price_cents)",
+  );
+  next = next.replace(
+    /min\(\s*pacchi_sentence_patterns\.safe_level\s*,\s*excluded\.safe_level\s*\)/gi,
+    "LEAST(pacchi_sentence_patterns.safe_level, excluded.safe_level)",
   );
   return next;
 }
@@ -203,13 +215,13 @@ export class SyncPostgresCompatDatabase {
         fullSql,
       ],
       {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PGPASSWORD: decodeURIComponent(url.password),
-      },
-      maxBuffer: 32 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PGPASSWORD: decodeURIComponent(url.password),
+        },
+        maxBuffer: 32 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
       },
     ).trim();
   }
