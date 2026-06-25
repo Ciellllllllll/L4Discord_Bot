@@ -213,6 +213,7 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
   const clearPhrasesStmt = sqlite.prepare("DELETE FROM pacchi_phrases WHERE guild_id = ?");
   const clearEmojisStmt = sqlite.prepare("DELETE FROM pacchi_emojis WHERE guild_id = ?");
   const clearReplyLogsStmt = sqlite.prepare("DELETE FROM pacchi_reply_logs WHERE guild_id = ?");
+  const countReplyLogsStmt = sqlite.prepare("SELECT count(*) AS count FROM pacchi_reply_logs WHERE guild_id = ?");
 
   const openSleepStmt = sqlite.prepare(
     "SELECT * FROM pacchi_sleep_logs WHERE guild_id = ? AND user_id = ? AND wake_at IS NULL ORDER BY sleep_at DESC LIMIT 1",
@@ -473,14 +474,20 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
     },
 
     forgetAll(guildId: string): number {
+      const stats = statsStmt.get({ guild_id: guildId }) as PacchiMemoryStats;
+      const replyLogs = countReplyLogsStmt.get(guildId) as { count: number } | undefined;
+      const before = Number(stats.wordCount ?? 0)
+        + Number(stats.phraseCount ?? 0)
+        + Number(stats.emojiCount ?? 0)
+        + Number(replyLogs?.count ?? 0);
       const tx = sqlite.transaction(() => {
-        const a = Number(clearWordsStmt.run(guildId).changes);
-        const b = Number(clearPhrasesStmt.run(guildId).changes);
-        const c = Number(clearEmojisStmt.run(guildId).changes);
-        const d = Number(clearReplyLogsStmt.run(guildId).changes);
-        return a + b + c + d;
+        clearWordsStmt.run(guildId);
+        clearPhrasesStmt.run(guildId);
+        clearEmojisStmt.run(guildId);
+        clearReplyLogsStmt.run(guildId);
       });
-      return tx();
+      tx();
+      return before;
     },
 
     logReply(guildId: string, channelId: string, userId: string, triggerType: string, replyText: string): void {

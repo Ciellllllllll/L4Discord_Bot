@@ -114,6 +114,15 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
       await message.reply("lol watcher は無効です。");
       return true;
     }
+    if (!message.member) {
+      await message.reply("メンバー情報を取得できませんでした。");
+      return true;
+    }
+    if (!isAdmin(message.member, ctx.config)) {
+      await message.reply("このコマンドは管理者のみ使用できます。");
+      ctx.log.info({ command: "lol", userId: message.author.id, outcome: "not_admin" }, "prefix command");
+      return true;
+    }
     if (!message.guildId || !message.channelId || !message.channel.isSendable()) {
       await message.reply("このチャンネルはLoL通知先に設定できません。").catch(() => undefined);
       return true;
@@ -121,8 +130,11 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
     const repo = new LolWatcherRepository(ctx.sqlite);
     const previousChannelId = repo.getNotificationChannelId();
     repo.setNotificationChannelId(message.channelId);
-    if (previousChannelId) return true;
-    await message.reply("LoL通知先をこのチャンネルに設定しました。");
+    await message.reply(
+      previousChannelId && previousChannelId !== message.channelId
+        ? `LoL通知先を <#${previousChannelId}> からこのチャンネルに変更しました。`
+        : "LoL通知先をこのチャンネルに設定しました。",
+    );
     ctx.log.info(
       { command: "lol", userId: message.author.id, channelId: message.channelId },
       "prefix command",

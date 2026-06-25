@@ -20,6 +20,10 @@ type SqliteIndex = {
   partial: 0 | 1;
 };
 
+type SqliteSchemaRow = {
+  sql: string | null;
+};
+
 type SqliteIndexColumn = {
   seqno: number | bigint;
   cid: number | bigint;
@@ -106,7 +110,7 @@ async function ensureUniqueIndexes(
 ): Promise<void> {
   const indexes = sqlite.prepare(`PRAGMA index_list(${quoteSqliteIdent(table)})`).all() as SqliteIndex[];
   for (const index of indexes) {
-    if (!index.unique || index.partial) continue;
+    if (!index.unique) continue;
     const cols = sqlite.prepare(`PRAGMA index_info(${quoteSqliteIdent(index.name)})`).all() as SqliteIndexColumn[];
     const names = cols
       .sort((a, b) => Number(a.seqno) - Number(b.seqno))
@@ -114,14 +118,32 @@ async function ensureUniqueIndexes(
       .filter(Boolean);
     if (names.length === 0) continue;
     const indexName = `${schema}_${table}_${index.name}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 60);
+    const partialWhere = index.partial ? sqliteIndexWhereClause(sqlite, index.name) : null;
+    if (index.partial && !partialWhere) {
+      console.warn(`[skip] ${schema}.${table}.${index.name}: partial unique index WHERE clause could not be converted`);
+      continue;
+    }
     await pool.query(
-      `create unique index if not exists ${quotePgIdent(indexName)} on ${quotePgIdent(schema)}.${quotePgIdent(table)} (${names.map(quotePgIdent).join(", ")})`,
+      `create unique index if not exists ${quotePgIdent(indexName)} on ${quotePgIdent(schema)}.${quotePgIdent(table)} (${names.map(quotePgIdent).join(", ")})${partialWhere ? ` where ${partialWhere}` : ""}`,
     );
   }
 }
 
 function quoteSqliteIdent(name: string): string {
   return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+function sqliteIndexWhereClause(sqlite: Database.Database, indexName: string): string | null {
+  const row = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+    .get(indexName) as SqliteSchemaRow | undefined;
+  const sql = row?.sql ?? "";
+  const match = /\bWHERE\b([\s\S]+)$/i.exec(sql);
+  if (!match) return null;
+  return match[1]!
+    .trim()
+    .replace(/;+\s*$/, "")
+    .replace(/"([^"]+)"/g, (_m, ident: string) => quotePgIdent(ident));
 }
 
 function normalizeValue(column: SqliteColumn, value: unknown): unknown {

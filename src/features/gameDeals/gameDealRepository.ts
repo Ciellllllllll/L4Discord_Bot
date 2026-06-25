@@ -98,6 +98,8 @@ type SteamFreeEventRow = {
   image_url: string | null;
 };
 
+const ensuredDatabases = new WeakSet<DatabaseLib.Database>();
+
 type SteamVerifyQueueRow = {
   appid: string;
   reason: string;
@@ -278,6 +280,12 @@ export function ensureGameDealSchema(db: DatabaseLib.Database): void {
   ensureColumn(db, "game_deal_subscription_notifications", "target_id", "TEXT");
 }
 
+export function ensureGameDealSchemaOnce(db: DatabaseLib.Database): void {
+  if (ensuredDatabases.has(db)) return;
+  ensureGameDealSchema(db);
+  ensuredDatabases.add(db);
+}
+
 function toSteamPaidHistory(row: SteamPaidPriceHistoryRow): SteamPaidPriceHistory {
   return {
     appid: row.appid,
@@ -350,7 +358,7 @@ function toDealWatch(row: DealWatchRow): DealWatchItem {
 
 export class GameDealRepository {
   constructor(private readonly db: DatabaseLib.Database) {
-    ensureGameDealSchema(db);
+    ensureGameDealSchemaOnce(db);
   }
 
   getNotifyChannel(guildId: string): GameDealNotifyChannel | null {

@@ -5,7 +5,9 @@ import { extname, join, relative, resolve } from "node:path";
 import { AttachmentBuilder } from "discord.js";
 import type DatabaseLib from "better-sqlite3";
 import type { Message, PartialMessage } from "discord.js";
+import type { Pool } from "pg";
 import type pino from "pino";
+import { readResponseArrayBufferWithLimit } from "../ai/fetchWithLimits.js";
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_FETCH_TIMEOUT_MS = 45_000;
@@ -108,6 +110,10 @@ export async function archiveMessageAttachmentsFromDiscord(
     if (!/^https?:\/\//i.test(url)) continue;
 
     const filename = String(a.name || "attachment");
+    if (Number.isFinite(a.size) && a.size > MAX_DOWNLOAD_BYTES) {
+      log.debug({ guildId, messageId, attachmentId, size: a.size }, "attachment archive skipped (too large attachment)");
+      continue;
+    }
     const kind = inferKind(a.contentType ?? null, filename);
     const ext = pickExtension(filename, a.contentType ?? null);
     const safeFile = `${messageId}_${attachmentId}${ext}`;
@@ -129,11 +135,7 @@ export async function archiveMessageAttachmentsFromDiscord(
         log.debug({ guildId, messageId, attachmentId, cl }, "attachment archive skipped (too large header)");
         continue;
       }
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > MAX_DOWNLOAD_BYTES) {
-        log.debug({ guildId, messageId, attachmentId, size: buf.length }, "attachment archive skipped (too large body)");
-        continue;
-      }
+      const buf = Buffer.from(await readResponseArrayBufferWithLimit(res, MAX_DOWNLOAD_BYTES));
       await writeFile(absPath, buf);
       const sha256 = createHash("sha256").update(buf).digest("hex");
       const relpath = relative(process.cwd(), absPath).replace(/\\/g, "/") || absPath;
@@ -157,6 +159,76 @@ export async function archiveMessageAttachmentsFromDiscord(
   }
 }
 
+export async function archiveMessageAttachmentsFromDiscordPostgres(
+  pool: Pool,
+  filesRootResolved: string,
+  message: Message | PartialMessage,
+  log: pino.Logger,
+): Promise<void> {
+  const guildId = normalizeId(message.guildId ?? message.guild?.id);
+  const messageId = normalizeId(message.id);
+  if (!guildId || !messageId) return;
+
+  const att = message.attachments;
+  if (!att || typeof att.values !== "function") return;
+
+  for (const a of att.values()) {
+    const attachmentId = normalizeId(a.id);
+    if (!attachmentId) continue;
+
+    const exists = await pool.query(
+      `SELECT 1 AS ok FROM message_log_attachment_files WHERE guild_id = $1 AND message_id = $2 AND attachment_id = $3`,
+      [guildId, messageId, attachmentId],
+    );
+    if ((exists.rowCount ?? 0) > 0) continue;
+
+    const url = String(a.url || a.proxyURL || "").trim();
+    if (!/^https?:\/\//i.test(url)) continue;
+
+    const filename = String(a.name || "attachment");
+    if (Number.isFinite(a.size) && a.size > MAX_DOWNLOAD_BYTES) {
+      log.debug({ guildId, messageId, attachmentId, size: a.size }, "attachment archive skipped (too large attachment)");
+      continue;
+    }
+    const kind = inferKind(a.contentType ?? null, filename);
+    const ext = pickExtension(filename, a.contentType ?? null);
+    const safeFile = `${messageId}_${attachmentId}${ext}`;
+    const dir = join(filesRootResolved, guildId);
+    await mkdir(dir, { recursive: true });
+    const absPath = join(dir, safeFile);
+
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": "L4DiscordBot/1.0 (message log archive)" },
+        signal: AbortSignal.timeout(ATTACHMENT_FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        log.warn({ guildId, messageId, attachmentId, status: res.status }, "attachment archive fetch failed");
+        continue;
+      }
+      const cl = res.headers.get("content-length");
+      if (cl && Number.isFinite(Number(cl)) && Number(cl) > MAX_DOWNLOAD_BYTES) {
+        log.debug({ guildId, messageId, attachmentId, cl }, "attachment archive skipped (too large header)");
+        continue;
+      }
+      const buf = Buffer.from(await readResponseArrayBufferWithLimit(res, MAX_DOWNLOAD_BYTES));
+      await writeFile(absPath, buf);
+      const sha256 = createHash("sha256").update(buf).digest("hex");
+      const relpath = relative(process.cwd(), absPath).replace(/\\/g, "/") || absPath;
+      const now = new Date().toISOString();
+      await pool.query(
+        `INSERT INTO message_log_attachment_files
+          (guild_id, message_id, attachment_id, filename, content_type, size_bytes, kind, storage_relpath, sha256_hex, source_url, fetched_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (guild_id, message_id, attachment_id) DO NOTHING`,
+        [guildId, messageId, attachmentId, filename, a.contentType ?? null, buf.length, kind, relpath, sha256, url, now],
+      );
+    } catch (e) {
+      log.warn({ err: e, guildId, messageId, attachmentId }, "attachment archive error");
+    }
+  }
+}
+
 export function scheduleArchiveMessageAttachments(
   storeDb: DatabaseLib.Database | undefined,
   filesRoot: string,
@@ -167,6 +239,19 @@ export function scheduleArchiveMessageAttachments(
   const root = resolve(process.cwd(), filesRoot);
   void archiveMessageAttachmentsFromDiscord(storeDb, root, message, log).catch((e) => {
     log.warn({ err: e }, "scheduleArchiveMessageAttachments failed");
+  });
+}
+
+export function scheduleArchiveMessageAttachmentsPostgres(
+  pool: Pool | undefined,
+  filesRoot: string,
+  message: Message | PartialMessage,
+  log: pino.Logger,
+): void {
+  if (!pool) return;
+  const root = resolve(process.cwd(), filesRoot);
+  void archiveMessageAttachmentsFromDiscordPostgres(pool, root, message, log).catch((e) => {
+    log.warn({ err: e }, "scheduleArchiveMessageAttachmentsPostgres failed");
   });
 }
 

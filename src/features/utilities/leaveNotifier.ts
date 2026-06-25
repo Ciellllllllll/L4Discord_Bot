@@ -1,4 +1,11 @@
-import { EmbedBuilder, type APIEmbed, type GuildMember, type Message, type PartialGuildMember } from "discord.js";
+import {
+  EmbedBuilder,
+  PermissionFlagsBits,
+  type APIEmbed,
+  type GuildMember,
+  type Message,
+  type PartialGuildMember,
+} from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
@@ -11,7 +18,7 @@ const MAX_EXPANDED_EMBEDS = 10;
 
 type MessageLinkExpansionPayload = {
   embeds: EmbedBuilder[];
-  files: { attachment: string; name: string }[];
+  files: [];
 };
 
 function truncateText(value: string | null | undefined, max: number): string | null {
@@ -110,19 +117,7 @@ export function buildMessageLinkExpansionPayload(
     if (copied) embeds.push(copied);
   }
 
-  const files: { attachment: string; name: string }[] = [];
-  for (const attachment of targetMessage.attachments.values()) {
-    const ctype = attachment.contentType || "";
-    if (ctype.startsWith("image/")) {
-      if (embeds.length < MAX_EXPANDED_EMBEDS) {
-        embeds.push(new EmbedBuilder().setImage(attachment.url).setColor(0x34_98_db));
-      }
-    } else {
-      files.push({ attachment: attachment.url, name: attachment.name || "attachment" });
-    }
-  }
-
-  return { embeds, files };
+  return { embeds, files: [] };
 }
 
 export async function sendMemberLeaveEmbed(
@@ -186,9 +181,18 @@ export class LeaveNotifierMessageHandler {
     for (const m of matches) {
       const channelId = m[2]!;
       const messageId = m[3]!;
+      if (channelId !== message.channelId) {
+        continue;
+      }
       try {
         const fetchedChannel = await this.ctx.client.channels.fetch(channelId);
         if (!fetchedChannel?.isTextBased() || fetchedChannel.isDMBased()) {
+          continue;
+        }
+        const sourcePerms = "permissionsFor" in fetchedChannel
+          ? fetchedChannel.permissionsFor(message.member ?? message.author)
+          : null;
+        if (!sourcePerms?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory])) {
           continue;
         }
 
@@ -203,14 +207,10 @@ export class LeaveNotifierMessageHandler {
         if (!replyCh.isTextBased() || replyCh.isDMBased()) {
           continue;
         }
-        if (payload.embeds.length === 0 && payload.files.length === 0) {
+        if (payload.embeds.length === 0) {
           continue;
         }
-        if (payload.files.length > 0) {
-          await replyCh.send({ embeds: payload.embeds, files: payload.files });
-        } else {
-          await replyCh.send({ embeds: payload.embeds });
-        }
+        await replyCh.send({ embeds: payload.embeds });
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "message link fetch failed");
       }

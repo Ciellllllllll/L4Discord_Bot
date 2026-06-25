@@ -30,6 +30,7 @@ import {
 import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
 import { createSqliteDatabase } from "./core/db/sqlite.js";
 import { createSyncPostgresCompatDatabase } from "./core/db/syncPostgresCompat.js";
+import { createPgPool } from "./core/db/postgres.js";
 import { createLogger } from "./core/logger.js";
 import { getDetecterService } from "./features/detecter/detecterService.js";
 import { handleAutoModerationMessage } from "./features/moderation/autoModerationMessage.js";
@@ -45,24 +46,32 @@ import { SqliteVcRankingRepository } from "./adapters/legacyDb/sqliteVcRankingRe
 import {
   hydrateMessageIfPartial,
   ingestMessageCreate,
+  ingestMessageCreatePostgres,
   ingestMessageDelete,
+  ingestMessageDeletePostgres,
   ingestMessageUpdate,
+  ingestMessageUpdatePostgres,
   prepareMessageLogsDatabase,
 } from "./features/messageLog/index.js";
 import {
   prepareMessageAttachmentStore,
   scheduleArchiveMessageAttachments,
+  scheduleArchiveMessageAttachmentsPostgres,
 } from "./features/messageLog/messageAttachmentArchive.js";
 import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
 import { destroyReminderDb } from "./features/reminders/reminderDb.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
+import { ensureReminderSchema } from "./features/reminders/reminderDbSchema.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
 import { ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
 import { ensurePacchiSchemaOnce } from "./features/pacchi/pacchi.schema.js";
 import {
   endOpenVcSessionForMember,
+  endOpenVcSessionForMemberPostgres,
   reconcileVcTimeSessionsAtReady,
+  reconcileVcTimeSessionsAtReadyPostgres,
   trackVoiceStateUpdate,
+  trackVoiceStateUpdatePostgres,
 } from "./features/vc/voiceSessionTracker.js";
 import { createUtilitiesMessageHandlers, runUtilitiesMessageChain } from "./features/utilities/utilitiesMessage.js";
 import { sendMemberLeaveEmbed } from "./features/utilities/leaveNotifier.js";
@@ -86,7 +95,7 @@ import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
 import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
 import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "./features/japaneseAnalysis/japaneseWorkerProcess.js";
-import { ensureGameDealSchema } from "./features/gameDeals/gameDealRepository.js";
+import { ensureGameDealSchemaOnce } from "./features/gameDeals/gameDealRepository.js";
 import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
 import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
 import { reconcileWerewolfGames } from "./features/werewolf/werewolfGame.js";
@@ -154,15 +163,21 @@ async function main(): Promise<void> {
   const vcTimeSqlite = createRuntimeSqlDatabase(config.VC_TIME_DATABASE_PATH, config.POSTGRES_VC_TIME_SCHEMA);
   const aiHistorySqlite = createRuntimeSqlDatabase(config.AI_HISTORY_DATABASE_PATH, config.POSTGRES_AI_HISTORY_SCHEMA);
   const automodSqlite = createRuntimeSqlDatabase(config.AUTOMODERATION_DATABASE_PATH, config.POSTGRES_AUTOMOD_SCHEMA);
-  if (!usePostgres) {
-    ensureTicketDatabaseSchema(ticketSqlite as DatabaseLib.Database);
-    ensureVcTimeSchema(vcTimeSqlite as DatabaseLib.Database);
-    ensurePacchiSchemaOnce(sqlite as DatabaseLib.Database);
-    ensureGameDealSchema(sqlite as DatabaseLib.Database);
-    ensureAiHistorySchema(aiHistorySqlite as DatabaseLib.Database);
-    ensureAutomoderationSchema(automodSqlite as DatabaseLib.Database);
-    prepareMessageLogsDatabase(messageLogSqlite as DatabaseLib.Database);
-    prepareMessageAttachmentStore(messageAttachmentStoreSqlite as DatabaseLib.Database);
+  ensureTicketDatabaseSchema(ticketSqlite as DatabaseLib.Database);
+  ensureVcTimeSchema(vcTimeSqlite as DatabaseLib.Database);
+  ensurePacchiSchemaOnce(sqlite as DatabaseLib.Database);
+  ensureGameDealSchemaOnce(sqlite as DatabaseLib.Database);
+  ensureAiHistorySchema(aiHistorySqlite as DatabaseLib.Database);
+  ensureAutomoderationSchema(automodSqlite as DatabaseLib.Database);
+  prepareMessageLogsDatabase(messageLogSqlite as DatabaseLib.Database);
+  prepareMessageAttachmentStore(messageAttachmentStoreSqlite as DatabaseLib.Database);
+  if (usePostgres) {
+    const reminderSqlite = createRuntimeSqlDatabase(config.REMINDER_DATABASE_PATH, config.POSTGRES_REMINDER_SCHEMA);
+    try {
+      ensureReminderSchema(reminderSqlite as DatabaseLib.Database);
+    } finally {
+      reminderSqlite.close();
+    }
   }
   const db =
     usePostgres
@@ -192,6 +207,15 @@ async function main(): Promise<void> {
           schema: config.POSTGRES_AUTOMOD_SCHEMA,
         })
       : createAutomoderationKysely(automodSqlite);
+  const messageLogPgPool = usePostgres
+    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MESSAGE_LOG_SCHEMA)
+    : null;
+  const vcTimePgPool = usePostgres
+    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_VC_TIME_SCHEMA)
+    : null;
+  const messageAttachmentPgPool = usePostgres
+    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MESSAGE_ATTACHMENT_SCHEMA)
+    : null;
 
   try {
     sqlite.prepare("SELECT 1").get();
@@ -373,7 +397,11 @@ async function main(): Promise<void> {
         log.error({ err, guildId: g.id }, "werewolf reconcile at startup failed");
       }
       try {
-        reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);
+        if (vcTimePgPool) {
+          await reconcileVcTimeSessionsAtReadyPostgres(client, vcTimePgPool, config.GUILD_ID);
+        } else {
+          reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);
+        }
         log.info({ guildId: g.id }, "vc_time sessions reconciled at startup");
       } catch (err) {
         log.error({ err, guildId: g.id }, "vc_time reconcile at startup failed");
@@ -474,18 +502,32 @@ async function main(): Promise<void> {
       if (message.guildId === config.GUILD_ID && !message.author.bot) {
         const s = await getGuildSettingsData(db, message.guildId);
         const ex = s.message_log_excluded_channel_ids ?? [];
-        ingestMessageCreate(messageLogSqlite, message, {
+        const messageLogOptions = {
           targetGuildId: config.GUILD_ID,
           excludedChannelIds: ex,
           botUserId: client.user?.id ?? "",
-        });
+        };
+        if (messageLogPgPool) {
+          await ingestMessageCreatePostgres(messageLogPgPool, message, messageLogOptions);
+        } else {
+          ingestMessageCreate(messageLogSqlite, message, messageLogOptions);
+        }
         if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-          scheduleArchiveMessageAttachments(
-            messageAttachmentStoreSqlite,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            message,
-            log,
-          );
+          if (messageAttachmentPgPool) {
+            scheduleArchiveMessageAttachmentsPostgres(
+              messageAttachmentPgPool,
+              config.MESSAGE_ATTACHMENT_FILES_DIR,
+              message,
+              log,
+            );
+          } else {
+            scheduleArchiveMessageAttachments(
+              messageAttachmentStoreSqlite,
+              config.MESSAGE_ATTACHMENT_FILES_DIR,
+              message,
+              log,
+            );
+          }
         }
         await trackStampMessage(message, ctx);
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
@@ -511,18 +553,32 @@ async function main(): Promise<void> {
       if (message.guildId !== config.GUILD_ID) return;
       const s = await getGuildSettingsData(db, message.guildId);
       const ex = s.message_log_excluded_channel_ids ?? [];
-      ingestMessageUpdate(messageLogSqlite, message, {
+      const messageLogOptions = {
         targetGuildId: config.GUILD_ID,
         excludedChannelIds: ex,
         botUserId: client.user?.id ?? "",
-      });
+      };
+      if (messageLogPgPool) {
+        await ingestMessageUpdatePostgres(messageLogPgPool, message, messageLogOptions);
+      } else {
+        ingestMessageUpdate(messageLogSqlite, message, messageLogOptions);
+      }
       if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        scheduleArchiveMessageAttachments(
-          messageAttachmentStoreSqlite,
-          config.MESSAGE_ATTACHMENT_FILES_DIR,
-          message,
-          log,
-        );
+        if (messageAttachmentPgPool) {
+          scheduleArchiveMessageAttachmentsPostgres(
+            messageAttachmentPgPool,
+            config.MESSAGE_ATTACHMENT_FILES_DIR,
+            message,
+            log,
+          );
+        } else {
+          scheduleArchiveMessageAttachments(
+            messageAttachmentStoreSqlite,
+            config.MESSAGE_ATTACHMENT_FILES_DIR,
+            message,
+            log,
+          );
+        }
       }
     } catch (err) {
       log.error({ err }, "messageUpdate");
@@ -536,18 +592,32 @@ async function main(): Promise<void> {
       const ex = s.message_log_excluded_channel_ids ?? [];
       const target = await hydrateMessageIfPartial(message);
       await cancelPendingRepliesBySource(ctx, target.id);
-      ingestMessageDelete(messageLogSqlite, target, {
+      const messageLogOptions = {
         targetGuildId: config.GUILD_ID,
         excludedChannelIds: ex,
         botUserId: client.user?.id ?? "",
-      });
+      };
+      if (messageLogPgPool) {
+        await ingestMessageDeletePostgres(messageLogPgPool, target, messageLogOptions);
+      } else {
+        ingestMessageDelete(messageLogSqlite, target, messageLogOptions);
+      }
       if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        scheduleArchiveMessageAttachments(
-          messageAttachmentStoreSqlite,
-          config.MESSAGE_ATTACHMENT_FILES_DIR,
-          target,
-          log,
-        );
+        if (messageAttachmentPgPool) {
+          scheduleArchiveMessageAttachmentsPostgres(
+            messageAttachmentPgPool,
+            config.MESSAGE_ATTACHMENT_FILES_DIR,
+            target,
+            log,
+          );
+        } else {
+          scheduleArchiveMessageAttachments(
+            messageAttachmentStoreSqlite,
+            config.MESSAGE_ATTACHMENT_FILES_DIR,
+            target,
+            log,
+          );
+        }
       }
     } catch (err) {
       log.error({ err }, "messageDelete");
@@ -566,7 +636,13 @@ async function main(): Promise<void> {
 
   client.on("voiceStateUpdate", (oldS, newS) => {
     try {
-      trackVoiceStateUpdate(vcTimeSqlite, oldS, newS, config.GUILD_ID);
+      if (vcTimePgPool) {
+        void trackVoiceStateUpdatePostgres(vcTimePgPool, oldS, newS, config.GUILD_ID).catch((err) => {
+          log.error({ err }, "voiceStateUpdate postgres tracking");
+        });
+      } else {
+        trackVoiceStateUpdate(vcTimeSqlite, oldS, newS, config.GUILD_ID);
+      }
       ctx.vcTemp.onVoiceStateUpdate(oldS, newS);
     } catch (err) {
       log.error({ err }, "voiceStateUpdate");
@@ -593,7 +669,11 @@ async function main(): Promise<void> {
     try {
       if (member.guild.id !== config.GUILD_ID) return;
       await getDetecterService(ctx).onGuildMemberRemove(member);
-      endOpenVcSessionForMember(vcTimeSqlite, member.guild.id, member.id);
+      if (vcTimePgPool) {
+        await endOpenVcSessionForMemberPostgres(vcTimePgPool, member.guild.id, member.id);
+      } else {
+        endOpenVcSessionForMember(vcTimeSqlite, member.guild.id, member.id);
+      }
       await sendMemberLeaveEmbed(ctx, member);
     } catch (err) {
       log.error({ err }, "guildMemberRemove");
@@ -652,6 +732,9 @@ async function main(): Promise<void> {
     await ticketDb.destroy();
     await aiHistoryDb.destroy();
     await automodDb.destroy();
+    await messageLogPgPool?.end();
+    await vcTimePgPool?.end();
+    await messageAttachmentPgPool?.end();
     await destroyReminderDb();
     messageLogSqlite.close();
     messageAttachmentStoreSqlite.close();

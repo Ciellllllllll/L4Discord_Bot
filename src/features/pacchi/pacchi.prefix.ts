@@ -2,6 +2,7 @@ import { AttachmentBuilder, EmbedBuilder, type Message, type MessageMentionOptio
 import { z } from "zod";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
+import { readResponseArrayBufferWithLimit } from "../ai/fetchWithLimits.js";
 import { buildVerifiedPacchiPoem, pacchiVerifiedPoemFailureMessage } from "./pacchi.poem.js";
 import { createPacchiRepository } from "./pacchi.repository.js";
 import { formatDuration, RATE_CONFIG } from "./pacchi.reply.js";
@@ -316,8 +317,42 @@ async function handleImport(message: Message, ctx: BotContext): Promise<boolean>
     await replySafe(message, "JSONファイルを添付してください。");
     return true;
   }
-  const response = await fetch(attachment.url);
-  const parsed = importSchema.safeParse(JSON.parse(await response.text()));
+  const maxBytes = 2 * 1024 * 1024;
+  if (attachment.size > maxBytes) {
+    await replySafe(message, "JSONファイルが大きすぎます。2MB以下にしてください。");
+    return true;
+  }
+  const lowerName = attachment.name.toLowerCase();
+  if (!lowerName.endsWith(".json")) {
+    await replySafe(message, "JSONファイル（.json）を添付してください。");
+    return true;
+  }
+  let text: string;
+  try {
+    const response = await fetch(attachment.url, { signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) {
+      await replySafe(message, "添付ファイルを取得できませんでした。");
+      return true;
+    }
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      await replySafe(message, "JSONファイルが大きすぎます。2MB以下にしてください。");
+      return true;
+    }
+    const buf = Buffer.from(await readResponseArrayBufferWithLimit(response, maxBytes));
+    text = buf.toString("utf8");
+  } catch {
+    await replySafe(message, "添付ファイルの取得がタイムアウトまたは失敗しました。");
+    return true;
+  }
+  let rawJson: unknown;
+  try {
+    rawJson = JSON.parse(text);
+  } catch {
+    await replySafe(message, "JSONの構文が不正です。");
+    return true;
+  }
+  const parsed = importSchema.safeParse(rawJson);
   if (!parsed.success) {
     await replySafe(message, "JSONの形式が不正です。");
     return true;

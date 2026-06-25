@@ -77,10 +77,11 @@ function normalizeSnowflake(value: unknown): string | null {
   return /^\d+$/.test(s) ? s : null;
 }
 
-function snowflakeFromDb(v: bigint | number | null | undefined): string | null {
+function snowflakeFromDb(v: bigint | number | string | null | undefined): string | null {
   if (v === null || v === undefined) return null;
   try {
-    return bigIntToSnowflake(typeof v === "bigint" ? v : BigInt(Math.trunc(Number(v))));
+    const snowflake = bigIntToSnowflake(v);
+    return snowflake || null;
   } catch {
     return null;
   }
@@ -259,16 +260,16 @@ function parseSearchModalFields(interaction: ModalSubmitInteraction): { ok: true
 type LogRow = {
   id: number;
   log_type: string | null;
-  guild_id: bigint | number | null;
-  channel_id: bigint | number | null;
-  user_id: bigint | number | null;
+  guild_id: bigint | number | string | null;
+  channel_id: bigint | number | string | null;
+  user_id: bigint | number | string | null;
   user_name: string | null;
   content: string | null;
   edited_at: string | null;
   deleted_at: string | null;
   time: string | null;
-  message_id: bigint | number | null;
-  author_id: bigint | number | null;
+  message_id: bigint | number | string | null;
+  author_id: bigint | number | string | null;
   author_tag: string | null;
   author_display_name: string | null;
   created_at: string | null;

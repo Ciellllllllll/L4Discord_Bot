@@ -77,7 +77,7 @@ function formatWikipediaSummary(data: WikipediaSummary, fallbackTitle: string): 
 }
 
 async function fetchWikipediaSummary(url: string): Promise<WikipediaSummary | null> {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) return null;
   return await response.json() as WikipediaSummary;
 }
@@ -202,10 +202,14 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
   if (isSelfAuthoredMessage(ctx, message)) return false;
   if (!message.guildId || message.guildId !== ctx.config.GUILD_ID) return false;
 
+  const content = message.content.trim();
+  if (ctx.config.DB_DRIVER === "postgres" && !isExplicitPacchiTrigger(content)) {
+    return false;
+  }
+
   const repo = createPacchiRepository(ctx.sqlite);
   const settings = repo.getSettings(message.guildId);
   const channel = repo.getChannelSettings(message.guildId, message.channelId);
-  const content = message.content.trim();
   const learnable = isLearnableMessage(content, message.attachments.size > 0);
 
   try {
@@ -372,4 +376,18 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
   }
 
   return false;
+}
+
+function isExplicitPacchiTrigger(content: string): boolean {
+  return Boolean(
+    extractPacchiSenryuSubmission(content) ||
+    extractJanken(content) ||
+    content.includes("おやすみ") ||
+    content.includes("おはよう") ||
+    extractTermQuestion(content) ||
+    extractNaturalPoem(content) ||
+    isWorkStart(content) ||
+    isWorkEnd(content) ||
+    content.includes("ぱっちぃ"),
+  );
 }

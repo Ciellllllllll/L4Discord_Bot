@@ -14,7 +14,7 @@ export type PostgresSchemaMap = {
 export async function createPgPool(connectionString: string, schema?: string): Promise<Pool> {
   const pool = new Pool({
     connectionString,
-    options: schema ? `-c search_path=${schema},public` : undefined,
+    options: schema ? `-c search_path=${quotePgIdent(schema)},public` : undefined,
   });
   await pool.query("SELECT 1");
   return pool;
