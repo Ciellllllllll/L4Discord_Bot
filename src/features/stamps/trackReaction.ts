@@ -58,7 +58,7 @@ async function incrementStampUsage(
     })
     .onConflict((oc) =>
       oc.columns(["guild_id", "user_id", "emoji_id"]).doUpdateSet({
-        count: sql`count + ${amount}`,
+        count: sql`stamp_usage.count + ${amount}`,
         emoji_name: name,
         updated_at: now,
       }),
