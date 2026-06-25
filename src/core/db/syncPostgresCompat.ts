@@ -72,6 +72,14 @@ function normalizeRow(value: unknown): unknown {
   return out;
 }
 
+function parseJsonLines(source: string): unknown[] {
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
 export class SyncPostgresStatement {
   constructor(
     private readonly db: SyncPostgresCompatDatabase,
@@ -134,12 +142,7 @@ export class SyncPostgresCompatDatabase {
 
   queryJsonLines(sql: string): unknown[] {
     const wrapped = `SELECT row_to_json(__q) FROM (${sql}) AS __q`;
-    const out = this.psql(wrapped);
-    return out
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    return parseJsonLines(this.psql(wrapped));
   }
 
   tableInfo(table: string): Array<{ cid: number; name: string; type: string; notnull: number; dflt_value: string | null; pk: number }> {
@@ -163,8 +166,8 @@ export class SyncPostgresCompatDatabase {
   executeMutation(sql: string): number {
     const trimmed = sql.trim();
     if (/^(UPDATE|DELETE)\b/i.test(trimmed) && !/\bRETURNING\b/i.test(trimmed)) {
-      const wrapped = `WITH __dml AS (${trimmed} RETURNING 1) SELECT count(*)::int AS changes FROM __dml`;
-      const rows = this.queryJsonLines(wrapped) as Array<{ changes?: number }>;
+      const wrapped = `WITH __dml AS (${trimmed} RETURNING 1) SELECT row_to_json(__q) FROM (SELECT count(*)::int AS changes FROM __dml) AS __q`;
+      const rows = parseJsonLines(this.psql(wrapped)) as Array<{ changes?: number }>;
       return Number(rows[0]?.changes ?? 0);
     }
     if (/^INSERT\b/i.test(trimmed) && !/\bRETURNING\b/i.test(trimmed)) {
