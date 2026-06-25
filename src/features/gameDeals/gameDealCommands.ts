@@ -25,7 +25,10 @@ function configuredGameDealRoleId(ctx: BotContext): string | null {
 async function ensureGameDealCommandChannel(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<string | null> {
   const channelId = configuredGameDealChannelId(ctx);
   if (!channelId) {
-    await interaction.reply({ content: "GAME_DEAL_CHANNEL_ID が設定されていません。", flags: MessageFlags.Ephemeral });
+    await interaction.reply({
+      content: `${ctx.config.BOT_PROFILE} 用の GAME_DEAL_CHANNEL_ID が設定されていません。PRODUCTION_GAME_DEAL_CHANNEL_ID または DEBUG_GAME_DEAL_CHANNEL_ID を確認してください。`,
+      flags: MessageFlags.Ephemeral,
+    });
     return null;
   }
   if (interaction.channelId !== channelId) {

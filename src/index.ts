@@ -134,6 +134,8 @@ async function main(): Promise<void> {
       messageAttachmentStoreDbPath: config.MESSAGE_ATTACHMENT_STORE_DB_PATH,
       messageAttachmentFilesDir: config.MESSAGE_ATTACHMENT_FILES_DIR,
       messageAttachmentArchiveEnabled: config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED,
+      gameDealChannelId: config.GAME_DEAL_CHANNEL_ID ?? null,
+      gameDealNotifyRoleId: config.GAME_DEAL_NOTIFY_ROLE_ID ?? null,
       ticketDbPath: config.TICKET_DATABASE_PATH,
       vcTimeDbPath: config.VC_TIME_DATABASE_PATH,
       vcRankingTimeZone: config.VC_TIME_RANKING_TIMEZONE,

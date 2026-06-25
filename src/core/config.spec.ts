@@ -103,4 +103,26 @@ const fallbackConfig = loadConfig(
 assert.equal(fallbackConfig.GAME_DEAL_CHANNEL_ID, "common-game-deal-channel");
 assert.equal(fallbackConfig.GAME_DEAL_NOTIFY_ROLE_ID, "common-game-deal-role");
 
+const suffixedProductionConfig = loadConfig(
+  baseEnv({
+    PROFILE: "production",
+    GAME_DEAL_CHANNEL_ID: "common-game-deal-channel",
+    GAME_DEAL_CHANNEL_ID_PRODUCTION: "suffixed-production-game-deal-channel",
+    GAME_DEAL_CHANNEL_ID_DEBUG: "suffixed-debug-game-deal-channel",
+  }),
+);
+
+assert.equal(suffixedProductionConfig.GAME_DEAL_CHANNEL_ID, "suffixed-production-game-deal-channel");
+
+const suffixedDebugConfig = loadConfig(
+  baseEnv({
+    PROFILE: "debug",
+    GAME_DEAL_CHANNEL_ID: "common-game-deal-channel",
+    GAME_DEAL_CHANNEL_ID_PRODUCTION: "suffixed-production-game-deal-channel",
+    GAME_DEAL_CHANNEL_ID_DEBUG: "suffixed-debug-game-deal-channel",
+  }),
+);
+
+assert.equal(suffixedDebugConfig.GAME_DEAL_CHANNEL_ID, "suffixed-debug-game-deal-channel");
+
 console.log("config.spec.ts: all assertions passed");
