@@ -10,6 +10,7 @@ import { detectSteamFreeEvent } from "./steamFreeDetector.js";
 
 export const DEFAULT_STEAM_VERIFY_BATCH_SIZE = 20;
 const DEFAULT_STEAM_NOW_LIMIT = 20;
+const STEAM_NOW_DETAILS_BATCH_SIZE = 10;
 const EXCLUDED_TYPE_WORDS = ["dlc", "demo", "soundtrack", "software", "tool", "video", "hardware"];
 const FREE_PLAY_TEXT = /free\s*weekend|play\s*for\s*free|無料プレイ|週末無料|フリーウィークエンド/i;
 const F2P_TEXT = /free\s*to\s*play|基本プレイ無料|無料プレイ可/i;
@@ -22,6 +23,10 @@ type SteamScanSummary = {
   excludedCount: number;
   notifiedCandidates: number;
   excludedReasons: Record<string, number>;
+};
+
+type SteamNowScanOptions = {
+  onlyUnnotified?: boolean;
 };
 
 function steamApiKey(ctx: BotContext): string | undefined {
@@ -271,28 +276,40 @@ export async function processSteamVerifyQueue(ctx: BotContext, batchSize = DEFAU
   return items;
 }
 
-export async function scanSteamNowFullDiscountItems(ctx: BotContext, limit = DEFAULT_STEAM_NOW_LIMIT): Promise<GameDealFreeItem[]> {
+export async function scanSteamNowFullDiscountItems(
+  ctx: BotContext,
+  limit = DEFAULT_STEAM_NOW_LIMIT,
+  options: SteamNowScanOptions = {},
+): Promise<GameDealFreeItem[]> {
+  const repo = new GameDealRepository(ctx.sqlite);
   const store = new SteamStoreClient(ctx.log);
   const searchItems = (await store.fetchSearchItems()).filter(searchItemIsFullDiscount);
   if (searchItems.length === 0) return [];
 
-  const detailsByAppid = await store.fetchAppDetails(searchItems.map((item) => item.appid));
   const items: GameDealFreeItem[] = [];
   const excludedReasons: Record<string, number> = {};
 
-  for (const searchItem of searchItems) {
-    const details = detailsByAppid.get(searchItem.appid) ?? null;
-    const exclusionReason = steamNowExclusionReason(searchItem, details);
-    if (exclusionReason) {
-      excludedReasons[exclusionReason] = (excludedReasons[exclusionReason] ?? 0) + 1;
-      ctx.log.debug(
-        { appid: searchItem.appid, title: searchItem.name, reason: exclusionReason },
-        "steam now full discount candidate excluded",
-      );
-      continue;
+  for (let offset = 0; offset < searchItems.length && items.length < limit; offset += STEAM_NOW_DETAILS_BATCH_SIZE) {
+    const batch = searchItems.slice(offset, offset + STEAM_NOW_DETAILS_BATCH_SIZE);
+    const detailsByAppid = await store.fetchAppDetails(batch.map((item) => item.appid));
+    for (const searchItem of batch) {
+      const details = detailsByAppid.get(searchItem.appid) ?? null;
+      const exclusionReason = steamNowExclusionReason(searchItem, details);
+      if (exclusionReason) {
+        excludedReasons[exclusionReason] = (excludedReasons[exclusionReason] ?? 0) + 1;
+        ctx.log.debug(
+          { appid: searchItem.appid, title: searchItem.name, reason: exclusionReason },
+          "steam now full discount candidate excluded",
+        );
+        continue;
+      }
+      const event = steamNowEvent(searchItem, details!);
+      const result = repo.upsertSteamFreeEvent(event);
+      if (!options.onlyUnnotified || result.shouldNotify) {
+        items.push(toFreeItem(event));
+      }
+      if (items.length >= limit) break;
     }
-    items.push(toFreeItem(steamNowEvent(searchItem, details!)));
-    if (items.length >= limit) break;
   }
 
   ctx.log.info(

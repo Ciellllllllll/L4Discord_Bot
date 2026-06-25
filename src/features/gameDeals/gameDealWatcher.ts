@@ -4,7 +4,7 @@ import type { BotContext } from "../../bot/context.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
 import { GameDealRepository } from "./gameDealRepository.js";
 import { checkSubscription, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
-import { processSteamVerifyQueue, scanSteamAppListChanges } from "./steamFreeScanner.js";
+import { processSteamVerifyQueue, scanSteamAppListChanges, scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealSubscriptionHit } from "./gameDealTypes.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 60 * 1000;
@@ -59,56 +59,50 @@ function subscriptionNotifyKey(hit: GameDealSubscriptionHit): string {
 
 export async function scanAndNotifyGameDeals(ctx: BotContext): Promise<void> {
   const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE);
+  const steamNowItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
   const scan = await scanCurrentFreeGamesDetailed(ctx);
-  await notifyFreeGameDealItems(ctx, [...steamItems, ...scan.items.filter((item) => item.platform === "epic")]);
+  await notifyFreeGameDealItems(ctx, [...steamItems, ...steamNowItems, ...scan.items.filter((item) => item.platform === "epic")]);
 }
 
 async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeItem[]): Promise<number> {
   const repo = new GameDealRepository(ctx.sqlite);
   const configuredChannelId = configuredGameDealChannelId(ctx);
-  if (!configuredChannelId || freeItems.length === 0) return 0;
+  if (freeItems.length === 0) return 0;
+  if (!configuredChannelId) {
+    ctx.log.warn(
+      { botProfile: ctx.config.BOT_PROFILE, itemCount: freeItems.length },
+      "game deal free notification skipped because profile GAME_DEAL_CHANNEL_ID is not configured",
+    );
+    return 0;
+  }
   const channels = repo.listEnabledNotifyChannels();
-  if (channels.length === 0) return 0;
+  if (channels.length === 0) {
+    ctx.log.warn({ itemCount: freeItems.length }, "game deal free notification skipped because no guild has enabled notify channel");
+    return 0;
+  }
   const notifyItems = freeItems.filter((item) =>
     item.platform === "steam" ? true : repo.upsertFreeSeen(item, true).shouldNotify,
   );
+  if (notifyItems.length === 0) return 0;
   let sentCount = 0;
-  for (const config of channels) {
-    const channel = await fetchTextChannel(ctx.client, configuredChannelId);
-    if (!channel) {
-      ctx.log.warn({ guildId: config.guildId, channelId: configuredChannelId }, "game deal notify channel unavailable");
-      repo.disableNotifyChannel(config.guildId);
-      continue;
-    }
-    const roleMention = gameDealRoleMention(ctx);
-    if (notifyItems.length > 0 && roleMention) {
-      await channel
-        .send({ content: roleMention, allowedMentions: gameDealAllowedRoleMentions(ctx) })
-        .catch((err) => ctx.log.warn({ err }, "game deal free role mention send failed"));
-    }
-    for (const chunk of chunkItems(notifyItems)) {
-      if (chunk.some((item) => item.components && item.components.length > 0)) {
-        for (const item of chunk) {
-          const sent = await channel
-            .send({
-              embeds: [item.embed],
-              components: item.components ?? [],
-              allowedMentions: { parse: [] },
-            })
-            .catch((err) => {
-              ctx.log.warn({ err }, "game deal free notification send failed");
-              return null;
-            });
-          if (sent) {
-            sentCount += 1;
-            if (item.platform === "steam") repo.markSteamFreeEventNotified(item.dedupeKey);
-            else repo.markFreeNotified(item.dedupeKey);
-          }
-        }
-      } else {
+  const channel = await fetchTextChannel(ctx.client, configuredChannelId);
+  if (!channel) {
+    ctx.log.warn({ channelId: configuredChannelId }, "game deal notify channel unavailable");
+    return 0;
+  }
+  const roleMention = gameDealRoleMention(ctx);
+  if (roleMention) {
+    await channel
+      .send({ content: roleMention, allowedMentions: gameDealAllowedRoleMentions(ctx) })
+      .catch((err) => ctx.log.warn({ err }, "game deal free role mention send failed"));
+  }
+  for (const chunk of chunkItems(notifyItems)) {
+    if (chunk.some((item) => item.components && item.components.length > 0)) {
+      for (const item of chunk) {
         const sent = await channel
           .send({
-            embeds: chunk.map((item) => item.embed),
+            embeds: [item.embed],
+            components: item.components ?? [],
             allowedMentions: { parse: [] },
           })
           .catch((err) => {
@@ -116,11 +110,26 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
             return null;
           });
         if (sent) {
-          sentCount += chunk.length;
-          for (const item of chunk) {
-            if (item.platform === "steam") repo.markSteamFreeEventNotified(item.dedupeKey);
-            else repo.markFreeNotified(item.dedupeKey);
-          }
+          sentCount += 1;
+          if (item.platform === "steam") repo.markSteamFreeEventNotified(item.dedupeKey);
+          else repo.markFreeNotified(item.dedupeKey);
+        }
+      }
+    } else {
+      const sent = await channel
+        .send({
+          embeds: chunk.map((item) => item.embed),
+          allowedMentions: { parse: [] },
+        })
+        .catch((err) => {
+          ctx.log.warn({ err }, "game deal free notification send failed");
+          return null;
+        });
+      if (sent) {
+        sentCount += chunk.length;
+        for (const item of chunk) {
+          if (item.platform === "steam") repo.markSteamFreeEventNotified(item.dedupeKey);
+          else repo.markFreeNotified(item.dedupeKey);
         }
       }
     }
@@ -195,6 +204,7 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
   let running = false;
   let lastSteamAppListAt = 0;
   let lastSteamVerifyAt = 0;
+  let lastSteamNowAt = 0;
   let lastEpicAt = 0;
   let lastSubscriptionAt = 0;
   const tick = async () => {
@@ -222,6 +232,15 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
         });
         detectedCount += steamItems.length;
         notifiedCount += await notifyFreeGameDealItems(ctx, steamItems);
+      }
+      if (now - lastSteamNowAt >= ctx.config.GAME_DEAL_STEAM_NOW_INTERVAL_MS) {
+        lastSteamNowAt = now;
+        const steamNowItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true }).catch((err) => {
+          ctx.log.warn({ err }, "steam now full discount scheduled scan failed");
+          return [];
+        });
+        detectedCount += steamNowItems.length;
+        notifiedCount += await notifyFreeGameDealItems(ctx, steamNowItems);
       }
       if (now - lastEpicAt >= ctx.config.GAME_DEAL_EPIC_INTERVAL_MS) {
         lastEpicAt = now;
