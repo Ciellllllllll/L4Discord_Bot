@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import type pino from "pino";
 import type { BotContext } from "../../bot/context.js";
 import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
@@ -59,8 +60,10 @@ async function run() {
     throw new Error(`unexpected URL: ${url}`);
   }) as typeof fetch;
 
+  const db = new Database(":memory:");
   try {
     const ctx = {
+      sqlite: db,
       log: {
         debug(fields: unknown) {
           logs.push(fields);
@@ -74,8 +77,16 @@ async function run() {
     assert.equal(items[0]?.platform, "steam");
     assert.equal(items[0]?.title, "Paid Game");
     assert.equal(items[0]?.dedupeKey.startsWith("steam_now:100:"), true);
+    const duplicateItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
+    assert.equal(duplicateItems.length, 1);
+    db.prepare("UPDATE steam_free_events SET notified_at = CURRENT_TIMESTAMP WHERE state_key = ?").run(items[0]?.dedupeKey);
+    const notifiedDuplicateItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
+    assert.equal(notifiedDuplicateItems.length, 0);
+    const manualItems = await scanSteamNowFullDiscountItems(ctx);
+    assert.equal(manualItems.length, 1);
     assert.equal(logs.some((entry) => JSON.stringify(entry).includes("excluded_free_to_play")), true);
   } finally {
+    db.close();
     globalThis.fetch = originalFetch;
   }
 }
