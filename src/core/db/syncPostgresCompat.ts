@@ -178,11 +178,10 @@ export class SyncPostgresCompatDatabase {
   private psql(sql: string): string {
     const searchPath = `${quotePgIdent(this.schema)},public`;
     const fullSql = `SET search_path TO ${searchPath};\n${sql}`;
-    return execFileSync("psql", ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", fullSql], {
+    return execFileSync("psql", [this.connectionString, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", fullSql], {
       encoding: "utf8",
       env: {
         ...process.env,
-        PGDATABASE: this.connectionString,
       },
       maxBuffer: 32 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
