@@ -51,7 +51,7 @@ function pragmaTableInfoName(sql: string): string | null {
 
 function quoteCamelCaseAliases(sql: string): string {
   return sql.replace(/\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b/g, (match, alias: string) => {
-    if (!/[A-Z]/.test(alias)) return match;
+    if (!/[a-z][A-Z]/.test(alias)) return match;
     return `AS ${quotePgIdent(alias)}`;
   });
 }
