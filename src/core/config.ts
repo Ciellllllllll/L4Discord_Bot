@@ -134,6 +134,16 @@ const profileOverridableKeys = [
   "DEEPLOL_MATCH_URL_TEMPLATE",
   "DEEPLOL_POLL_INTERVAL_MS",
   "DEEPLOL_ACTIVE_STALE_MS",
+  "DB_DRIVER",
+  "DATABASE_URL",
+  "POSTGRES_MAIN_SCHEMA",
+  "POSTGRES_TICKET_SCHEMA",
+  "POSTGRES_MESSAGE_LOG_SCHEMA",
+  "POSTGRES_MESSAGE_ATTACHMENT_SCHEMA",
+  "POSTGRES_VC_TIME_SCHEMA",
+  "POSTGRES_AI_HISTORY_SCHEMA",
+  "POSTGRES_AUTOMOD_SCHEMA",
+  "POSTGRES_REMINDER_SCHEMA",
 ] as const;
 
 function normalizeBotProfile(v: unknown): BotProfile {
@@ -197,6 +207,19 @@ function applyProfileOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 const envSchema = z.object({
   BOT_PROFILE: z.enum(botProfiles).default("production"),
+  DB_DRIVER: z.preprocess(
+    (v) => (v === "" || v === undefined ? "sqlite" : String(v).toLowerCase()),
+    z.enum(["sqlite", "postgres"]).default("sqlite"),
+  ),
+  DATABASE_URL: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().url().optional()),
+  POSTGRES_MAIN_SCHEMA: z.string().min(1).default("main"),
+  POSTGRES_TICKET_SCHEMA: z.string().min(1).default("ticket"),
+  POSTGRES_MESSAGE_LOG_SCHEMA: z.string().min(1).default("message_log"),
+  POSTGRES_MESSAGE_ATTACHMENT_SCHEMA: z.string().min(1).default("message_attachment"),
+  POSTGRES_VC_TIME_SCHEMA: z.string().min(1).default("vc_time"),
+  POSTGRES_AI_HISTORY_SCHEMA: z.string().min(1).default("ai_history"),
+  POSTGRES_AUTOMOD_SCHEMA: z.string().min(1).default("automod"),
+  POSTGRES_REMINDER_SCHEMA: z.string().min(1).default("reminder"),
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
   GUILD_ID: z.string().min(1),
@@ -469,6 +492,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
   const data = parsed.data;
+  if (data.DB_DRIVER === "postgres" && !data.DATABASE_URL) {
+    throw new Error("DB_DRIVER=postgres requires DATABASE_URL.");
+  }
   const discordToken = data.DISCORD_TOKEN.trim();
   const guildId = data.GUILD_ID.trim();
   const ownerId = data.OWNER_ID.trim();

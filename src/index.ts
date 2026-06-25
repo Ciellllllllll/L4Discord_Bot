@@ -7,6 +7,7 @@ if (process.platform === "win32") {
   } catch {}
 }
 import { MessageFlags } from "discord.js";
+import { sql, type Kysely } from "kysely";
 import { createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
 import { startPresenceRotation } from "./bot/presence.js";
@@ -19,6 +20,10 @@ import {
   createAiHistoryKysely,
   createAutomoderationKysely,
   createKysely,
+  createPostgresAiHistoryKysely,
+  createPostgresAutomoderationKysely,
+  createPostgresMainKysely,
+  createPostgresTicketKysely,
   createTicketKysely,
 } from "./core/db/kysely.js";
 import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
@@ -47,6 +52,7 @@ import {
   scheduleArchiveMessageAttachments,
 } from "./features/messageLog/messageAttachmentArchive.js";
 import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
+import { destroyReminderDb } from "./features/reminders/reminderDb.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
 import { ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
@@ -85,6 +91,17 @@ import { reconcileWerewolfGames } from "./features/werewolf/werewolfGame.js";
 
 let mainStarted = false;
 
+async function pingPostgresKysely(label: string, db: Kysely<unknown>, expectedSchema: string): Promise<void> {
+  const result = await sql<{ schema: string | null }>`SELECT current_schema() AS schema`.execute(db);
+  const actualSchema = result.rows[0]?.schema ?? null;
+  if (actualSchema !== expectedSchema) {
+    throw new Error(
+      `PostgreSQL ${label} search_path resolved to ${actualSchema ?? "<none>"}; expected ${expectedSchema}`,
+    );
+  }
+  await sql`SELECT 1 AS ok`.execute(db);
+}
+
 async function main(): Promise<void> {
   if (mainStarted) {
     console.error("main() は既に起動済みです。二重起動を無視します。");
@@ -97,6 +114,7 @@ async function main(): Promise<void> {
   log.info(
     {
       botProfile: config.BOT_PROFILE,
+      dbDriver: config.DB_DRIVER,
       effectiveBotVersion: config.BOT_VERSION,
       guildId: config.GUILD_ID,
       databasePath: config.DATABASE_PATH,
@@ -133,10 +151,34 @@ async function main(): Promise<void> {
   ensureAutomoderationSchema(automodSqlite);
   prepareMessageLogsDatabase(messageLogSqlite);
   prepareMessageAttachmentStore(messageAttachmentStoreSqlite);
-  const db = createKysely(sqlite);
-  const ticketDb = createTicketKysely(ticketSqlite);
-  const aiHistoryDb = createAiHistoryKysely(aiHistorySqlite);
-  const automodDb = createAutomoderationKysely(automodSqlite);
+  const db =
+    config.DB_DRIVER === "postgres"
+      ? createPostgresMainKysely({
+          connectionString: config.DATABASE_URL!,
+          schema: config.POSTGRES_MAIN_SCHEMA,
+        })
+      : createKysely(sqlite);
+  const ticketDb =
+    config.DB_DRIVER === "postgres"
+      ? createPostgresTicketKysely({
+          connectionString: config.DATABASE_URL!,
+          schema: config.POSTGRES_TICKET_SCHEMA,
+        })
+      : createTicketKysely(ticketSqlite);
+  const aiHistoryDb =
+    config.DB_DRIVER === "postgres"
+      ? createPostgresAiHistoryKysely({
+          connectionString: config.DATABASE_URL!,
+          schema: config.POSTGRES_AI_HISTORY_SCHEMA,
+        })
+      : createAiHistoryKysely(aiHistorySqlite);
+  const automodDb =
+    config.DB_DRIVER === "postgres"
+      ? createPostgresAutomoderationKysely({
+          connectionString: config.DATABASE_URL!,
+          schema: config.POSTGRES_AUTOMOD_SCHEMA,
+        })
+      : createAutomoderationKysely(automodSqlite);
 
   try {
     sqlite.prepare("SELECT 1").get();
@@ -146,6 +188,12 @@ async function main(): Promise<void> {
     vcTimeSqlite.prepare("SELECT 1").get();
     aiHistorySqlite.prepare("SELECT 1").get();
     automodSqlite.prepare("SELECT 1").get();
+    if (config.DB_DRIVER === "postgres") {
+      await pingPostgresKysely("main", db as Kysely<unknown>, config.POSTGRES_MAIN_SCHEMA);
+      await pingPostgresKysely("ticket", ticketDb as Kysely<unknown>, config.POSTGRES_TICKET_SCHEMA);
+      await pingPostgresKysely("aiHistory", aiHistoryDb as Kysely<unknown>, config.POSTGRES_AI_HISTORY_SCHEMA);
+      await pingPostgresKysely("automod", automodDb as Kysely<unknown>, config.POSTGRES_AUTOMOD_SCHEMA);
+    }
     log.info(
       {
         main: config.DATABASE_PATH,
@@ -157,7 +205,7 @@ async function main(): Promise<void> {
         automoderation: config.AUTOMODERATION_DATABASE_PATH,
         reminderLazy: config.REMINDER_DATABASE_PATH,
       },
-      "sqlite connection ok",
+      config.DB_DRIVER === "postgres" ? "database connection ok (postgres kysely + sqlite legacy)" : "sqlite connection ok",
     );
   } catch (e) {
     log.error({ err: e }, "database ping failed");
@@ -186,9 +234,19 @@ async function main(): Promise<void> {
     });
     const afterV = getSqliteUserVersion(sqlite);
     if (applied.length > 0) {
-      log.info({ applied, userVersion: afterV, previousVersion: beforeV }, "sqlite migrations applied");
+      log.info(
+        { applied, userVersion: afterV, previousVersion: beforeV, dbDriver: config.DB_DRIVER },
+        config.DB_DRIVER === "postgres"
+          ? "sqlite migrations applied for legacy repositories"
+          : "sqlite migrations applied",
+      );
     } else {
-      log.info({ userVersion: afterV }, "sqlite schema up to date (no pending migrations)");
+      log.info(
+        { userVersion: afterV, dbDriver: config.DB_DRIVER },
+        config.DB_DRIVER === "postgres"
+          ? "sqlite schema up to date for legacy repositories (no pending migrations)"
+          : "sqlite schema up to date (no pending migrations)",
+      );
     }
   } catch (e) {
     log.error({ err: e }, "sqlite migration failed");
@@ -578,6 +636,8 @@ async function main(): Promise<void> {
     await db.destroy();
     await ticketDb.destroy();
     await aiHistoryDb.destroy();
+    await automodDb.destroy();
+    await destroyReminderDb();
     messageLogSqlite.close();
     messageAttachmentStoreSqlite.close();
     vcTimeSqlite.close();
