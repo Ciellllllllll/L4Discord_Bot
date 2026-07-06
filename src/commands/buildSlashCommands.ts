@@ -121,6 +121,14 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       .toJSON(),
 
     new SlashCommandBuilder()
+      .setName("r18")
+      .setDescription("自分のR18モードを切り替えます")
+      .addBooleanOption((o) =>
+        o.setName("enabled").setDescription("R18モードを有効にするか").setRequired(true),
+      )
+      .toJSON(),
+
+    new SlashCommandBuilder()
       .setName("mute")
       .setDescription("このチャンネル・スレッドでの川柳機能をオフにします")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

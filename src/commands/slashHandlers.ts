@@ -21,6 +21,7 @@ import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { showCreatePromptModal } from "../features/ai/createPrompt.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 import { getAiThinkingEnabled, setAiThinkingEnabled } from "../features/ai/thinkingSettings.js";
+import { getAiR18Enabled, setAiR18Enabled } from "../features/ai/aiR18Settings.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
 import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
 import { muteChannelForSenryuPersisted } from "../features/senryu/senryu.filters.js";
@@ -92,6 +93,8 @@ export async function handleSlashCommand(
       return handleShowPrompt(interaction, ctx);
     case "thinking":
       return handleThinking(interaction, ctx, member);
+    case "r18":
+      return handleR18(interaction, ctx);
     case "ping":
       return handlePing(interaction, ctx);
     case "pacchi_help":
@@ -177,6 +180,16 @@ async function handleThinking(
   });
 }
 
+async function handleR18(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+  const enabled = interaction.options.getBoolean("enabled", true);
+  await setAiR18Enabled(ctx, interaction.guildId!, interaction.user.id, enabled);
+
+  await interaction.reply({
+    content: `R18モードを ${enabled ? "ON" : "OFF"} にしました。`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 async function handleChangePrompt(interaction: ChatInputCommandInteraction, _ctx: BotContext): Promise<void> {
   try {
     await interaction.showModal(buildChangePromptModal());
@@ -225,10 +238,11 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
     await interaction.reply({ content: "少し待ってから再度お試しください。", flags: MessageFlags.Ephemeral });
     return;
   }
-  await interaction.deferReply();
+  const r18 = await getAiR18Enabled(ctx, interaction.guildId!, interaction.user.id);
+  await interaction.deferReply(r18 ? { flags: MessageFlags.Ephemeral } : undefined);
   try {
     const svc = new AiQueryService(ctx);
-    await svc.routeSlashInteraction(interaction);
+    await svc.routeSlashInteraction(interaction, { r18 });
     markAiUse(interaction.user.id);
   } catch (e) {
     ctx.log.error({ err: e }, "deepseek q failed");

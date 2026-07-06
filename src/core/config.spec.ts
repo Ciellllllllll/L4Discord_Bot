@@ -110,6 +110,48 @@ const fallbackConfig = loadConfig(
 
 assert.equal(fallbackConfig.GAME_DEAL_CHANNEL_ID, "common-game-deal-channel");
 assert.equal(fallbackConfig.GAME_DEAL_NOTIFY_ROLE_ID, "common-game-deal-role");
+assert.equal(fallbackConfig.R18_CHANNEL_ID, undefined);
+assert.equal(fallbackConfig.LOCAL_LLM_API_BASE, undefined);
+assert.equal(fallbackConfig.LOCAL_LLM_API_KEY, "");
+assert.equal(fallbackConfig.LOCAL_LLM_MODEL, "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf");
+assert.equal(fallbackConfig.LOCAL_LLM_TIMEOUT_MS, 180000);
+assert.equal(fallbackConfig.LOCAL_LLM_MAX_CONCURRENT, 1);
+assert.equal(fallbackConfig.LOCAL_LLM_MAX_QUEUE, 3);
+assert.equal(fallbackConfig.LOCAL_LLM_TEMPERATURE, fallbackConfig.AI_TEMPERATURE);
+
+const localLlmConfig = loadConfig(
+  baseEnv({
+    PROFILE: "debug",
+    AI_TEMPERATURE: "0.42",
+    R18_CHANNEL_ID: "r18-channel",
+    LOCAL_LLM_API_BASE: "http://127.0.0.1:8080/v1",
+    LOCAL_LLM_API_KEY: "local-secret",
+    LOCAL_LLM_MODEL: "custom-model.gguf",
+    LOCAL_LLM_TIMEOUT_MS: "90000",
+    LOCAL_LLM_MAX_CONCURRENT: "2",
+    LOCAL_LLM_MAX_QUEUE: "5",
+    LOCAL_LLM_TEMPERATURE: "1.1",
+  }),
+);
+
+assert.equal(localLlmConfig.R18_CHANNEL_ID, "r18-channel");
+assert.equal(localLlmConfig.LOCAL_LLM_API_BASE, "http://127.0.0.1:8080/v1");
+assert.equal(localLlmConfig.LOCAL_LLM_API_KEY, "local-secret");
+assert.equal(localLlmConfig.LOCAL_LLM_MODEL, "custom-model.gguf");
+assert.equal(localLlmConfig.LOCAL_LLM_TIMEOUT_MS, 90000);
+assert.equal(localLlmConfig.LOCAL_LLM_MAX_CONCURRENT, 2);
+assert.equal(localLlmConfig.LOCAL_LLM_MAX_QUEUE, 5);
+assert.equal(localLlmConfig.LOCAL_LLM_TEMPERATURE, 1.1);
+
+const localLlmTemperatureFallbackConfig = loadConfig(
+  baseEnv({
+    PROFILE: "debug",
+    AI_TEMPERATURE: "0.33",
+    LOCAL_LLM_TEMPERATURE: "",
+  }),
+);
+
+assert.equal(localLlmTemperatureFallbackConfig.LOCAL_LLM_TEMPERATURE, 0.33);
 
 const suffixedProductionConfig = loadConfig(
   baseEnv({

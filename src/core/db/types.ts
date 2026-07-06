@@ -271,6 +271,13 @@ export interface AiHistoryRow {
   created_at: Date;
 }
 
+export interface AiR18UserSettingsRow {
+  guild_id: string;
+  user_id: string;
+  enabled: number;
+  updated_at: string;
+}
+
 export interface PollsRow {
   id: string;
   guild_id: string;
@@ -336,4 +343,5 @@ export interface Database {
   announcements: AnnouncementsRow;
   vc_panel_configs: VcPanelConfigsRow;
   polls: PollsRow;
+  ai_r18_user_settings: AiR18UserSettingsRow;
 }

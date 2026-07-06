@@ -81,6 +81,14 @@ const profileOverridableKeys = [
   "REACTION_ROLE_OUTPUT_CHANNEL_ID",
   "GAME_DEAL_CHANNEL_ID",
   "GAME_DEAL_NOTIFY_ROLE_ID",
+  "R18_CHANNEL_ID",
+  "LOCAL_LLM_API_BASE",
+  "LOCAL_LLM_API_KEY",
+  "LOCAL_LLM_MODEL",
+  "LOCAL_LLM_TIMEOUT_MS",
+  "LOCAL_LLM_MAX_CONCURRENT",
+  "LOCAL_LLM_MAX_QUEUE",
+  "LOCAL_LLM_TEMPERATURE",
   "STEAM_WEB_API_KEY",
   "GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS",
   "GAME_DEAL_STEAM_VERIFY_INTERVAL_MS",
@@ -288,6 +296,23 @@ const envSchema = z.object({
   AI_MAX_RESPONSE_BYTES: z.coerce.number().int().min(64_000).default(2_000_000),
   AI_MAX_RETRIES: z.coerce.number().int().min(0).default(2),
   AI_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.7),
+  R18_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
+  LOCAL_LLM_API_BASE: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().optional(),
+  ),
+  LOCAL_LLM_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  LOCAL_LLM_MODEL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().min(1).default("Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf"),
+  ),
+  LOCAL_LLM_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(180_000),
+  LOCAL_LLM_MAX_CONCURRENT: z.coerce.number().int().min(1).default(1),
+  LOCAL_LLM_MAX_QUEUE: z.coerce.number().int().min(0).default(3),
+  LOCAL_LLM_TEMPERATURE: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.coerce.number().min(0).max(2).optional(),
+  ),
   PROMPT_OPTIMIZER_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
   PROMPT_OPTIMIZER_MAX_HISTORY: z.coerce.number().int().min(2).default(24),
   PROMPT_OPTIMIZER_MIN_MESSAGES: z.coerce.number().int().min(2).default(6),
@@ -468,7 +493,9 @@ const envSchema = z.object({
 });
 
 type ParsedEnvConfig = z.infer<typeof envSchema>;
-export type AppConfig = ParsedEnvConfig;
+export type AppConfig = Omit<ParsedEnvConfig, "LOCAL_LLM_TEMPERATURE"> & {
+  LOCAL_LLM_TEMPERATURE: number;
+};
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const profiledEnv = applyProfileOverrides(env);
@@ -513,10 +540,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error("OWNER_ID を設定してください");
   }
   assertValidIanaTimeZone(data.VC_TIME_RANKING_TIMEZONE);
+  const localLlmTemperature = data.LOCAL_LLM_TEMPERATURE ?? data.AI_TEMPERATURE;
   const repoRoot = findPackageJsonDir(fileURLToPath(import.meta.url));
   const R = (p: string) => (isAbsolute(p) ? p : join(repoRoot, p));
   return {
     ...data,
+    LOCAL_LLM_TEMPERATURE: localLlmTemperature,
     DISCORD_TOKEN: discordToken,
     GUILD_ID: guildId,
     OWNER_ID: ownerId,
