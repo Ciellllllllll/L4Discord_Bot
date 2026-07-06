@@ -21,11 +21,29 @@ import { getAiThinkingEnabled } from "./thinkingSettings.js";
 import { classifyUserIntent } from "./queryJudge.js";
 import { runAiSlashCommand } from "./aiCommandExecution.js";
 import { sendOrReconnectAiHistoryAdminPanel } from "./aiHistoryAdminPanel.js";
+import { localLlmChat } from "./localLlm.js";
+import { LocalLlmQueue } from "./localLlmQueue.js";
+import { getAiR18Enabled } from "./aiR18Settings.js";
 
 // DiscordBOTv2 AI_Query.js と同じ customId 接頭辞
 
 export const HISTORY_CLEAR_Q_PREFIX = "chatgpt_history_clear_q:";
 export const SHOW_PROMPT_APPLY_BUTTON_ID = "ai_show_prompt:apply";
+const R18_LOCAL_LLM_SAFETY_PROMPT = [
+  "R18 mode safety constraints:",
+  "Do not generate sexual content involving minors or characters described as under 18.",
+  "Do not generate sexual content involving non-consent, coercion, intoxication, or inability to consent.",
+  "Do not generate sexual content involving real people or identifiable private persons.",
+  "未成年、非同意、実在人物を対象にした性的生成は禁止します。",
+].join("\n");
+
+const localLlmQueues = new WeakMap<AppConfig, LocalLlmQueue>();
+
+export type AiQueryRouteOptions = {
+  r18?: boolean;
+};
+
+type HistoryMode = "normal" | "r18" | "optimizer";
 
 function safeStrip(text: string): string {
   return String(text || "").trim();
@@ -81,6 +99,42 @@ function buildActivePromptMessage(userPrompt: string): ChatMessage {
       userPrompt,
     ].join("\n"),
   );
+}
+
+function parseHistoryMeta(meta: unknown): Record<string, unknown> {
+  if (!meta) return {};
+  if (typeof meta === "object" && !Array.isArray(meta)) {
+    return meta as Record<string, unknown>;
+  }
+  if (typeof meta !== "string") return {};
+  try {
+    const parsed = JSON.parse(meta) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {}
+  return {};
+}
+
+function shouldIncludeHistoryMeta(metaValue: unknown, mode: HistoryMode): boolean {
+  const meta = parseHistoryMeta(metaValue);
+  const isR18 = meta.r18 === true;
+  const isLocalLlm = meta.provider === "local_llm";
+  if (mode === "r18") {
+    return isR18;
+  }
+  return !isR18 && !isLocalLlm;
+}
+
+function localLlmQueueForConfig(config: AppConfig): LocalLlmQueue {
+  const existing = localLlmQueues.get(config);
+  if (existing) return existing;
+  const queue = new LocalLlmQueue({
+    maxConcurrent: config.LOCAL_LLM_MAX_CONCURRENT,
+    maxQueue: config.LOCAL_LLM_MAX_QUEUE,
+  });
+  localLlmQueues.set(config, queue);
+  return queue;
 }
 
 export class AiQueryService {
@@ -195,28 +249,22 @@ export class AiQueryService {
     }
   }
 
-  private async countHistoryRows(guildId: string, userId: string): Promise<number> {
-    const r = await this.ctx.aiHistoryDb
+  private async countHistoryRowsSince(
+    guildId: string,
+    userId: string,
+    since: Date | null,
+    mode: HistoryMode = "normal",
+  ): Promise<number> {
+    let query = this.ctx.aiHistoryDb
       .selectFrom("ai_history")
-      .select((eb) => eb.fn.count<number>("id").as("c"))
+      .select(["id", "meta"])
       .where("guild_id", "=", guildId)
-      .where("user_id", "=", userId)
-      .executeTakeFirst();
-    return Number(r?.c ?? 0);
-  }
-
-  private async countHistoryRowsSince(guildId: string, userId: string, since: Date | null): Promise<number> {
-    if (!since) {
-      return this.countHistoryRows(guildId, userId);
+      .where("user_id", "=", userId);
+    if (since) {
+      query = query.where("created_at", ">", since.toISOString() as unknown as Date);
     }
-    const r = await this.ctx.aiHistoryDb
-      .selectFrom("ai_history")
-      .select((eb) => eb.fn.count<number>("id").as("c"))
-      .where("guild_id", "=", guildId)
-      .where("user_id", "=", userId)
-      .where("created_at", ">", since.toISOString() as unknown as Date)
-      .executeTakeFirst();
-    return Number(r?.c ?? 0);
+    const rows = await query.execute();
+    return rows.filter((row) => shouldIncludeHistoryMeta(row.meta, mode)).length;
   }
 
   private shouldOptimizePrompt(historyRowCount: number): boolean {
@@ -238,7 +286,7 @@ export class AiQueryService {
     const maxRows = this.ctx.config.PROMPT_OPTIMIZER_MAX_HISTORY;
     let query = this.ctx.aiHistoryDb
       .selectFrom("ai_history")
-      .select(["role", "content"])
+      .select(["role", "content", "meta"])
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)
       .orderBy("created_at", "desc")
@@ -247,7 +295,7 @@ export class AiQueryService {
       query = query.where("created_at", ">", since.toISOString() as unknown as Date);
     }
     const rows = await query.execute();
-    return [...rows].reverse();
+    return [...rows].reverse().filter((row) => shouldIncludeHistoryMeta(row.meta, "optimizer"));
   }
 
   private async optimizeUserPromptFromHistory(
@@ -264,7 +312,7 @@ export class AiQueryService {
     try {
       const resolvedUserName = this.resolveUserName(uid, userName);
       const promptUpdatedAt = this.userPromptUpdatedAt(uid, resolvedUserName);
-      const historyCountSincePrompt = await this.countHistoryRowsSince(guildId, uid, promptUpdatedAt);
+      const historyCountSincePrompt = await this.countHistoryRowsSince(guildId, uid, promptUpdatedAt, "optimizer");
       if (!this.shouldOptimizePrompt(historyCountSincePrompt)) {
         return;
       }
@@ -323,11 +371,16 @@ export class AiQueryService {
     void sendOrReconnectAiHistoryAdminPanel(this.ctx);
   }
 
-  private async loadHistoryMessages(guildId: string, userId: string, since: Date | null): Promise<ChatMessage[]> {
+  private async loadHistoryMessages(
+    guildId: string,
+    userId: string,
+    since: Date | null,
+    mode: HistoryMode,
+  ): Promise<ChatMessage[]> {
     const max = this.ctx.config.AI_HISTORY_MAX_MESSAGES;
     let query = this.ctx.aiHistoryDb
       .selectFrom("ai_history")
-      .select(["role", "content"])
+      .select(["role", "content", "meta"])
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)
       .orderBy("created_at", "asc");
@@ -338,6 +391,9 @@ export class AiQueryService {
 
     const out: ChatMessage[] = [];
     for (const r of rows) {
+      if (!shouldIncludeHistoryMeta(r.meta, mode)) {
+        continue;
+      }
       if (r.role === "user" || r.role === "assistant") {
         out.push({ role: r.role, content: r.content });
       }
@@ -345,9 +401,15 @@ export class AiQueryService {
     return out.slice(-max);
   }
 
-  private async appendHistoryPair(guildId: string, userId: string, userContent: string, assistantContent: string): Promise<void> {
+  private async appendHistoryPair(
+    guildId: string,
+    userId: string,
+    userContent: string,
+    assistantContent: string,
+    metaValue: Record<string, unknown> = {},
+  ): Promise<void> {
     const now = sqliteTimestamp() as unknown as Date;
-    const meta = JSON.stringify({}) as unknown as Record<string, unknown>;
+    const meta = JSON.stringify(metaValue) as unknown as Record<string, unknown>;
     await this.ctx.aiHistoryDb
       .insertInto("ai_history")
       .values({
@@ -382,39 +444,132 @@ export class AiQueryService {
       .execute();
   }
 
+  private async buildQuestionMessages(
+    guildId: string,
+    userId: string,
+    userName: string,
+    question: string,
+    r18: boolean,
+  ): Promise<ChatMessage[]> {
+    const resolvedUserName = this.resolveUserName(userId, userName);
+    const promptUpdatedAt = this.userPromptUpdatedAt(userId, resolvedUserName);
+    const history = await this.loadHistoryMessages(guildId, userId, promptUpdatedAt, r18 ? "r18" : "normal");
+    const { resolved: basePrompt } = this.refreshBasePromptFromFile();
+    const userPrompt = this.loadUserPrompt(userId, resolvedUserName);
+    const activePrompt = buildActivePromptMessage(userPrompt);
+    return [
+      { role: "system", content: basePrompt },
+      activePrompt,
+      ...history,
+      activePrompt,
+      ...(r18 ? [{ role: "system" as const, content: R18_LOCAL_LLM_SAFETY_PROMPT }] : []),
+      { role: "user", content: question },
+    ];
+  }
+
   private async askQuestion(
     guildId: string,
     userId: string,
     userName: string,
     question: string,
   ): Promise<string> {
-    const resolvedUserName = this.resolveUserName(userId, userName);
-    const promptUpdatedAt = this.userPromptUpdatedAt(userId, resolvedUserName);
-    const history = await this.loadHistoryMessages(guildId, userId, promptUpdatedAt);
-    const { resolved: basePrompt } = this.refreshBasePromptFromFile();
-    const userPrompt = this.loadUserPrompt(userId, resolvedUserName);
-    const activePrompt = buildActivePromptMessage(userPrompt);
-    const messages: ChatMessage[] = [
-      { role: "system", content: basePrompt },
-      activePrompt,
-      ...history,
-      activePrompt,
-      { role: "user", content: question },
-    ];
+    const messages = await this.buildQuestionMessages(guildId, userId, userName, question, false);
     const thinking = await getAiThinkingEnabled(this.ctx, guildId, userId);
     const { content: answer } = await deepseekChat(this.ctx.config, messages, { thinking });
-    await this.appendHistoryPair(guildId, userId, question, answer);
+    await this.appendHistoryPair(guildId, userId, question, answer, { provider: "deepseek", r18: false });
     void this.optimizeUserPromptFromHistory(guildId, userId, userName).catch(() => undefined);
     this.touchHistoryAdminPanel();
     return answer;
   }
 
-  async routeSlashInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+  private async askR18Question(
+    interaction: ChatInputCommandInteraction,
+    guildId: string,
+    userId: string,
+    userName: string,
+    question: string,
+  ): Promise<string | null> {
+    if (!this.ctx.config.R18_CHANNEL_ID || interaction.channelId !== this.ctx.config.R18_CHANNEL_ID) {
+      await interaction.editReply({
+        content: "R18モードの /q は指定されたR18チャンネルでのみ利用できます。",
+        embeds: [],
+        components: [],
+        allowedMentions: { parse: [] },
+      });
+      return null;
+    }
+    if (!this.ctx.config.LOCAL_LLM_API_BASE || !this.ctx.config.LOCAL_LLM_API_KEY.trim()) {
+      await interaction.editReply({
+        content: "R18用ローカルLLMの設定が未完了です。管理者に LOCAL_LLM_API_BASE / LOCAL_LLM_API_KEY を確認してください。",
+        embeds: [],
+        components: [],
+        allowedMentions: { parse: [] },
+      });
+      return null;
+    }
+
+    const messages = await this.buildQuestionMessages(guildId, userId, userName, question, true);
+    const queue = localLlmQueueForConfig(this.ctx.config);
+    let started = false;
+    let startNotice: Promise<unknown> = Promise.resolve();
+    const ticket = queue.enqueue({
+      userId,
+      onStart: () => {
+        started = true;
+        startNotice = interaction.editReply({
+          content: "生成中です。ローカルLLMのため時間がかかる場合があります。",
+          embeds: [],
+          components: [],
+          allowedMentions: { parse: [] },
+        }).catch(() => undefined);
+      },
+      run: async () => localLlmChat(this.ctx.config, messages),
+    });
+
+    if (!ticket.ok) {
+      const content =
+        ticket.reason === "duplicate_user"
+          ? "現在、あなたのR18 /q を処理中です。完了してから再度お試しください。"
+          : "ローカルLLMが混雑しています。しばらくしてから再度お試しください。";
+      await interaction.editReply({
+        content,
+        embeds: [],
+        components: [],
+        allowedMentions: { parse: [] },
+      });
+      return null;
+    }
+
+    const waitingAhead = started ? ticket.queuedAhead : ticket.queuedAhead + 1;
+    if (waitingAhead > 0) {
+      await interaction.editReply({
+        content: `待機中: あなたの前に${waitingAhead}件あります。`,
+        embeds: [],
+        components: [],
+        allowedMentions: { parse: [] },
+      });
+    }
+
+    let answer: string;
+    try {
+      ({ content: answer } = await ticket.promise);
+    } catch (error) {
+      await startNotice;
+      throw error;
+    }
+    await startNotice;
+    await this.appendHistoryPair(guildId, userId, question, answer, { provider: "local_llm", r18: true });
+    this.touchHistoryAdminPanel();
+    return answer;
+  }
+
+  async routeSlashInteraction(interaction: ChatInputCommandInteraction, options: AiQueryRouteOptions = {}): Promise<void> {
     const guildId = interaction.guildId!;
     const text = safeStrip(interaction.options.getString("text", true));
     const userId = interaction.user.id;
     const userName = interaction.user.username;
     const noMentions = { parse: [] as const };
+    const r18 = options.r18 ?? (await getAiR18Enabled(this.ctx, guildId, userId));
 
     const replyQuestion = async (answer: string) => {
       const embed = new EmbedBuilder()
@@ -443,9 +598,19 @@ export class AiQueryService {
     };
 
     const runQuestionFlow = async () => {
-      const answer = await this.askQuestion(guildId, userId, userName, text);
+      const answer = r18
+        ? await this.askR18Question(interaction, guildId, userId, userName, text)
+        : await this.askQuestion(guildId, userId, userName, text);
+      if (answer === null) {
+        return;
+      }
       await replyQuestion(answer);
     };
+
+    if (r18) {
+      await runQuestionFlow();
+      return;
+    }
 
     if (!this.ctx.config.AI_JUDGE_ENABLED) {
       await runQuestionFlow();
@@ -517,6 +682,14 @@ export class AiQueryService {
       const answer = await this.askQuestion(guildId, userId, userName, text);
       await replyQuestion(answer);
     };
+
+    if (await getAiR18Enabled(this.ctx, guildId, userId)) {
+      await message.reply({
+        content: "R18モード中は /q をR18チャンネルで使用してください。",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+      return;
+    }
 
     if (!this.ctx.config.AI_JUDGE_ENABLED) {
       await runQuestionFlow();

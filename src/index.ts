@@ -80,6 +80,7 @@ import { handleAiChatMonitorMessage } from "./features/ai/aiQueryService.js";
 import { copyAiHistoryFromMainToDedicatedDb } from "./features/ai/copyAiHistoryFromMain.js";
 import { copyRemindersFromMainToReminderDb } from "./features/reminders/copyRemindersFromMain.js";
 import { ensureAiHistorySchema } from "./features/ai/aiHistorySchema.js";
+import { ensureAiR18UserSettingsSchema } from "./features/ai/aiR18UserSettingsSchema.js";
 import { copyAutomodFromGuildSettingsIfMissing } from "./features/moderation/copyAutomodFromGuildSettings.js";
 import { ensureAutomoderationSchema } from "./features/moderation/automodSchema.js";
 import { copyTicketDataFromMainToTicketDb } from "./features/tickets/copyTicketDataFromMain.js";
@@ -169,6 +170,7 @@ async function main(): Promise<void> {
   ensureVcTimeSchema(vcTimeSqlite as DatabaseLib.Database);
   ensurePacchiSchemaOnce(sqlite as DatabaseLib.Database);
   ensureGameDealSchemaOnce(sqlite as DatabaseLib.Database);
+  ensureAiR18UserSettingsSchema(sqlite as DatabaseLib.Database);
   ensureAiHistorySchema(aiHistorySqlite as DatabaseLib.Database);
   ensureAutomoderationSchema(automodSqlite as DatabaseLib.Database);
   prepareMessageLogsDatabase(messageLogSqlite as DatabaseLib.Database);
