@@ -42,7 +42,7 @@ import {
   handleLolWatchCommand,
 } from "../features/lolWatcher/lolWatcher.commands.js";
 import { handleWerewolfCreate, handleWerewolfEnd } from "../features/werewolf/werewolfGame.js";
-import { maybePromptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js";
+import { maybePromptAnonymousSurvey, promptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -83,6 +83,10 @@ export async function handleSlashCommand(
 
   const member: GuildMember | null =
     interaction.member && "roles" in interaction.member ? (interaction.member as GuildMember) : null;
+
+  if (interaction.commandName === "survey") {
+    return handleDebugSurvey(interaction, ctx, member);
+  }
 
   if (!options.skipSurvey && await maybePromptAnonymousSurvey(interaction, ctx, member)) {
     return;
@@ -149,6 +153,25 @@ export async function handleSlashCommand(
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
   }
+}
+
+async function handleDebugSurvey(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (ctx.config.BOT_PROFILE !== "debug") {
+    await interaction.reply({ content: "このコマンドはdebug profileでのみ利用できます。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (ctx.config.DB_DRIVER !== "postgres") {
+    await interaction.reply({ content: "Anonymous SurveyはPostgreSQL環境でのみ利用できます。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (await promptAnonymousSurvey(interaction, ctx, member, { ignoreAdmin: true, ignoreCooldown: true })) {
+    return;
+  }
+  await interaction.reply({ content: "Anonymous Surveyを表示できませんでした。", flags: MessageFlags.Ephemeral });
 }
 
 async function handleCreatePrompt(interaction: ChatInputCommandInteraction): Promise<void> {

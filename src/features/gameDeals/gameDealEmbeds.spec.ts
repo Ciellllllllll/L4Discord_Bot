@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ButtonStyle, ComponentType, type APIButtonComponentWithURL } from "discord.js";
+import { ButtonStyle, ComponentType, type APIButtonComponentWithURL, type APISectionComponent } from "discord.js";
 import { componentCardsPayload } from "../panels/componentCard.js";
 import { buildSteamFreeEventEmbed } from "./gameDealEmbeds.js";
 import type { SteamFreeEvent } from "./gameDealTypes.js";
@@ -21,11 +21,23 @@ const event: SteamFreeEvent = {
 
 const card = buildSteamFreeEventEmbed(event);
 const container = card.toContainer();
-const text = container.components.find((component) => component.type === ComponentType.TextDisplay)?.content ?? "";
+const text = container.components.flatMap((component) => {
+  if (component.type === ComponentType.TextDisplay) return [component.content];
+  if (component.type === ComponentType.Section) return component.components.map((item) => item.content);
+  return [];
+}).join("\n");
+const section = container.components.find((component) => component.type === ComponentType.Section) as
+  | APISectionComponent
+  | undefined;
 
 assert.equal(text.includes("Steam URL"), false);
 assert.equal(text.includes(event.steamUrl), false);
 assert.match(text, /\*\*配布終了\*\*\n<t:1783468800:R>/);
+assert.equal(section?.accessory.type, ComponentType.Thumbnail);
+assert.equal(
+  section?.accessory.media.url,
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/330px-Steam_icon_logo.svg.png",
+);
 
 const actionRow = container.components.find((component) => component.type === ComponentType.ActionRow);
 assert.ok(actionRow);

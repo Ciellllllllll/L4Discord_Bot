@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, type APISectionComponent } from "discord.js";
 import { ComponentCardBuilder, componentCardsPayload } from "./componentCard.js";
+
+function collectText(container: ReturnType<ComponentCardBuilder["toContainer"]>): string {
+  return container.components.flatMap((component) => {
+    if (component.type === ComponentType.TextDisplay) return [component.content];
+    if (component.type === ComponentType.Section) return component.components.map((item) => item.content);
+    return [];
+  }).join("\n");
+}
 
 function run(): void {
   const card = new ComponentCardBuilder()
@@ -10,15 +18,21 @@ function run(): void {
     .setThumbnail("https://example.com/thumb.png");
 
   const container = card.toContainer();
-  const text = container.components.find((component) => component.type === ComponentType.TextDisplay);
-  assert.equal(text?.content.includes("画像:"), false);
-  assert.equal(text?.content.includes("サムネイル:"), false);
+  const text = collectText(container);
+  assert.equal(text.includes("画像:"), false);
+  assert.equal(text.includes("サムネイル:"), false);
+
+  const section = container.components.find((component) => component.type === ComponentType.Section) as
+    | APISectionComponent
+    | undefined;
+  assert.equal(section?.accessory.type, ComponentType.Thumbnail);
+  assert.equal(section?.accessory.media.url, "https://example.com/thumb.png");
 
   const galleries = container.components.filter((component) => component.type === ComponentType.MediaGallery);
-  assert.equal(galleries.length, 2);
+  assert.equal(galleries.length, 1);
   assert.deepEqual(
     galleries.map((gallery) => gallery.items[0]?.media.url),
-    ["https://example.com/main.png", "https://example.com/thumb.png"],
+    ["https://example.com/main.png"],
   );
 
   const imageOnly = new ComponentCardBuilder().setImage("https://example.com/only.png").toContainer();

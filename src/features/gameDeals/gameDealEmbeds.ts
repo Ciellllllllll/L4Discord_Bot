@@ -6,6 +6,11 @@ import {
 } from "discord.js";
 import type { GameDealSubscriptionHit, SteamFreeEvent } from "./gameDealTypes.js";
 
+export const EPIC_GAMES_STORE_LOGO_URL =
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Epic_Games_Store_logo_2023_vertical_white.svg/330px-Epic_Games_Store_logo_2023_vertical_white.svg.png";
+export const STEAM_LOGO_URL =
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/330px-Steam_icon_logo.svg.png";
+
 function priceText(value: number | null): string {
   if (value === null) return "不明";
   if (value === 0) return "無料 / 0円";
@@ -20,6 +25,7 @@ export function buildSubscriptionDealEmbed(hit: GameDealSubscriptionHit): Compon
   const platform = hit.platform === "steam" ? "Steam" : "Epic Games";
   const embed = new ComponentCardBuilder()
     .setTitle(hit.platform === "steam" ? "Steam無料情報" : "Epic Games 無料配布")
+    .setThumbnail(hit.platform === "steam" ? STEAM_LOGO_URL : EPIC_GAMES_STORE_LOGO_URL)
     .setColor(0xf1c40f)
     .setDescription(`**${hit.title}**\n登録したゲームが割引されています!`)
     .addFields(
@@ -84,6 +90,7 @@ export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBu
   const freeUntil = discordRelativeUnix(event.freeUntilUnix);
   const embed = new ComponentCardBuilder()
     .setTitle("Steam 無料配布")
+    .setThumbnail(STEAM_LOGO_URL)
     .setColor(0x2ecc71)
     .setDescription(`**${event.title}**\n通常有料ゲームがSteamで無料配布または100%OFFになっています。`)
     .addFields(

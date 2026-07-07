@@ -6,6 +6,7 @@ import {
   type APIContainerComponent,
   type APIMediaGalleryComponent,
   type APIMessageTopLevelComponent,
+  type APISectionComponent,
   type APITextDisplayComponent,
 } from "discord.js";
 
@@ -150,7 +151,7 @@ export class ComponentCardBuilder {
 
   toContainer(): APIContainerComponent {
     const { body, footer } = this.toTextParts();
-    const mediaComponents = [this.data.image, this.data.thumbnail]
+    const mediaComponents = [this.data.image]
       .filter((image): image is ImageData & { url: string } => Boolean(image?.url))
       .map((image): APIMediaGalleryComponent => ({
         type: ComponentType.MediaGallery,
@@ -166,13 +167,26 @@ export class ComponentCardBuilder {
       type: ComponentType.TextDisplay,
       content,
     }));
-    const components: APIContainerComponent["components"] = [
-      ...(body
-        ? [{
+    const bodyComponent: APITextDisplayComponent | APISectionComponent | null = body
+      ? this.data.thumbnail?.url
+        ? {
+          type: ComponentType.Section,
+          components: [{
+            type: ComponentType.TextDisplay,
+            content: body,
+          }],
+          accessory: {
+            type: ComponentType.Thumbnail,
+            media: { url: this.data.thumbnail.url },
+          },
+        }
+        : {
           type: ComponentType.TextDisplay,
           content: body,
-        } satisfies APITextDisplayComponent]
-        : []),
+        }
+      : null;
+    const components: APIContainerComponent["components"] = [
+      ...(bodyComponent ? [bodyComponent] : []),
       ...textDisplays,
       ...actionRows,
       ...(footer

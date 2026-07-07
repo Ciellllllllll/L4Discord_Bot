@@ -151,6 +151,58 @@ async function run(): Promise<void> {
       sqlite.close();
     }
   }
+
+  {
+    const { sqlite, db } = makeDb();
+    try {
+      const sessionId = await createAnonymousSurveySession(db, "guild", "user", {
+        commandName: "survey",
+        guildId: "guild",
+        channelId: "channel",
+        userId: "user",
+        options: [],
+      });
+      const replies: Array<{ content?: string; embeds?: unknown[]; components?: unknown[] }> = [];
+      assert.equal(await handleAnonymousSurveyButton(makeButton(`anon_survey:submit:${sessionId}:5`, replies), makeCtx(db)), true);
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0]?.content, undefined);
+      assert.deepEqual(replies[0]?.embeds, []);
+      assert.equal(Array.isArray(replies[0]?.components), true);
+      const responses = sqlite.prepare("SELECT guild_id, rating FROM anonymous_survey_responses").all();
+      assert.deepEqual(responses, [{ guild_id: "guild", rating: 5 }]);
+      const sessions = sqlite.prepare("SELECT * FROM interaction_sessions").all();
+      assert.equal(sessions.length, 0);
+    } finally {
+      await db.destroy();
+      sqlite.close();
+    }
+  }
+
+  {
+    const { sqlite, db } = makeDb();
+    try {
+      const sessionId = await createAnonymousSurveySession(db, "guild", "user", {
+        commandName: "survey",
+        guildId: "guild",
+        channelId: "channel",
+        userId: "user",
+        options: [],
+      });
+      const replies: Array<{ content?: string; embeds?: unknown[]; components?: unknown[] }> = [];
+      assert.equal(await handleAnonymousSurveyButton(makeButton(`anon_survey:skip:${sessionId}`, replies), makeCtx(db)), true);
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0]?.content, undefined);
+      assert.deepEqual(replies[0]?.embeds, []);
+      assert.equal(Array.isArray(replies[0]?.components), true);
+      const responses = sqlite.prepare("SELECT * FROM anonymous_survey_responses").all();
+      assert.equal(responses.length, 0);
+      const state = sqlite.prepare("SELECT last_action FROM anonymous_survey_user_state").all();
+      assert.deepEqual(state, [{ last_action: "skip" }]);
+    } finally {
+      await db.destroy();
+      sqlite.close();
+    }
+  }
 }
 
 void run()

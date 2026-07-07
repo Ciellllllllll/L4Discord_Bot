@@ -18,6 +18,7 @@ import {
 } from "./surveyUi.js";
 
 const MODAL_SLASH_COMMANDS = new Set(["change_prompt", "create_prompt"]);
+const SURVEY_ONLY_SLASH_COMMANDS = new Set(["survey"]);
 
 function parseRatingId(customId: string): { sessionId: string; rating: number } | null {
   if (!customId.startsWith(SURVEY_RATING_PREFIX)) return null;
@@ -86,6 +87,10 @@ export async function handleAnonymousSurveyButton(interaction: ButtonInteraction
       return true;
     }
     await recordAnonymousSurveyAnswer(ctx.db, session.guildId, interaction.user.id, submit.rating);
+    if (SURVEY_ONLY_SLASH_COMMANDS.has(session.command.commandName)) {
+      await interaction.update(buildAnonymousSurveyCompletedMessage("answer"));
+      return true;
+    }
     const preferFollowUp = !MODAL_SLASH_COMMANDS.has(session.command.commandName);
     if (preferFollowUp) await interaction.update(buildAnonymousSurveyCompletedMessage("answer"));
     await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command, { preferFollowUp }), ctx, { skipSurvey: true });
@@ -101,6 +106,10 @@ export async function handleAnonymousSurveyButton(interaction: ButtonInteraction
       return true;
     }
     await recordAnonymousSurveySkip(ctx.db, session.guildId, interaction.user.id);
+    if (SURVEY_ONLY_SLASH_COMMANDS.has(session.command.commandName)) {
+      await interaction.update(buildAnonymousSurveyCompletedMessage("skip"));
+      return true;
+    }
     const preferFollowUp = !MODAL_SLASH_COMMANDS.has(session.command.commandName);
     if (preferFollowUp) await interaction.update(buildAnonymousSurveyCompletedMessage("skip"));
     await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command, { preferFollowUp }), ctx, { skipSurvey: true });

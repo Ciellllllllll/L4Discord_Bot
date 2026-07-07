@@ -6,6 +6,9 @@ import {
 } from "discord.js";
 import type { EpicFreeCandidate } from "./epicFreeTypes.js";
 
+export const EPIC_GAMES_STORE_LOGO_URL =
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Epic_Games_Store_logo_2023_vertical_white.svg/330px-Epic_Games_Store_logo_2023_vertical_white.svg.png";
+
 function priceText(value: number | null, currency: string | null): string {
   if (value === null) return "不明";
   if (value === 0) return "無料 / 0円";
@@ -32,6 +35,7 @@ export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardB
       : "Epic Games Storeで期間限定無料配布中です。期限内にライブラリへ追加すると入手できます。";
   const embed = new ComponentCardBuilder()
     .setTitle("Epic Games 無料配布")
+    .setThumbnail(EPIC_GAMES_STORE_LOGO_URL)
     .setColor(candidate.detectedType === "current_free_game" ? 0x2ecc71 : 0x3498db)
     .setDescription(`**${candidate.title}**\n${note}`)
     .addFields(

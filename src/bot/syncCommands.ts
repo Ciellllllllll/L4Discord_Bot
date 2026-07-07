@@ -5,7 +5,7 @@ import type { AppConfig } from "../core/config.js";
 import { getReleaseBundleForLog } from "../core/releaseVersions.js";
 
 export async function syncGuildApplicationCommands(config: AppConfig, log: Logger): Promise<void> {
-  const body = buildSlashCommands();
+  const body = buildSlashCommands(config.BOT_PROFILE);
   const names = body.map((c) => c.name);
 
   if (config.SKIP_COMMAND_SYNC) {
