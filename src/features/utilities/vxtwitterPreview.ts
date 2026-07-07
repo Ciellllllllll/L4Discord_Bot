@@ -357,17 +357,34 @@ function compactText(text: string, maxLength: number): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
-function formatCount(label: string, value: number | undefined): string | null {
-  return typeof value === "number" ? `${label} ${value.toLocaleString("ja-JP")}` : null;
+function formatCount(icon: string, value: number | undefined): string | null {
+  return typeof value === "number" ? `${icon} ${value.toLocaleString("ja-JP")}` : null;
 }
 
-function buildBody(tweet: TweetPreview, vxUrl: string): string {
+function formatDate(timestamp: number | undefined): string | null {
+  if (typeof timestamp !== "number") return null;
+  const date = new Date(timestamp * 1000);
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}/${month}/${day}`;
+}
+
+function markdownHeading(level: 2 | 3, text: string): string {
+  const prefix = "#".repeat(level);
+  return text
+    .split(/\r?\n/)
+    .map((line) => `${prefix} ${line}`)
+    .join("\n");
+}
+
+function buildBody(tweet: TweetPreview): string {
   const lines: string[] = [];
   const authorName = tweet.author.name ? `${tweet.author.name} (@${tweet.author.screenName})` : `@${tweet.author.screenName}`;
-  lines.push(`**${authorName}**`);
+  lines.push(markdownHeading(2, authorName));
   if (tweet.text) {
     lines.push("");
-    lines.push(tweet.text.slice(0, 3000));
+    lines.push(markdownHeading(3, tweet.text.slice(0, 3000)));
   }
   if (tweet.quote) {
     lines.push("");
@@ -375,26 +392,24 @@ function buildBody(tweet: TweetPreview, vxUrl: string): string {
     if (tweet.quote.url) lines.push(`> ${tweet.quote.url}`);
   }
   const stats = [
-    formatCount("返信", tweet.replies),
-    formatCount("RP", tweet.retweets),
-    formatCount("いいね", tweet.likes),
-    formatCount("表示", tweet.views),
+    formatCount("💬", tweet.replies),
+    formatCount("🔁", tweet.retweets),
+    formatCount("❤️", tweet.likes),
+    formatCount("👁️", tweet.views),
   ].filter((part): part is string => Boolean(part));
   const meta = [
-    tweet.createdTimestamp ? new Date(tweet.createdTimestamp * 1000).toISOString() : null,
+    formatDate(tweet.createdTimestamp),
     stats.length ? stats.join(" / ") : null,
   ].filter(Boolean);
   if (meta.length) {
     lines.push("");
     lines.push(`-# ${meta.join(" / ")}`);
   }
-  lines.push("");
-  lines.push(`-# ${vxUrl}`);
   return lines.join("\n").slice(0, 4000);
 }
 
 function mediaDisplayUrl(media: TweetMedia): string {
-  return media.kind === "photo" ? media.url : (media.thumbnailUrl ?? media.url);
+  return media.url;
 }
 
 function buildMediaGallery(tweet: TweetPreview): APIMediaGalleryComponent | null {
@@ -412,25 +427,24 @@ function buildMediaGallery(tweet: TweetPreview): APIMediaGalleryComponent | null
   };
 }
 
-function buildLinkRow(tweet: TweetPreview, vxUrl: string): APIActionRowComponent<APIButtonComponent> {
+function buildLinkRow(tweet: TweetPreview): APIActionRowComponent<APIButtonComponent> {
   return new ActionRowBuilder<ButtonBuilder>()
     .addComponents(
       new ButtonBuilder().setLabel("Xで開く").setStyle(ButtonStyle.Link).setURL(tweet.url),
-      new ButtonBuilder().setLabel("vxtwitter").setStyle(ButtonStyle.Link).setURL(vxUrl),
     )
     .toJSON() as APIActionRowComponent<APIButtonComponent>;
 }
 
-export function buildVxTwitterPreviewPayload(tweet: TweetPreview, vxUrl: string): VxTwitterPreviewPayload {
+export function buildVxTwitterPreviewPayload(tweet: TweetPreview, _vxUrl: string): VxTwitterPreviewPayload {
   const body: APITextDisplayComponent = {
     type: ComponentType.TextDisplay,
-    content: buildBody(tweet, vxUrl),
+    content: buildBody(tweet),
   };
   const gallery = buildMediaGallery(tweet);
   const components: APIComponentInContainer[] = [
     body,
     ...(gallery ? [gallery] : []),
-    buildLinkRow(tweet, vxUrl),
+    buildLinkRow(tweet),
   ];
   const container: APIContainerComponent = {
     type: ComponentType.Container,

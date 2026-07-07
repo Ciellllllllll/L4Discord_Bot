@@ -64,7 +64,7 @@ async function run(): Promise<void> {
       id: "123",
       url: "https://twitter.com/main/status/123",
       text: "本文\nhttps://t.co/short",
-      created_timestamp: 1710000000,
+      created_timestamp: Date.parse("2026-07-07T08:00:01.000Z") / 1000,
       likes: 10,
       retweets: 2,
       replies: 1,
@@ -157,17 +157,23 @@ async function run(): Promise<void> {
     .filter((component) => component.type === ComponentType.TextDisplay)
     .map((component) => component.content)
     .join("\n");
-  assert.match(text ?? "", /Main User/);
+  assert.match(text ?? "", /## Main User \(@main\)/);
+  assert.match(text ?? "", /### 本文/);
   assert.match(text ?? "", /引用: @quote/);
+  assert.match(text ?? "", /2026\/07\/07 \/ 💬 1 \/ 🔁 2 \/ ❤️ 10 \/ 👁️ 300/);
+  assert.equal(text?.includes("https://vxtwitter.com/main/status/123"), false);
   const gallery = container?.components.find((component) => component.type === ComponentType.MediaGallery);
   assert.equal(gallery?.items.length, 3);
   assert.equal(gallery?.items.every((item) => item.spoiler === true), true);
   assert.equal(gallery?.items[0]?.description, "photo alt");
+  assert.equal(gallery?.items[1]?.media.url, "https://video.twimg.com/ext_tw_video/movie.mp4");
+  assert.equal(gallery?.items[2]?.media.url, "https://video.twimg.com/tweet_video/anim.mp4");
   const row = container?.components.find((component) => component.type === ComponentType.ActionRow) as
     | APIActionRowComponent<APIButtonComponent>
     | undefined;
-  assert.equal(row?.components.length, 2);
+  assert.equal(row?.components.length, 1);
   assert.equal(row?.components[0]?.style, ButtonStyle.Link);
+  assert.equal(row?.components[0]?.label, "Xで開く");
 
   assert.equal(normalizeFixTweetResponse({ code: 401, message: "PRIVATE_TWEET" })?.status, "fallback");
   assert.equal(normalizeFixTweetResponse({ code: 404, message: "NOT_FOUND" })?.status, "fallback");
