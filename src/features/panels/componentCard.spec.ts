@@ -43,6 +43,14 @@ function run(): void {
     }
   }
 
+  const timestamped = new ComponentCardBuilder()
+    .setTitle("日時つきカード")
+    .setTimestamp(new Date("2026-07-07T17:39:17.888Z"))
+    .toContainer();
+  const timestampedText = collectText(timestamped);
+  assert.equal(timestampedText.includes("2026-07-07T17:39:17.888Z"), false);
+  assert.match(timestampedText, /<t:1783445957:f>/);
+
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("component-card:test")

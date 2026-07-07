@@ -34,8 +34,7 @@ export function buildSubscriptionDealEmbed(hit: GameDealSubscriptionHit): Compon
       { name: "現在価格", value: priceText(hit.currentPrice), inline: true },
       { name: "割引率", value: discountText(hit.discountPercent), inline: true },
       { name: "ストアURL", value: hit.url, inline: false },
-    )
-    .setTimestamp(new Date());
+    );
   if (hit.imageUrl) embed.setImage(hit.imageUrl);
   return embed;
 }
@@ -99,8 +98,7 @@ export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBu
       { name: "割引率", value: discount, inline: true },
       ...(freeUntil ? [{ name: "配布終了", value: freeUntil, inline: false }] : []),
       { name: "検証根拠", value: steamEvidenceText(event.evidenceJson), inline: false },
-    )
-    .setTimestamp(new Date());
+    );
   if (event.imageUrl) embed.setImage(event.imageUrl);
   return embed.addActionRows(buildSteamLinkButtons(event));
 }

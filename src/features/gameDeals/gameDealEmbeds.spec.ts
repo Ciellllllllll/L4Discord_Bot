@@ -32,6 +32,7 @@ const section = container.components.find((component) => component.type === Comp
 
 assert.equal(text.includes("Steam URL"), false);
 assert.equal(text.includes(event.steamUrl), false);
+assert.equal(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(text), false);
 assert.match(text, /\*\*配布終了\*\*\n<t:1783468800:R>/);
 assert.equal(section?.accessory.type, ComponentType.Thumbnail);
 assert.equal(

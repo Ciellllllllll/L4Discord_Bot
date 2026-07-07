@@ -35,6 +35,12 @@ type AuthorData = {
   url?: string;
 };
 
+function formatDiscordTimestamp(date: Date): string {
+  const ms = date.getTime();
+  if (!Number.isFinite(ms)) return "";
+  return `<t:${Math.floor(ms / 1000)}:f>`;
+}
+
 export class ComponentCardBuilder {
   public data: {
     title?: string;
@@ -66,7 +72,7 @@ export class ComponentCardBuilder {
   }
 
   setTimestamp(date = new Date()): this {
-    this.data.timestamp = date.toISOString();
+    this.data.timestamp = formatDiscordTimestamp(date);
     return this;
   }
 

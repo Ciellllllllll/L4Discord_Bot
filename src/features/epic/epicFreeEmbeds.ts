@@ -42,8 +42,7 @@ export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardB
       { name: "配布終了", value: formatDiscordRelativeTime(candidate.endDate), inline: false },
       { name: "通常価格", value: priceText(candidate.originalPrice, candidate.currencyCode), inline: true },
       { name: "現在価格", value: priceText(candidate.discountPrice, candidate.currencyCode), inline: true },
-    )
-    .setTimestamp(new Date());
+    );
   if (candidate.imageUrl) embed.setImage(candidate.imageUrl);
   return embed.addActionRows(buildEpicLinkButtons(candidate));
 }
