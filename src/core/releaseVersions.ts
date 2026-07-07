@@ -67,12 +67,12 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
 
 export const PERMANENT_UI_VERSION: Record<string, string> = {
   vc_creator: "1.1.0",
-  reaction_role_admin: "1.0.0",
-  message_log_panel: "1.0.0",
+  reaction_role_admin: "1.2.1",
+  message_log_panel: "1.2.1",
   user_contact_panel: "1.0.0",
-  ai_query_history_admin: "1.0.0",
-  reminder_hub: "1.0.0",
-  automod_panel: "1.0.0",
+  ai_query_history_admin: "1.2.1",
+  reminder_hub: "1.2.1",
+  automod_panel: "1.2.1",
 };
 
 export function getPermanentUiVersion(panelKind: string): string {

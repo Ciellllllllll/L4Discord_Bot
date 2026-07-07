@@ -23,6 +23,7 @@ import {
   ADMIN_EDIT_BUTTON_ID,
   TOGGLE_PREFIX,
 } from "./reactionRoleConstants.js";
+import { buildContainerPanelPayload, messageComponentsHaveCustomId } from "../panels/componentPanelPayload.js";
 
 export type ReactionRoleLine = { roleId: string; label: string; emoji: string | null };
 
@@ -250,21 +251,27 @@ export function buildEntryEmbed(entry: ReactionRoleEntry): EmbedBuilder {
     .setColor(0x8e44ad);
 }
 
-export function buildAdminEmbed(uiChannelMention: string): EmbedBuilder {
-  return new EmbedBuilder()
-    .setTitle("リアクションロール管理パネル")
-    .setDescription(
-      [
-        "作成/編集/削除をこのパネルから行えます。",
-        "",
-        "roles の形式: `roleId|label|emoji` を1行ずつ記述 (最大5件まで)",
-        "例: `123456789012345678|お知らせ|📢`",
-        "カスタム絵文字は ID / name / :name: / <:name:id> / <a:name:id> に対応します。",
-        "",
-        `管理パネルチャンネル: ${uiChannelMention}`,
-      ].join("\n"),
-    )
-    .setColor(0x5865f2);
+export function buildReactionRoleAdminPanelPayload(uiChannelMention: string) {
+  return buildContainerPanelPayload(
+    [
+      "## リアクションロール管理",
+      "ロール付与パネルの作成・編集・削除をこのパネルから行えます。",
+      "",
+      "**管理操作**   作成   編集   削除",
+      "**ロール数**   1パネル最大5件",
+      "",
+      "**入力形式**",
+      "`roleId|label|emoji` を1行ずつ入力します。",
+      "例: `123456789012345678|お知らせ`",
+      "",
+      "**絵文字**",
+      "Unicode、ID、name、`:name:`、`<:name:id>`、`<a:name:id>` に対応します。",
+      "",
+      `**設置先**   ${uiChannelMention}`,
+      "",
+    ].join("\n"),
+    buildAdminRows(),
+  );
 }
 
 export function buildAdminRows(): ActionRowBuilder<ButtonBuilder>[] {
@@ -278,13 +285,7 @@ export function buildAdminRows(): ActionRowBuilder<ButtonBuilder>[] {
 }
 
 function messageHasCustomId(message: Message, customId: string): boolean {
-  for (const row of message.components) {
-    if (!("components" in row) || !row.components) continue;
-    for (const c of row.components) {
-      if ("customId" in c && c.customId === customId) return true;
-    }
-  }
-  return false;
+  return messageComponentsHaveCustomId(message.components, new Set([customId]));
 }
 
 function messageHasEntryButton(message: Message, entryId: string, botUserId: string): boolean {
@@ -443,8 +444,8 @@ export async function reconcileReactionRoleAdminPanel(
     return;
   }
 
-  const embed = buildAdminEmbed(`<#${channelId}>`);
-  const components = buildAdminRows();
+  const payload = buildReactionRoleAdminPanelPayload(`<#${channelId}>`);
+  const editPayload = { ...payload, content: null };
   const botId = ctx.client.user?.id ?? "";
 
   if (row.message_id) {
@@ -454,7 +455,7 @@ export async function reconcileReactionRoleAdminPanel(
         return;
       }
       try {
-        await msg.edit({ embeds: [embed], components });
+        await msg.edit(editPayload);
         await savePanelMessageRow(ctx, row.id, channelId, msg.id, {
           ui_version: codeVer,
           status: "sent",
@@ -475,7 +476,7 @@ export async function reconcileReactionRoleAdminPanel(
     if (existing) {
       try {
         if (row.data.ui_version !== codeVer) {
-          await existing.edit({ embeds: [embed], components });
+          await existing.edit(editPayload);
         }
         await savePanelMessageRow(ctx, row.id, channelId, existing.id, {
           ui_version: codeVer,
@@ -491,7 +492,7 @@ export async function reconcileReactionRoleAdminPanel(
   }
 
   try {
-    const sent = await ch.send({ embeds: [embed], components });
+    const sent = await ch.send(payload);
     await savePanelMessageRow(ctx, row.id, channelId, sent.id, {
       ui_version: codeVer,
       status: "sent",

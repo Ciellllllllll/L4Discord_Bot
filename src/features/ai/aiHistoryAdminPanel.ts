@@ -2,12 +2,12 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   MessageFlags,
   StringSelectMenuBuilder,
   type ButtonInteraction,
   type Guild,
   type Message,
+  type MessageEditOptions,
   type StringSelectMenuInteraction,
 } from "discord.js";
 import { sql } from "kysely";
@@ -15,6 +15,7 @@ import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import { PANEL_KIND_AI_QUERY_HISTORY } from "../panels/constants.js";
+import { buildContainerPanelPayload, messageComponentsHaveCustomId } from "../panels/componentPanelPayload.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessageStore.js";
 import { parsePanelState } from "../panels/panelState.js";
 
@@ -47,12 +48,7 @@ function truncateText(text: string, maxLen = 80): string {
 
 function messageHasAnyCustomId(message: Message, customIds: Set<string>): boolean {
   if (!message.components?.length) return false;
-  return message.components.some(
-    (row) =>
-      "components" in row &&
-      Array.isArray(row.components) &&
-      row.components.some((c) => "customId" in c && c.customId && customIds.has(String(c.customId))),
-  );
+  return messageComponentsHaveCustomId(message.components, customIds);
 }
 
 export function parseConversationRanges(values: string[]): { start: number; end: number }[] {
@@ -171,13 +167,6 @@ function buildHistoryUserOptions(ctx: BotContext, userIds: string[]) {
 export async function buildAiHistoryAdminPanelPayload(ctx: BotContext, guildId: string) {
   const userIds = await listDistinctHistoryUserIds(ctx, guildId);
   const userOptions = buildHistoryUserOptions(ctx, userIds);
-  const embed = new EmbedBuilder()
-    .setTitle("「/q」履歴管理パネル")
-    .setDescription(
-      `ユーザー選択で会話削除、または全履歴削除を実行できます。\n現在の履歴ユーザー数: **${userIds.length}**`,
-    )
-    .setColor(0x3498db);
-
   const userRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(HISTORY_ADMIN_USER_SELECT_ID)
@@ -207,7 +196,21 @@ export async function buildAiHistoryAdminPanelPayload(ctx: BotContext, guildId: 
       .setStyle(ButtonStyle.Secondary),
   );
 
-  return { embed, rows: [userRow, actionRow] as const };
+  return buildContainerPanelPayload(
+    [
+      "## /q 履歴管理",
+      "会話履歴のユーザー別削除と全履歴削除を実行できます。",
+      "全履歴削除はOWNER専用です。",
+      "",
+      "**現在の状態**",
+      userIds.length ? `履歴ユーザー: **${userIds.length}人**` : "削除対象の履歴ユーザーはいません。",
+      "",
+      "**操作**",
+      "ユーザー選択   自分の履歴削除   全履歴削除",
+      "",
+    ].join("\n"),
+    [userRow, actionRow],
+  );
 }
 
 export async function refreshHistoryAdminPanelMessage(message: Message, ctx: BotContext): Promise<void> {
@@ -215,8 +218,8 @@ export async function refreshHistoryAdminPanelMessage(message: Message, ctx: Bot
   if (!message || message.author?.id !== botId || !message.guildId) {
     return;
   }
-  const { embed, rows } = await buildAiHistoryAdminPanelPayload(ctx, message.guildId);
-  await message.edit({ embeds: [embed], components: [...rows] }).catch(() => undefined);
+  const payload = await buildAiHistoryAdminPanelPayload(ctx, message.guildId);
+  await message.edit({ ...payload, content: null } satisfies MessageEditOptions).catch(() => undefined);
 }
 
 export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<boolean> {
@@ -237,7 +240,8 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
     row = { ...row, channel_id: channelId };
   }
 
-  const { embed, rows } = await buildAiHistoryAdminPanelPayload(ctx, guildId);
+  const payload = await buildAiHistoryAdminPanelPayload(ctx, guildId);
+  const editPayload = { ...payload, content: null } satisfies MessageEditOptions;
   const customIds = new Set([
     HISTORY_ADMIN_USER_SELECT_ID,
     HISTORY_CLEAR_ALL_ID,
@@ -248,7 +252,7 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
   if (row.message_id && botId) {
     const oldMsg = await channel.messages.fetch(row.message_id).catch(() => null);
     if (oldMsg?.author?.id === botId) {
-      await oldMsg.edit({ embeds: [embed], components: [...rows] }).catch(() => undefined);
+      await oldMsg.edit(editPayload).catch(() => undefined);
       await savePanelMessageRow(ctx, row.id, channelId, oldMsg.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,
@@ -263,7 +267,7 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
   if (recent && botId) {
     const existing = recent.find((m) => m.author?.id === botId && messageHasAnyCustomId(m, customIds));
     if (existing) {
-      await existing.edit({ embeds: [embed], components: [...rows] }).catch(() => undefined);
+      await existing.edit(editPayload).catch(() => undefined);
       await savePanelMessageRow(ctx, row.id, channelId, existing.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,
@@ -274,7 +278,7 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
     }
   }
 
-  const sent = await channel.send({ embeds: [embed], components: [...rows] });
+  const sent = await channel.send(payload);
   await savePanelMessageRow(ctx, row.id, channelId, sent.id, {
     ...parsePanelState(row.data),
     ui_version: codeVer,

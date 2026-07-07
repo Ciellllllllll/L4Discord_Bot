@@ -9,9 +9,14 @@ import {
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
+  type InteractionUpdateOptions,
   type Message,
-  type MessageCreateOptions,
 } from "discord.js";
+import {
+  buildContainerPanelPayload,
+  messageComponentsHaveCustomId,
+  type ContainerPanelPayload,
+} from "../panels/componentPanelPayload.js";
 import {
   cut,
   dueToInput,
@@ -27,18 +32,16 @@ import {
 } from "./reminderHubTypes.js";
 import type { ReminderHubRowView } from "./reminderHubRepo.js";
 
-export type ReminderHubMessagePayload = Pick<MessageCreateOptions, "embeds" | "components" | "content">;
+export type ReminderHubPanelPayload = ContainerPanelPayload;
+export type ReminderHubMessagePayload = Pick<InteractionUpdateOptions, "embeds" | "components"> & {
+  content?: string;
+};
 
 const HUB_IDS = new Set(["reminder_create", "todo_create", "notice_create", "reminder_manage", "reminder_list"]);
 
 function messageHasAnyCustomId(message: Message, customIds: Set<string>): boolean {
   if (!message.components?.length) return false;
-  return message.components.some(
-    (row) =>
-      "components" in row &&
-      Array.isArray(row.components) &&
-      row.components.some((c) => "customId" in c && c.customId && customIds.has(String(c.customId))),
-  );
+  return messageComponentsHaveCustomId(message.components, customIds);
 }
 
 export function reminderHubPanelMessageMatches(message: Message, botUserId: string): boolean {
@@ -46,14 +49,7 @@ export function reminderHubPanelMessageMatches(message: Message, botUserId: stri
   return messageHasAnyCustomId(message, HUB_IDS);
 }
 
-export function buildReminderHubPanelPayload(): ReminderHubMessagePayload {
-  const embed = new EmbedBuilder()
-    .setTitle("お知らせ関連管理パネル")
-    .setDescription(
-      "ボタンからリマインダー/TODO/運営お知らせを作成できます。\n日時は `+10m` `+2h` `2026-03-20 09:00` 形式を使用できます。",
-    )
-    .setColor(0x1abc9c);
-
+export function buildReminderHubPanelPayload(): ReminderHubPanelPayload {
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("reminder_create").setLabel("リマインダー作成").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("todo_create").setLabel("TODO作成").setStyle(ButtonStyle.Secondary),
@@ -64,7 +60,18 @@ export function buildReminderHubPanelPayload(): ReminderHubMessagePayload {
     new ButtonBuilder().setCustomId("reminder_manage").setLabel("確認・編集").setStyle(ButtonStyle.Secondary),
   );
 
-  return { embeds: [embed], components: [row1, row2] };
+  return buildContainerPanelPayload(
+    [
+      "## お知らせ関連管理",
+      "リマインダー、TODO、運営お知らせを作成・確認できます。",
+      "",
+      "**作成**   リマインダー   TODO   運営お知らせ",
+      "**管理**   確認・編集   即時投稿   削除",
+      "日時入力: `+10m` `+2h` `2026-03-20 09:00`",
+      "",
+    ].join("\n"),
+    [row1, row2],
+  );
 }
 
 export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMessagePayload {
