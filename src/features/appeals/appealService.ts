@@ -1,8 +1,8 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   type ButtonInteraction,
   type Guild,
   type Message,
@@ -44,8 +44,8 @@ export function appealStatusLabel(status: string): string {
 export function buildAppealReviewEmbed(
   appeal: AppealsRow,
   requester: { tag: string; displayName: string; userId: string; guildId: string },
-): EmbedBuilder {
-  return new EmbedBuilder()
+): ComponentCardBuilder {
+  return new ComponentCardBuilder()
     .setTitle(`異議申し立て ${appeal.code}`)
     .setDescription("以下の内容を確認し、ボタンで審査してください。")
     .setColor(0xe67e22)
@@ -247,7 +247,7 @@ export async function sendAppealReviewMessage(
   const embed = buildAppealReviewEmbed(appeal, requester);
 
   const rows = buildAppealReviewRows(appeal.id);
-  const sent = await (channel as TextChannel).send({ embeds: [embed], components: rows });
+  const sent = await (channel as TextChannel).send(componentCardsPayload([embed], rows));
   await ctx.ticketDb
     .updateTable("appeals")
     .set({
@@ -270,7 +270,7 @@ export async function notifyAppealUserResult(
 
   const color =
     result === "approved" ? 0x2ecc71 : result === "rejected" ? 0xe74c3c : result === "hold" ? 0x95a5a6 : 0x95a5a6;
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(`異議申し立て ${appeal.code}`)
     .setColor(color)
     .addFields(
@@ -279,7 +279,7 @@ export async function notifyAppealUserResult(
     )
     .setTimestamp(new Date());
 
-  await user.send({ embeds: [embed] }).catch(() => undefined);
+  await user.send({ ...componentCardsPayload([embed]) }).catch(() => undefined);
 }
 
 export function extractAppealReviewContextFromMessage(message: Message | null): {
@@ -383,7 +383,7 @@ export async function createAppealHoldThread(
     await forceAddRoleMembersToThread(guild, thread, adminRoleId);
   }
 
-  const holdEmbed = new EmbedBuilder()
+  const holdEmbed = new ComponentCardBuilder()
     .setTitle(`異議申し立て ${appeal.code}（保留審査）`)
     .setDescription("保留審査スレッドです。内容を確認して却下または承認を選択してください。")
     .setColor(0xf1c40f)
@@ -414,8 +414,7 @@ export async function createAppealHoldThread(
 
   const panel = await thread
     .send({
-      embeds: [holdEmbed],
-      components: buildAppealThreadReviewRows(appeal.id),
+      ...componentCardsPayload([holdEmbed], buildAppealThreadReviewRows(appeal.id)),
       allowedMentions: { parse: [] },
     })
     .catch(() => null);
@@ -466,13 +465,13 @@ export async function relayUserPayloadToAppealHoldThread(
   if (!thread || !thread.isTextBased()) return;
   const relayCh = thread as TextChannel | NewsChannel | ThreadChannel;
   const cleaned = trimMaxLocal(body.trim() || "(本文なし)", 4000);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(kind)
     .setDescription(cleaned)
     .setColor(0x3498db)
     .setTimestamp(new Date());
   try {
-    await relayCh.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    await relayCh.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } });
   } catch (e) {
     ctx.log.warn({ err: e, appealId: appeal.id }, "appeal hold relay failed");
     return;

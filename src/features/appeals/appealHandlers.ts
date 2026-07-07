@@ -8,6 +8,7 @@ import {
   type ModalSubmitInteraction,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { componentCardsPayload } from "../panels/componentCard.js";
 import { isAdmin } from "../../core/permission.js";
 import { cancelPendingRepliesByAppeal } from "../modmail/modmailStaffFlow.js";
 import {
@@ -298,8 +299,7 @@ export async function handleAppealReviewButton(interaction: ButtonInteraction, c
       );
       await interaction.message
         ?.edit({
-          embeds: [buildAppealReviewEmbed(fresh, requester)],
-          components: jumpRows,
+          ...componentCardsPayload([buildAppealReviewEmbed(fresh, requester)], jumpRows),
         })
         .catch(() => undefined);
       await notifyAppealUserResult(ctx, fresh, "hold", "審査は保留となり、スタッフが継続審査します。");
@@ -355,8 +355,7 @@ export async function handleAppealReviewButton(interaction: ButtonInteraction, c
 
     await interaction.message
       ?.edit({
-        embeds: [buildAppealReviewEmbed(fresh, requester)],
-        components: [],
+        ...componentCardsPayload([buildAppealReviewEmbed(fresh, requester)], []),
       })
       .catch(() => undefined);
     await notifyAppealUserResult(ctx, fresh, nextStatus, note);

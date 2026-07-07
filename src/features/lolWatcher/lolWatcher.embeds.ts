@@ -1,4 +1,5 @@
-import { EmbedBuilder } from "discord.js";
+import { ComponentCardBuilder } from "../panels/componentCard.js";
+
 import type { LolWatcherApiAccount, LolWatcherCompletedGame, LolWatcherLiveGame } from "./lolWatcher.types.js";
 
 function formatDuration(seconds: number): string {
@@ -13,14 +14,14 @@ function formatStartTime(iso: string): string {
   return Number.isFinite(unix) ? `<t:${unix}:t>` : iso;
 }
 
-function applyOptionalMedia(embed: EmbedBuilder, detailUrl: string | null, championImageUrl: string | null): EmbedBuilder {
+function applyOptionalMedia(embed: ComponentCardBuilder, detailUrl: string | null, championImageUrl: string | null): ComponentCardBuilder {
   if (detailUrl) embed.setURL(detailUrl);
   if (championImageUrl) embed.setThumbnail(championImageUrl);
   return embed;
 }
 
-export function buildLolWatcherStartEmbed(account: LolWatcherApiAccount, game: LolWatcherLiveGame): EmbedBuilder {
-  const embed = new EmbedBuilder()
+export function buildLolWatcherStartEmbed(account: LolWatcherApiAccount, game: LolWatcherLiveGame): ComponentCardBuilder {
+  const embed = new ComponentCardBuilder()
     .setTitle(`🎮 ${account.displayName} の試合が開始`)
     .setColor(0x3498db)
     .addFields(
@@ -35,10 +36,10 @@ export function buildLolWatcherStartEmbed(account: LolWatcherApiAccount, game: L
 export function buildLolWatcherCompletedEmbed(
   account: LolWatcherApiAccount,
   game: LolWatcherCompletedGame,
-): EmbedBuilder {
+): ComponentCardBuilder {
   const isWin = game.result === "win";
   const titleIcon = game.aiScore !== null && game.aiScore >= 80 ? "👑" : isWin ? "🏆" : "🔥";
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(`${titleIcon} ${account.displayName} の試合が終了`)
     .setColor(isWin ? 0x2ecc71 : 0xe74c3c)
     .addFields(

@@ -1,4 +1,5 @@
-import type { ActionRowBuilder, ButtonBuilder, EmbedBuilder } from "discord.js";
+import type { ActionRowBuilder, ButtonBuilder } from "discord.js";
+import type { ComponentCardBuilder } from "../panels/componentCard.js";
 
 export type GameDealPlatform = "steam" | "epic";
 
@@ -23,7 +24,7 @@ export type GameDealFreeItem = {
   platform: GameDealPlatform;
   title: string;
   dedupeKey: string;
-  embed: EmbedBuilder;
+  embed: ComponentCardBuilder;
   components?: ActionRowBuilder<ButtonBuilder>[];
 };
 
@@ -59,6 +60,7 @@ export type SteamFreeEvent = {
   evidenceJson: string;
   steamUrl: string;
   imageUrl: string | null;
+  freeUntilUnix?: number | null;
 };
 
 export type GameDealSubscription = {

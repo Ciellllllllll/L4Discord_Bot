@@ -1,17 +1,21 @@
+import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelSelectMenuBuilder,
   ChannelType,
-  EmbedBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
   type Message,
-  type MessageCreateOptions,
 } from "discord.js";
+import {
+  buildContainerPanelPayload,
+  messageComponentsHaveCustomId,
+  type ContainerPanelPayload,
+} from "../panels/componentPanelPayload.js";
 import {
   cut,
   dueToInput,
@@ -27,18 +31,14 @@ import {
 } from "./reminderHubTypes.js";
 import type { ReminderHubRowView } from "./reminderHubRepo.js";
 
-export type ReminderHubMessagePayload = Pick<MessageCreateOptions, "embeds" | "components" | "content">;
+export type ReminderHubPanelPayload = ContainerPanelPayload;
+export type ReminderHubMessagePayload = ComponentCardsPayload;
 
 const HUB_IDS = new Set(["reminder_create", "todo_create", "notice_create", "reminder_manage", "reminder_list"]);
 
 function messageHasAnyCustomId(message: Message, customIds: Set<string>): boolean {
   if (!message.components?.length) return false;
-  return message.components.some(
-    (row) =>
-      "components" in row &&
-      Array.isArray(row.components) &&
-      row.components.some((c) => "customId" in c && c.customId && customIds.has(String(c.customId))),
-  );
+  return messageComponentsHaveCustomId(message.components, customIds);
 }
 
 export function reminderHubPanelMessageMatches(message: Message, botUserId: string): boolean {
@@ -46,14 +46,7 @@ export function reminderHubPanelMessageMatches(message: Message, botUserId: stri
   return messageHasAnyCustomId(message, HUB_IDS);
 }
 
-export function buildReminderHubPanelPayload(): ReminderHubMessagePayload {
-  const embed = new EmbedBuilder()
-    .setTitle("お知らせ関連管理パネル")
-    .setDescription(
-      "ボタンからリマインダー/TODO/運営お知らせを作成できます。\n日時は `+10m` `+2h` `2026-03-20 09:00` 形式を使用できます。",
-    )
-    .setColor(0x1abc9c);
-
+export function buildReminderHubPanelPayload(): ReminderHubPanelPayload {
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("reminder_create").setLabel("リマインダー作成").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("todo_create").setLabel("TODO作成").setStyle(ButtonStyle.Secondary),
@@ -64,14 +57,25 @@ export function buildReminderHubPanelPayload(): ReminderHubMessagePayload {
     new ButtonBuilder().setCustomId("reminder_manage").setLabel("確認・編集").setStyle(ButtonStyle.Secondary),
   );
 
-  return { embeds: [embed], components: [row1, row2] };
+  return buildContainerPanelPayload(
+    [
+      "## お知らせ関連管理",
+      "リマインダー、TODO、運営お知らせを作成・確認できます。",
+      "",
+      "**作成**   リマインダー   TODO   運営お知らせ",
+      "**管理**   確認・編集   即時投稿   削除",
+      "日時入力: `+10m` `+2h` `2026-03-20 09:00`",
+      "",
+    ].join("\n"),
+    [row1, row2],
+  );
 }
 
 export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMessagePayload {
   const normalized = normalizeEventType(kind);
   const meta = EVENT_META[normalized];
 
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(`${meta.createLabel}: 投稿先チャンネルを選択`)
     .setDescription("投稿先チャンネルを選択してください。選択後に入力画面を開きます。")
     .setColor(meta.color);
@@ -91,7 +95,7 @@ export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMess
       ),
   );
 
-  return { embeds: [embed], components: [channelRow] };
+  return componentCardsPayload([embed], [channelRow]);
 }
 
 function buildManageTabsRow(activeKind: ReminderEvType): ActionRowBuilder<ButtonBuilder> {
@@ -134,7 +138,7 @@ export function buildManageListPayload(
     }
   }
 
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(title)
     .setDescription(descriptionLines.join("\n"))
     .setColor(EVENT_META[normalized].color);
@@ -161,13 +165,13 @@ export function buildManageListPayload(
     ),
   );
 
-  return { embeds: [embed], components };
+  return componentCardsPayload([embed], components);
 }
 
 export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = ""): ReminderHubMessagePayload {
   const kind = normalizeEventType(row.ev_type);
 
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(`${EVENT_META[kind].label} #${row.id}`)
     .setColor(EVENT_META[kind].color)
     .addFields(
@@ -206,7 +210,7 @@ export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = "
       ),
   );
 
-  return { embeds: [embed], components: [buildManageTabsRow(kind), actionRow, channelRow] };
+  return componentCardsPayload([embed], [buildManageTabsRow(kind), actionRow, channelRow]);
 }
 
 export function buildCreateModal(kind: ReminderEvType, channelId: string): ModalBuilder {

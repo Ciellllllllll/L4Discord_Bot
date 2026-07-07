@@ -17,6 +17,24 @@ Feature code is grouped under `src/features/<feature>`, for example `senryu`, `r
 - `npm run migrate:debug` / `npm run migrate:prod`: apply migrations for the selected profile.
 - `npm run start` or `npm run bot`: start the bot through `bot.ts`.
 
+## Codex Local Tooling
+
+This workspace is set up for Codex-assisted development on Windows. Prefer PowerShell 7 (`pwsh`) for shell work when available. If a newly installed command is not visible in the current shell, refresh PATH from the machine and user environment before retrying.
+
+Use the project `.mise.toml` for the Node runtime. Run commands through mise when version consistency matters, for example `mise exec -- npm run typecheck` or `mise exec -- npx tsx <spec-file>`.
+
+Preferred CLI tools for Codex work:
+
+- `rg`: search text in the repository.
+- `fd`: find files by name or extension.
+- `jq`: inspect JSON from `gh`, APIs, and package metadata.
+- `gh`: inspect GitHub PRs, issues, checks, and Actions logs.
+- `docker`: run reproducible PostgreSQL or helper services when needed.
+- `psql`: inspect PostgreSQL schemas and migration results.
+- `bru`: run Bruno API collections if API checks are added.
+
+If the repository Codex skill `.codex/skills/l4-discordbot` is available, use it before making repository-specific changes.
+
 ## Coding Style & Naming Conventions
 
 Use TypeScript ES modules and keep imports explicit with `.js` suffixes for local runtime imports. Follow the existing two-space indentation style and prefer small, feature-local helpers over broad shared abstractions. Name test files `*.spec.ts` beside the code they cover. Keep configuration and environment-sensitive logic in `src/core/config.ts` or the relevant feature boundary.

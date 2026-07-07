@@ -1,7 +1,7 @@
+import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../panels/componentCard.js";
 import { randomUUID } from "node:crypto";
 import {
   ChannelType,
-  EmbedBuilder,
   type Guild,
   type Message,
   type NewsChannel,
@@ -103,11 +103,11 @@ async function forceAddRoleMembersToThread(guild: Guild, threadId: string, roleI
   }
 }
 
-export function buildModmailThreadSummaryEmbed(row: ModmailThreadRow, data: Record<string, unknown>): EmbedBuilder {
+export function buildModmailThreadSummaryEmbed(row: ModmailThreadRow, data: Record<string, unknown>): ComponentCardBuilder {
   const code = ticketDisplayCode(row.id);
   const subject = trimMax(String(data.subject ?? "(未設定)"), 1024);
   const body = trimMax(String(data.body ?? "(本文なし)"), 1024);
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle(`Modmail-${code}_対応中`)
     .setColor(0x3498db)
     .addFields(
@@ -121,10 +121,10 @@ export function buildModmailThreadSummaryEmbed(row: ModmailThreadRow, data: Reco
     .setTimestamp(new Date());
 }
 
-function buildParentTicketEmbed(row: ModmailThreadRow, data: Record<string, unknown>): EmbedBuilder {
+function buildParentTicketEmbed(row: ModmailThreadRow, data: Record<string, unknown>): ComponentCardBuilder {
   const code = ticketDisplayCode(row.id);
   const title = trimMax(String(data.subject ?? `Modmail-${code}`), 256);
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle(title)
     .setDescription(`Modmail-${code}_対応中`)
     .setColor(0x2ecc71)
@@ -366,8 +366,7 @@ async function createStaffThread(
   const tname = `Modmail-${code}_対応中`.slice(0, 100);
   const summaryEmbed = buildModmailThreadSummaryEmbed(row, data);
   const summaryPayload = {
-    embeds: [summaryEmbed],
-    components: [buildModmailCloseRow(row.id)],
+    ...componentCardsPayload([summaryEmbed], [buildModmailCloseRow(row.id)]),
     allowedMentions: { parse: [] } as const,
   };
 
@@ -395,19 +394,17 @@ async function createStaffThread(
     const summaryMessage = await (thread as RelayChannel).send(summaryPayload).catch(() => null);
     if (!summaryMessage) return null;
 
-    const noticePayload: {
-      content?: string;
-      embeds: EmbedBuilder[];
-      components: ReturnType<typeof buildModmailThreadLinkRow>[];
-      allowedMentions: { parse: []; roles?: string[] };
+    const noticePayload: ComponentCardsPayload & {
+      allowedMentions: { parse: [] };
     } = {
-      embeds: [buildParentTicketEmbed(row, data)],
-      components: [buildModmailThreadLinkRow(guild.id, thread.id)],
-      allowedMentions: { parse: [] },
+      ...componentCardsPayload([buildParentTicketEmbed(row, data)], [buildModmailThreadLinkRow(guild.id, thread.id)]),
+      allowedMentions: { parse: [] as [] },
     };
     if (adminRoleId) {
-      noticePayload.content = `<@&${adminRoleId}>`;
-      noticePayload.allowedMentions = { roles: [adminRoleId], parse: [] };
+      await parent.send({
+        content: `<@&${adminRoleId}>`,
+        allowedMentions: { roles: [adminRoleId], parse: [] },
+      }).catch(() => undefined);
     }
     await parent.send(noticePayload).catch(() => undefined);
     if (adminRoleId) await forceAddRoleMembersToThread(guild, thread.id, adminRoleId);
@@ -458,13 +455,13 @@ export async function relayUserPayloadToThread(
   const relayCh = thread as RelayChannel;
   const prefix = opts?.isFirstTicketMessage ? "このメッセージでチケットが作成されました。\n\n" : "";
   const cleaned = trimMax(prefix + (body.trim() || "(本文なし)"), 4000);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(kind)
     .setDescription(cleaned)
     .setColor(0x3498db)
     .setTimestamp(new Date());
   try {
-    await relayCh.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    await relayCh.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } });
   } catch (e) {
     ctx.log.warn({ err: e, modmailId: row.id }, "relayUserPayloadToThread failed");
     return;
@@ -506,7 +503,7 @@ async function relayModalIntakeToThread(
   if (!thread || !thread.isTextBased()) return;
   const relayCh = thread as RelayChannel;
 
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("フォーム受付")
     .setDescription("この送信でチケットが作成されました。")
     .addFields(
@@ -517,7 +514,7 @@ async function relayModalIntakeToThread(
     .setColor(0x3498db)
     .setTimestamp(new Date());
 
-  await relayCh.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch((e) => {
+  await relayCh.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } }).catch((e) => {
     ctx.log.warn({ err: e, modmailId: row.id }, "relayModalIntakeToThread embed failed");
   });
 
@@ -660,15 +657,15 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
     if (body === null) {
       await message.author
         .send({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle("Modmail 返信方法")
+          ...componentCardsPayload([
+            new ComponentCardBuilder()
+              .setTitle("お問い合わせ返信方法")
               .setDescription(
                 "管理者側へ送信するには、管理者から届いた返信メッセージの「返信する」ボタンを押すか、`!send 本文` を送信してください。添付を送る場合も `!send` と一緒に送信してください。",
               )
               .setColor(0xe67e22)
               .setTimestamp(new Date()),
-          ],
+          ]),
         })
         .catch(() => undefined);
       return true;
@@ -678,13 +675,13 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
     if (!body && attach.length === 0) {
       await message.author
         .send({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle("Modmail 返信方法")
+          ...componentCardsPayload([
+            new ComponentCardBuilder()
+              .setTitle("お問い合わせ返信方法")
               .setDescription("`!send 本文` の形式で送信してください。添付だけ送る場合は、添付と一緒に `!send` と入力してください。")
               .setColor(0xe67e22)
               .setTimestamp(new Date()),
-          ],
+          ]),
         })
         .catch(() => undefined);
       return true;
@@ -708,15 +705,15 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
   if (!intake) {
     await message.author
       .send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("Modmail のご案内")
+        ...componentCardsPayload([
+          new ComponentCardBuilder()
+            .setTitle("お問い合わせのご案内")
             .setDescription(
-              "サーバー内の「Modmailを始める」から DM 案内を受け取り、「チケットを作成」ボタンから相談を開始してください。",
+              "サーバー内の「お問い合わせを始める」から DM 案内を受け取り、「チケットを作成」ボタンから相談を開始してください。",
             )
             .setColor(0xe67e22)
             .setTimestamp(new Date()),
-        ],
+        ]),
       })
       .catch(() => undefined);
     return true;
@@ -724,16 +721,18 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
 
   await message.author
     .send({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("Modmail 受付待機中")
+      ...componentCardsPayload(
+        [
+          new ComponentCardBuilder()
+          .setTitle("お問い合わせ受付待機中")
           .setDescription(
-            "まだチケットは作成されていません。先ほど送信した Modmail 受付メッセージの「チケットを作成」ボタンから内容を入力してください。",
+            "まだチケットは作成されていません。先ほど送信した受付メッセージの「チケットを作成」ボタンから内容を入力してください。",
           )
           .setColor(0xe67e22)
           .setTimestamp(new Date()),
-      ],
-      components: [buildModmailIntakeCancelRow(intake.guild_id, message.author.id)],
+        ],
+        [buildModmailIntakeCancelRow(intake.guild_id, message.author.id)],
+      ),
     })
     .catch(() => undefined);
   return true;
@@ -751,21 +750,25 @@ function parseUserSendCommand(content: string): string | null {
   return rest.trim();
 }
 
-export async function sendModmailStartDm(user: User, rows: unknown[]): Promise<void> {
-  await user.send({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("Modmail 受付")
-        .setDescription(
-          [
-            "Modmail 受付です。",
-            "下の「チケットを作成」ボタンからタイトル・詳細・任意の添付を入力すると、スタッフ側にチケットが作成されます。",
-            "チケット作成前の通常メッセージはスタッフ側に送信されません。",
-          ].join("\n"),
-        )
-        .setColor(0x3498db)
-        .setTimestamp(new Date()),
+export function buildModmailStartDmPayload(rows: unknown[]): ComponentCardsPayload {
+  return componentCardsPayload(
+    [
+      new ComponentCardBuilder()
+      .setTitle("お問い合わせ受付")
+      .setDescription(
+        [
+          "お問い合わせ受付です。",
+          "下の「チケットを作成」ボタンからタイトル・詳細・任意の添付を入力すると、スタッフ側にチケットが作成されます。",
+          "チケット作成前の通常メッセージはスタッフ側に送信されません。",
+        ].join("\n"),
+      )
+      .setColor(0x3498db)
+      .setTimestamp(new Date()),
     ],
-    components: rows as never,
-  });
+    rows as never,
+  );
+}
+
+export async function sendModmailStartDm(user: User, rows: unknown[]): Promise<void> {
+  await user.send(buildModmailStartDmPayload(rows));
 }

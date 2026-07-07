@@ -1,9 +1,9 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   MessageFlags,
   ModalBuilder,
   TextInputBuilder,
@@ -243,8 +243,8 @@ function updateSession(id: string, patch: Partial<PromptSession>): PromptSession
   return next;
 }
 
-function buildPromptEmbed(session: PromptSession): EmbedBuilder {
-  const embed = new EmbedBuilder()
+function buildPromptEmbed(session: PromptSession): ComponentCardBuilder {
+  const embed = new ComponentCardBuilder()
     .setTitle("作成した /q プロンプト")
     .setColor(0x8e44ad)
     .setDescription(session.prompt.slice(0, 4000))
@@ -327,8 +327,7 @@ export async function handleCreatePromptModalSubmit(
     });
     const session = sessions.get(id)!;
     await interaction.editReply({
-      embeds: [buildPromptEmbed(session)],
-      components: buildPromptRows(id),
+      ...componentCardsPayload([buildPromptEmbed(session)], buildPromptRows(id)),
       allowedMentions: { parse: [] },
     });
   } catch (err) {
@@ -392,8 +391,7 @@ export async function handleCreatePromptButton(
       });
       if (!next) throw new Error("missing session after update");
       await interaction.editReply({
-        embeds: [buildPromptEmbed(next)],
-        components: buildPromptRows(parsed.id),
+        ...componentCardsPayload([buildPromptEmbed(next)], buildPromptRows(parsed.id)),
         allowedMentions: { parse: [] },
       });
     } catch (err) {

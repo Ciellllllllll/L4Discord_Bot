@@ -3,7 +3,7 @@ import { SteamAppListClient, SteamAppListHttpError } from "../steam/steamAppList
 import { SteamStoreClient } from "../steam/steamStoreClient.js";
 import type { SteamAppDetails, SteamSearchItem } from "../steam/steamFreeTypes.js";
 import { CheapSharkClient } from "./cheapSharkClient.js";
-import { buildSteamFreeEventEmbed, buildSteamLinkButtons } from "./gameDealEmbeds.js";
+import { buildSteamFreeEventEmbed } from "./gameDealEmbeds.js";
 import { GameDealRepository } from "./gameDealRepository.js";
 import type { GameDealFreeItem, SteamAppCatalogChange, SteamFreeEvent } from "./gameDealTypes.js";
 import { detectSteamFreeEvent } from "./steamFreeDetector.js";
@@ -40,7 +40,6 @@ function toFreeItem(event: SteamFreeEvent): GameDealFreeItem {
     title: event.title,
     dedupeKey: event.stateKey,
     embed: buildSteamFreeEventEmbed(event),
-    components: [buildSteamLinkButtons(event)],
   };
 }
 
@@ -127,6 +126,7 @@ function steamNowEvent(item: SteamSearchItem, details: SteamAppDetails): SteamFr
     evidenceJson: JSON.stringify([{ source: "steam_search", normalPriceCents, currentPriceCents: 0, discountPercent: 100 }]),
     steamUrl: item.storeUrl || `https://store.steampowered.com/app/${item.appid}/`,
     imageUrl: details.headerImage ?? details.capsuleImage ?? null,
+    freeUntilUnix: details.priceOverview?.discountExpiration ?? null,
   };
 }
 
@@ -197,6 +197,7 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
       evidenceJson: JSON.stringify(detected.evidence),
       steamUrl: detected.steamUrl,
       imageUrl: detected.imageUrl,
+      freeUntilUnix: detected.freeUntilUnix,
     };
     verifiedCount += 1;
     repo.removeSteamVerifyQueue(change.appid);

@@ -1,9 +1,9 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   AuditLogEvent,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   type Channel,
   type Guild,
   type GuildAuditLogsEntry,
@@ -385,9 +385,9 @@ export class DetecterService {
     return channel as TextChannel;
   }
 
-  private buildReasonPromptEmbed(event: PunishmentEvent, reasonText: string): EmbedBuilder {
+  private buildReasonPromptEmbed(event: PunishmentEvent, reasonText: string): ComponentCardBuilder {
     const cfg = this.ctx.config;
-    const embed = new EmbedBuilder()
+    const embed = new ComponentCardBuilder()
       .setTitle("処罰理由の入力が必要です")
       .setDescription("下のボタンからモーダルを開き、処罰理由を入力してください。")
       .setColor(0xe67e22)
@@ -427,7 +427,7 @@ export class DetecterService {
     if (!message) return;
 
     const updatedEmbed = this.buildReasonPromptEmbed(event, reasonText);
-    await message.edit({ embeds: [updatedEmbed], components: [] }).catch(() => undefined);
+    await message.edit(componentCardsPayload([updatedEmbed])).catch(() => undefined);
   }
 
   /** 監査ログに理由がある場合：ボタンなし・メンションは通知なし。対象者 DM は insertIncidentAndDmTarget 側。 */
@@ -444,7 +444,7 @@ export class DetecterService {
       return false;
     }
 
-    const embed = new EmbedBuilder()
+    const embed = new ComponentCardBuilder()
       .setTitle("処罰の記録（監査ログに理由あり）")
       .setDescription("監査ログに理由が入力されているため、理由入力ボタンは表示していません。対象ユーザーへ異議申し立て案内を送信しました。")
       .setColor(0x27ae60)
@@ -471,12 +471,12 @@ export class DetecterService {
       });
     }
 
-    const content = `<@${event.actorUserId}>さん。<@${event.targetUserId}> への処罰について、監査ログに理由が記録されています。`;
+    const notice = `<@${event.actorUserId}>さん。<@${event.targetUserId}> への処罰について、監査ログに理由が記録されています。`;
+    embed.setDescription(`${notice}\n\n${embed.data.description ?? ""}`);
 
     try {
       await promptChannel.send({
-        content,
-        embeds: [embed],
+        ...componentCardsPayload([embed]),
         allowedMentions: { parse: [] },
       });
       return true;
@@ -505,13 +505,12 @@ export class DetecterService {
       .setLabel("理由を入力")
       .setStyle(ButtonStyle.Primary);
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
-    const content = `<@${event.actorUserId}>さん。<@${event.targetUserId}> への処罰理由を入力してください。`;
+    const notice = `<@${event.actorUserId}>さん。<@${event.targetUserId}> への処罰理由を入力してください。`;
+    embed.setDescription(`${notice}\n\n${embed.data.description ?? ""}`);
 
     try {
       const sent = await promptChannel.send({
-        content,
-        embeds: [embed],
-        components: [row],
+        ...componentCardsPayload([embed], [row]),
         allowedMentions: { users: [event.actorUserId, event.targetUserId], roles: [], parse: [] },
       });
       event.promptChannelId = String(sent.channelId ?? promptChannel.id);
@@ -559,7 +558,7 @@ export class DetecterService {
     }
 
     const appealUrl = (await getGuildSettingsData(this.ctx.db, event.guildId)).appeal_instructions_url;
-    const embed = new EmbedBuilder()
+    const embed = new ComponentCardBuilder()
       .setTitle("処罰通知")
       .setDescription("下のボタンから異議申し立てを送信できます。")
       .setColor(0xe74c3c)
@@ -601,8 +600,7 @@ export class DetecterService {
 
     try {
       await target.send({
-        embeds: [embed],
-        components: appealComponents,
+        ...componentCardsPayload([embed], appealComponents),
       });
       return true;
     } catch (err) {

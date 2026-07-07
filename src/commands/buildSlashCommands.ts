@@ -3,9 +3,12 @@ import {
   SlashCommandBuilder,
   type RESTPostAPIApplicationCommandsJSONBody,
 } from "discord.js";
+import type { AppConfig } from "../core/config.js";
 
-export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
-  return [
+type BotProfile = AppConfig["BOT_PROFILE"];
+
+export function buildSlashCommands(botProfile: BotProfile = "production"): RESTPostAPIApplicationCommandsJSONBody[] {
+  const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
     new SlashCommandBuilder()
       .setName("q")
       .setDescription("BOTとおしゃべり")
@@ -200,4 +203,15 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
       )
       .toJSON(),
   ];
+
+  if (botProfile === "debug") {
+    commands.push(
+      new SlashCommandBuilder()
+        .setName("survey")
+        .setDescription("Anonymous Surveyを手動で表示します(DEBUG用)")
+        .toJSON(),
+    );
+  }
+
+  return commands;
 }

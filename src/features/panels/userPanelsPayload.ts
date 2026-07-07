@@ -2,40 +2,38 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
+import { buildContainerPanelPayload, messageComponentsHaveCustomId } from "./componentPanelPayload.js";
 
 export const USER_PANEL_MODMAIL_BUTTON_ID = "panels:user:mm";
 export const USER_PANEL_TICKET_BUTTON_ID = "panels:user:tk";
 
 export function userContactPanelMessageMatches(message: Message, botUserId: string): boolean {
   if (message.author?.id !== botUserId) return false;
-  let hasMm = false;
-  for (const row of message.components) {
-    if (!("components" in row) || !row.components) continue;
-    for (const c of row.components) {
-      if ("customId" in c && typeof c.customId === "string") {
-        if (c.customId === USER_PANEL_MODMAIL_BUTTON_ID) hasMm = true;
-      }
-    }
-  }
-  return hasMm;
+  return messageComponentsHaveCustomId(message.components, new Set([USER_PANEL_MODMAIL_BUTTON_ID]));
 }
 
 export function buildUserContactPanelPayload(): MessageCreateOptions {
-  const embed = new EmbedBuilder()
-    .setTitle("サポート・お問い合わせ")
-    .setDescription(
-      "「Modmailを始める」で DM に案内が届きます。DM の「チケットを作成」からタイトル・詳細・添付を入力すると、スタッフ側にチケットが作成されます。",
-    )
-    .setColor(0x57f287);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(USER_PANEL_MODMAIL_BUTTON_ID)
-      .setLabel("Modmailを始める")
+      .setLabel("お問い合わせを始める")
       .setStyle(ButtonStyle.Primary),
   );
-  return { embeds: [embed], components: [row] };
+  return buildContainerPanelPayload(
+    [
+      "## サポート・お問い合わせ",
+      "スタッフへ個別に相談したい内容を送信できます。",
+      "ボタンを押すと、DMに入力案内が届きます。",
+      "",
+      "**受付内容**",
+      "タイトル、詳細、添付ファイルを入力できます。",
+      "",
+      "**送信先**",
+      "内容はスタッフ用スレッドに届きます。",
+    ].join("\n"),
+    [row],
+  );
 }

@@ -28,8 +28,8 @@ export const PANEL_TOGGLE_OPTIONS: readonly {
 }[] = [
   {
     key: "enabled",
-    label: "自動モデレーション全体を有効化",
-    description: "自動判定の機能全体をONにします",
+    label: "全体を有効化",
+    description: "自動モデレーション全体をONにします",
   },
   {
     key: "linkBlock",

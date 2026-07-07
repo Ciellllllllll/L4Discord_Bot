@@ -1,5 +1,5 @@
+import { ComponentCardBuilder, componentCardsPayload, ephemeralComponentPayload } from "../panels/componentCard.js";
 import {
-  EmbedBuilder,
   MessageFlags,
   type ButtonInteraction,
   type ChannelSelectMenuInteraction,
@@ -37,8 +37,8 @@ import {
   type ReminderEvType,
 } from "./reminderHubTypes.js";
 
-function makeInfoEmbed(title: string, description: string, color = 0x5865f2): EmbedBuilder {
-  return new EmbedBuilder().setTitle(title).setDescription(description).setColor(color);
+function makeInfoEmbed(title: string, description: string, color = 0x5865f2): ComponentCardBuilder {
+  return new ComponentCardBuilder().setTitle(title).setDescription(description).setColor(color);
 }
 
 function eventColorFn(kind: ReminderEvType): number {
@@ -84,33 +84,33 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
   if (createMap[id]) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
-    await interaction.reply({ ...buildCreateChannelPayload(createMap[id]), flags: MessageFlags.Ephemeral });
+    await interaction.reply(ephemeralComponentPayload(buildCreateChannelPayload(createMap[id])));
     return true;
   }
 
   if (id === "reminder_manage" || id === "reminder_list") {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
     const payload = await buildManageListForUser(ctx, interaction.guild.id, interaction.user.id, "reminder");
-    await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+    await interaction.reply(ephemeralComponentPayload(payload));
     return true;
   }
 
   if (id.startsWith("rem_manage_tab:") || id.startsWith("rem_manage_back:") || id.startsWith("rem_manage_refresh:")) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -123,8 +123,8 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
   if (id.startsWith("rem_manage_edit:")) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -132,8 +132,8 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
     const row = await getActiveForAuthor(ctx, interaction.guild.id, interaction.user.id, rowId);
     if (!row) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -144,8 +144,8 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
   if (id.startsWith("rem_manage_delete:")) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -153,8 +153,8 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
     const current = await getActiveForAuthor(ctx, interaction.guild.id, interaction.user.id, rowId);
     if (!current) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -173,8 +173,8 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
   if (id.startsWith("rem_manage_post:")) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -182,8 +182,8 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
     const full = await getReminderRowForAuthor(ctx, interaction.guild.id, interaction.user.id, rowId);
     if (!full) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -218,8 +218,8 @@ export async function handleReminderHubStringSelect(
   if (!interaction.customId.startsWith("rem_manage_pick:")) return false;
   if (!interaction.guild) {
     await interaction.reply({
-      embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-      flags: MessageFlags.Ephemeral,
+      ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
     });
     return true;
   }
@@ -264,8 +264,8 @@ export async function handleReminderHubChannelSelect(
   if (cid.startsWith("rem_create_channel:")) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -273,8 +273,8 @@ export async function handleReminderHubChannelSelect(
     const channelId = interaction.values[0];
     if (!channelId || !/^\d+$/.test(channelId)) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "チャンネルIDが不正です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "チャンネルIDが不正です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -285,8 +285,8 @@ export async function handleReminderHubChannelSelect(
   if (cid.startsWith("rem_manage_channel_pick:")) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -294,16 +294,16 @@ export async function handleReminderHubChannelSelect(
     const channelId = interaction.values[0];
     if (!channelId || !/^\d+$/.test(channelId)) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "入力が不正です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "入力が不正です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
     const current = await getActiveForAuthor(ctx, interaction.guild.id, interaction.user.id, rowId);
     if (!current) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -333,16 +333,16 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
   if (interaction.customId.startsWith("reminder_modal:")) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
     const parts = interaction.customId.split(":");
     if (parts[0] !== "reminder_modal" || parts.length < 3) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "モーダルIDが不正です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "モーダルIDが不正です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -352,8 +352,8 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
     const channelId = /^\d+$/.test(channelIdRaw) ? channelIdRaw : interaction.channelId;
     if (!channelId || !/^\d+$/.test(channelId)) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "チャンネルが不正です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "チャンネルが不正です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -366,16 +366,16 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
     const dueAt = parseDueAt(dueRaw);
     if (!dueAt) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("入力エラー", "期限の形式が不正です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("入力エラー", "期限の形式が不正です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
     const recParse = parseRecurrenceInput(recRaw);
     if (!recParse.valid) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("入力エラー", "繰り返しは `10m` `1h` `1d` 形式で入力してください。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("入力エラー", "繰り返しは `10m` `1h` `1d` 形式で入力してください。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -391,7 +391,7 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
       recurrence: recParse.value,
     });
 
-    const embed = new EmbedBuilder()
+    const embed = new ComponentCardBuilder()
       .setTitle(`${EVENT_META[kind].label}を作成しました`)
       .setColor(eventColorFn(kind))
       .setDescription(`ID: **${newId}**`)
@@ -400,15 +400,15 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
         { name: "期限", value: formatDue(dueAt.toISOString()), inline: true },
         { name: "繰り返し", value: recParse.value ? recRaw : "なし", inline: true },
       );
-    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ ...componentCardsPayload([embed]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
     return true;
   }
 
   if (interaction.customId.startsWith(`${EDIT_MODAL_PREFIX}:`)) {
     if (!interaction.guild) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -416,8 +416,8 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
     const current = await getActiveForAuthor(ctx, interaction.guild.id, interaction.user.id, rowId);
     if (!current) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("エラー", "対象が見つからないか、すでに無効です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -430,16 +430,16 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
     const dueAt = parseDueAt(dueRaw);
     if (!dueAt) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("入力エラー", "期限の形式が不正です。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("入力エラー", "期限の形式が不正です。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
     const recParse = parseRecurrenceInput(recRaw);
     if (!recParse.valid) {
       await interaction.reply({
-        embeds: [makeInfoEmbed("入力エラー", "繰り返しは `10m` `1h` `1d` 形式で入力してください。", 0xe74c3c)],
-        flags: MessageFlags.Ephemeral,
+        ...componentCardsPayload([makeInfoEmbed("入力エラー", "繰り返しは `10m` `1h` `1d` 形式で入力してください。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
       return true;
     }
@@ -463,12 +463,11 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
         current.ev_type,
         "更新しましたが一覧の再取得に失敗しました。",
       );
-      await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+      await interaction.reply(ephemeralComponentPayload(payload));
       return true;
     }
     await interaction.reply({
-      ...buildManageDetailPayload(refreshed, `#${rowId} を更新しました。`),
-      flags: MessageFlags.Ephemeral,
+      ...ephemeralComponentPayload(buildManageDetailPayload(refreshed, `#${rowId} を更新しました。`)),
     });
     return true;
   }

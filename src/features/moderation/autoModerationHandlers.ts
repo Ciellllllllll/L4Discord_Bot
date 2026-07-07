@@ -1,8 +1,8 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
   type ButtonInteraction,
@@ -78,17 +78,19 @@ export async function handleAutoModStringSelect(
         .setStyle(ButtonStyle.Secondary),
     );
     await interaction.followUp({
-      embeds: [
-        new EmbedBuilder()
+      ...componentCardsPayload(
+        [
+          new ComponentCardBuilder()
           .setTitle("Raidモード変更の確認")
           .setColor(nextEnabled ? 0xe74c3c : 0x3498db)
           .setDescription(
             `Raidモードを **${nextEnabled ? "有効化" : "無効化"}** しますか？\n承認ボタンを押すまで設定は反映されません。`,
           )
           .addFields({ name: "対象サーバーID", value: String(guildId), inline: false }),
-      ],
-      components: [row],
-      flags: MessageFlags.Ephemeral,
+        ],
+        [row],
+      ),
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
     });
   }
 
@@ -122,13 +124,12 @@ export async function handleAutoModRaidButton(interaction: ButtonInteraction, ct
       return true;
     }
     await interaction.update({
-      embeds: [
-        new EmbedBuilder()
+      ...componentCardsPayload([
+        new ComponentCardBuilder()
           .setTitle("Raidモード変更")
           .setColor(0x7f8c8d)
           .setDescription("操作をキャンセルしました。"),
-      ],
-      components: [],
+      ]),
     });
     return true;
   }
@@ -146,13 +147,12 @@ export async function handleAutoModRaidButton(interaction: ButtonInteraction, ct
     await updateAutoModSettings(ctx, guildId, { raidMode: nextEnabled });
 
     await interaction.update({
-      embeds: [
-        new EmbedBuilder()
+      ...componentCardsPayload([
+        new ComponentCardBuilder()
           .setTitle("Raidモード変更")
           .setColor(nextEnabled ? 0x2ecc71 : 0x95a5a6)
           .setDescription(`Raidモードを **${nextEnabled ? "有効化" : "無効化"}** しました。`),
-      ],
-      components: [],
+      ]),
     });
 
     const adminCh = await resolveAutoModAdminChannelId(ctx, guildId);

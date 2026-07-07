@@ -278,6 +278,21 @@ export interface AiR18UserSettingsRow {
   updated_at: string;
 }
 
+export interface AnonymousSurveyResponsesRow {
+  id: string;
+  guild_id: string;
+  rating: number;
+  created_at: Date;
+}
+
+export interface AnonymousSurveyUserStateRow {
+  guild_id: string;
+  user_id: string;
+  last_action: string;
+  next_prompt_at: Date;
+  updated_at: Date;
+}
+
 export interface PollsRow {
   id: string;
   guild_id: string;
@@ -344,4 +359,6 @@ export interface Database {
   vc_panel_configs: VcPanelConfigsRow;
   polls: PollsRow;
   ai_r18_user_settings: AiR18UserSettingsRow;
+  anonymous_survey_responses: AnonymousSurveyResponsesRow;
+  anonymous_survey_user_state: AnonymousSurveyUserStateRow;
 }

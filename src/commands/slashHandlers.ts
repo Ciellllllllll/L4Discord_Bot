@@ -1,9 +1,9 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../features/panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
-  EmbedBuilder,
   MessageFlags,
   type ChatInputCommandInteraction,
   type GuildMember,
@@ -42,6 +42,7 @@ import {
   handleLolWatchCommand,
 } from "../features/lolWatcher/lolWatcher.commands.js";
 import { handleWerewolfCreate, handleWerewolfEnd } from "../features/werewolf/werewolfGame.js";
+import { maybePromptAnonymousSurvey, promptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -64,6 +65,7 @@ async function ensureVersion(interaction: ChatInputCommandInteraction, ctx: BotC
 export async function handleSlashCommand(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
+  options: { skipSurvey?: boolean } = {},
 ): Promise<void> {
   if (!interaction.inGuild() || interaction.guildId !== ctx.config.GUILD_ID) {
     ctx.log.warn(
@@ -81,6 +83,14 @@ export async function handleSlashCommand(
 
   const member: GuildMember | null =
     interaction.member && "roles" in interaction.member ? (interaction.member as GuildMember) : null;
+
+  if (interaction.commandName === "survey") {
+    return handleDebugSurvey(interaction, ctx, member);
+  }
+
+  if (!options.skipSurvey && await maybePromptAnonymousSurvey(interaction, ctx, member)) {
+    return;
+  }
 
   switch (interaction.commandName) {
     case "q":
@@ -143,6 +153,25 @@ export async function handleSlashCommand(
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
   }
+}
+
+async function handleDebugSurvey(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (ctx.config.BOT_PROFILE !== "debug") {
+    await interaction.reply({ content: "このコマンドはdebug profileでのみ利用できます。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (ctx.config.DB_DRIVER !== "postgres") {
+    await interaction.reply({ content: "Anonymous SurveyはPostgreSQL環境でのみ利用できます。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (await promptAnonymousSurvey(interaction, ctx, member, { ignoreAdmin: true, ignoreCooldown: true })) {
+    return;
+  }
+  await interaction.reply({ content: "Anonymous Surveyを表示できませんでした。", flags: MessageFlags.Ephemeral });
 }
 
 async function handleCreatePrompt(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -208,7 +237,7 @@ async function handleChangePrompt(interaction: ChatInputCommandInteraction, _ctx
 async function handleShowPrompt(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
   const svc = new AiQueryService(ctx);
   const prompt = svc.loadUserPrompt(interaction.user.id, interaction.user.username);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("現在の /q プロンプト")
     .setDescription(prompt.slice(0, 4000) || "プロンプトが空です。")
     .setColor(0x5865f2);
@@ -222,8 +251,7 @@ async function handleShowPrompt(interaction: ChatInputCommandInteraction, ctx: B
       .setStyle(ButtonStyle.Primary),
   );
   await interaction.reply({
-    embeds: [embed],
-    components: [row],
+    ...componentCardsPayload([embed], [row]),
     allowedMentions: { parse: [] },
   });
 }
@@ -344,12 +372,12 @@ async function handleVcRank(interaction: ChatInputCommandInteraction, ctx: BotCo
     return `${i + 1}. <@${r.userId}> - ${h}\u6642\u9593${m}\u5206${sec}\u79d2`;
   });
 
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("\u0056\u0043\u6ede\u5728\u30e9\u30f3\u30ad\u30f3\u30b0\u0020\u0054\u004f\u0050\u0031\u0030")
     .setColor(0x3498db)
     .setDescription(lines.join("\n"));
   await interaction.editReply({
-    embeds: [embed],
+    ...componentCardsPayload([embed]),
     allowedMentions: { parse: ["users"] },
   });
 }
@@ -421,12 +449,12 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
     return;
   }
   const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> - ${Number(r.total).toLocaleString("ja-JP")}回`);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("スタンプ利用ランキング TOP10")
     .setColor(0x3498db)
     .setDescription(lines.join("\n"));
   await interaction.editReply({
-    embeds: [embed],
+    ...componentCardsPayload([embed]),
     allowedMentions: { parse: ["users"] },
   });
 }

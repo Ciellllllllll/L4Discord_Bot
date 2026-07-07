@@ -1,5 +1,5 @@
+import { ComponentCardBuilder } from "../panels/componentCard.js";
 import {
-  EmbedBuilder,
   type Guild,
   type GuildMember,
   type TextBasedChannel,
@@ -78,7 +78,7 @@ function validateVcRankingArgs(args: Record<string, unknown>): { ok: true; perio
 export type AiCommandExecResult = {
   ok: boolean;
   userMessage: string;
-  embeds?: EmbedBuilder[];
+  cards?: ComponentCardBuilder[];
 };
 
 export async function runAiSlashCommand(ctx: BotContext, params: {
@@ -151,14 +151,14 @@ export async function runAiSlashCommand(ctx: BotContext, params: {
         };
       }
       const lines = rows.slice(0, 20).map((r, i) => `${i + 1}. <@${r.userId}> — ${r.seconds}s`);
-      const embed = new EmbedBuilder()
+      const embed = new ComponentCardBuilder()
         .setTitle("VC 滞在ランキング")
         .setDescription(lines.join("\n").slice(0, 4000))
         .setColor(0x3498db);
       return {
         ok: true,
         userMessage: "ランキングを表示しました。",
-        embeds: [embed],
+        cards: [embed],
       };
     }
 

@@ -1,9 +1,9 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   DiscordAPIError,
-  EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
   type ButtonInteraction,
@@ -62,8 +62,8 @@ function buildConfirmRows(
   ];
 }
 
-function buildConfirmEmbed(invokerId: string, targetId: string, channelId: string): EmbedBuilder {
-  return new EmbedBuilder()
+function buildConfirmEmbed(invokerId: string, targetId: string, channelId: string): ComponentCardBuilder {
+  return new ComponentCardBuilder()
     .setTitle("AFKユーザー切断確認")
     .setDescription(`<@${targetId}>（寝落ちユーザー）を切断してもよろしいでしょうか？`)
     .addFields(
@@ -75,8 +75,8 @@ function buildConfirmEmbed(invokerId: string, targetId: string, channelId: strin
     .setTimestamp(new Date());
 }
 
-function buildResultEmbed(title: string, description: string, color: number): EmbedBuilder {
-  return new EmbedBuilder().setTitle(title).setDescription(description).setColor(color).setTimestamp(new Date());
+function buildResultEmbed(title: string, description: string, color: number): ComponentCardBuilder {
+  return new ComponentCardBuilder().setTitle(title).setDescription(description).setColor(color).setTimestamp(new Date());
 }
 
 function isSameVoiceChannel(invoker: GuildMember, target: GuildMember): boolean {
@@ -119,7 +119,7 @@ async function sendAfkModLog(
   }
 
   const unix = Math.floor(disconnectedAt.getTime() / 1000);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("/afk VC切断ログ")
     .setDescription("コマンドを介してVCからユーザーを切断しました。")
     .addFields(
@@ -133,7 +133,7 @@ async function sendAfkModLog(
 
   await channel
     .send({
-      embeds: [embed],
+      ...componentCardsPayload([embed]),
       allowedMentions: { parse: [] },
     })
     .catch((err) => ctx.log.warn({ err, modLogChannelId }, "afk: failed to send mod log"));
@@ -197,8 +197,10 @@ export async function startAfkDisconnectCommand(
   const voiceChannelId = targetMember.voice.channelId;
   const createdAtMs = Date.now();
   await interaction.reply({
-    embeds: [buildConfirmEmbed(interaction.user.id, targetUser.id, voiceChannelId)],
-    components: buildConfirmRows(interaction.user.id, targetUser.id, createdAtMs, false),
+    ...componentCardsPayload(
+      [buildConfirmEmbed(interaction.user.id, targetUser.id, voiceChannelId)],
+      buildConfirmRows(interaction.user.id, targetUser.id, createdAtMs, false),
+    ),
     allowedMentions: { users: [interaction.user.id, targetUser.id] },
   });
 }
@@ -220,22 +222,26 @@ export async function handleAfkDisconnectButton(
 
   if (Date.now() - payload.createdAtMs > AFK_CONFIRM_TTL_MS) {
     await interaction.update({
-      embeds: [
-        buildResultEmbed(
+      ...componentCardsPayload(
+        [
+          buildResultEmbed(
           "AFKユーザー切断確認",
           "確認の有効期限が切れたため、操作を終了しました。",
           0x95a5a6,
         ),
-      ],
-      components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+        ],
+        buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ),
     });
     return true;
   }
 
   if (payload.action === "cancel") {
     await interaction.update({
-      embeds: [buildResultEmbed("AFKユーザー切断確認", "切断操作を取り消しました。", 0x95a5a6)],
-      components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ...componentCardsPayload(
+        [buildResultEmbed("AFKユーザー切断確認", "切断操作を取り消しました。", 0x95a5a6)],
+        buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ),
     });
     return true;
   }
@@ -243,8 +249,10 @@ export async function handleAfkDisconnectButton(
   const guild = interaction.guild;
   if (!guild) {
     await interaction.update({
-      embeds: [buildResultEmbed("AFKユーザー切断失敗", "サーバー情報を取得できませんでした。", 0xe74c3c)],
-      components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ...componentCardsPayload(
+        [buildResultEmbed("AFKユーザー切断失敗", "サーバー情報を取得できませんでした。", 0xe74c3c)],
+        buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ),
     });
     return true;
   }
@@ -260,36 +268,42 @@ export async function handleAfkDisconnectButton(
     ]);
   } catch {
     await interaction.editReply({
-      embeds: [buildResultEmbed("AFKユーザー切断失敗", "ユーザー情報を取得できませんでした。", 0xe74c3c)],
-      components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ...componentCardsPayload(
+        [buildResultEmbed("AFKユーザー切断失敗", "ユーザー情報を取得できませんでした。", 0xe74c3c)],
+        buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ),
     });
     return true;
   }
 
   if (!invokerMember.voice.channelId || !targetMember.voice.channelId || !isSameVoiceChannel(invokerMember, targetMember)) {
     await interaction.editReply({
-      embeds: [
-        buildResultEmbed(
+      ...componentCardsPayload(
+        [
+          buildResultEmbed(
           "AFKユーザー切断中止",
           "実行者と対象ユーザーが同じVCに接続していないため、操作を終了しました。",
           0x95a5a6,
         ),
-      ],
-      components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+        ],
+        buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ),
     });
     return true;
   }
 
   if (!canBotDisconnect(targetMember)) {
     await interaction.editReply({
-      embeds: [
-        buildResultEmbed(
+      ...componentCardsPayload(
+        [
+          buildResultEmbed(
           "AFKユーザー切断失敗",
           "BOTに対象VCでメンバーを移動する権限がないため、切断できません。",
           0xe74c3c,
         ),
-      ],
-      components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+        ],
+        buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ),
     });
     return true;
   }
@@ -301,8 +315,10 @@ export async function handleAfkDisconnectButton(
     ctx.log.warn({ err, targetId: payload.targetId, invokerId: payload.invokerId }, "afk: disconnect failed");
     const errorText = err instanceof DiscordAPIError ? `Discord API: ${err.message}` : "Discord APIで切断に失敗しました。";
     await interaction.editReply({
-      embeds: [buildResultEmbed("AFKユーザー切断失敗", errorText, 0xe74c3c)],
-      components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ...componentCardsPayload(
+        [buildResultEmbed("AFKユーザー切断失敗", errorText, 0xe74c3c)],
+        buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ),
     });
     return true;
   }
@@ -311,14 +327,16 @@ export async function handleAfkDisconnectButton(
   await sendAfkModLog(ctx, invokerMember, targetMember, disconnectedFromChannelId, disconnectedAt);
 
   await interaction.editReply({
-    embeds: [
-      buildResultEmbed(
+    ...componentCardsPayload(
+      [
+        buildResultEmbed(
         "AFKユーザー切断完了",
         `<@${payload.targetId}> を <#${disconnectedFromChannelId}> から切断しました。`,
         0x2ecc71,
       ),
-    ],
-    components: buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+      ],
+      buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
+    ),
     allowedMentions: { users: [payload.targetId] },
   });
   return true;

@@ -1,5 +1,6 @@
 import type { Message } from "discord.js";
 import type { BotContext } from "../bot/context.js";
+import { componentCardsPayload } from "../features/panels/componentCard.js";
 import { BOT_SEMVER, PREFIX_COMMAND_MIN_BOT_VERSION } from "../core/releaseVersions.js";
 import { isAdmin, isOwner } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
@@ -89,7 +90,7 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
     try {
       if (ch.isTextBased() && !ch.isDMBased()) {
         await ch.send({
-          embeds: [embed],
+          ...componentCardsPayload([embed]),
           allowedMentions: { users: [message.author.id] },
         });
       }

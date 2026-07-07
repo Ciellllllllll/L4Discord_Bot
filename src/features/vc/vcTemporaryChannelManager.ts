@@ -8,6 +8,7 @@ import {
   type Client,
   type Guild,
   type Message,
+  type MessageEditOptions,
   type VoiceBasedChannel,
   type VoiceChannel,
   type VoiceState,
@@ -21,11 +22,11 @@ import { PANEL_KIND_VC_CREATOR } from "../panels/constants.js";
 import { tryDeleteBotPanelMessage } from "../panels/panelDiscordOps.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessageStore.js";
 import {
-  buildVcCreatorMainEmbed,
-  buildVcCreatorMainRows,
+  buildVcCreatorMainPayload,
   buildVcRenameModalCustomId,
   VC_NAME_MODAL_PREFIX,
 } from "./vcCreatorUi.js";
+import { messageComponentsHaveCustomId } from "../panels/componentPanelPayload.js";
 import {
   vcTempDeleteTracked,
   vcTempInsertTracked,
@@ -363,13 +364,7 @@ export function buildVcRenameModal(channelId: string, genre: string, beforeName:
 // メッセージが当 Bot の VC 作成パネルか（再接続スキャン用）
 
 export function vcPanelMessageHasOpenButton(message: Message<boolean>): boolean {
-  for (const row of message.components) {
-    if (!("components" in row) || !row.components) continue;
-    for (const c of row.components) {
-      if ("customId" in c && c.customId === "open_vc_modal") return true;
-    }
-  }
-  return false;
+  return messageComponentsHaveCustomId(message.components, new Set(["open_vc_modal"]));
 }
 
 export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<void> {
@@ -396,8 +391,8 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
     return;
   }
 
-  const embed = buildVcCreatorMainEmbed();
-  const components = buildVcCreatorMainRows();
+  const payload = buildVcCreatorMainPayload();
+  const editPayload = { ...payload, content: null } satisfies MessageEditOptions;
   const botId = ctx.client.user?.id ?? "";
 
   if (row.message_id) {
@@ -407,7 +402,7 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
         return;
       }
       try {
-        await msg.edit({ embeds: [embed], components });
+        await msg.edit(editPayload);
         await savePanelMessageRow(ctx, row.id, channelId, msg.id, {
           ui_version: codeVer,
           status: "sent",
@@ -426,7 +421,7 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
     if (existing) {
       try {
         if (row.data.ui_version !== codeVer) {
-          await existing.edit({ embeds: [embed], components });
+          await existing.edit(editPayload);
         }
         await savePanelMessageRow(ctx, row.id, channelId, existing.id, {
           ui_version: codeVer,
@@ -442,7 +437,7 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
   }
 
   try {
-    const sent = await ch.send({ embeds: [embed], components });
+    const sent = await ch.send(payload);
     await savePanelMessageRow(ctx, row.id, channelId, sent.id, {
       ui_version: codeVer,
       status: "sent",

@@ -1,14 +1,15 @@
 import {
   ActionRowBuilder,
-  EmbedBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   type Guild,
   type Message,
+  type MessageEditOptions,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
+import { buildContainerPanelPayload, messageComponentsHaveCustomId } from "../panels/componentPanelPayload.js";
 import { PANEL_KIND_AUTOMOD } from "../panels/constants.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessageStore.js";
 import { parsePanelState } from "../panels/panelState.js";
@@ -17,13 +18,7 @@ import { AUTOMOD_SELECT_PREFIX, PANEL_TOGGLE_OPTIONS } from "./autoModerationTyp
 
 function messageHasAutomodSelect(message: Message, guildId: string): boolean {
   const prefix = `${AUTOMOD_SELECT_PREFIX}${guildId}`;
-  if (!message.components?.length) return false;
-  return message.components.some(
-    (row) =>
-      "components" in row &&
-      Array.isArray(row.components) &&
-      row.components.some((c) => "customId" in c && c.customId === prefix),
-  );
+  return messageComponentsHaveCustomId(message.components, new Set([prefix]));
 }
 
 export function automodPanelMessageMatches(message: Message, botUserId: string, guildId: string): boolean {
@@ -33,19 +28,22 @@ export function automodPanelMessageMatches(message: Message, botUserId: string, 
 
 export async function buildAutoModPanelPayload(ctx: BotContext, guildId: string) {
   const s = await getMergedAutoModSettings(ctx, guildId);
-  const embed = new EmbedBuilder()
-    .setTitle("自動モデレーション管理パネル")
-    .setColor(0xf1c40f)
-    .setDescription("下のチェックボックスでON/OFFを切り替えます。Raidモードは必ず確認を経て反映されます。")
-    .addFields(
-      { name: "自動モデレーション全体", value: s.enabled ? "ON" : "OFF", inline: true },
-      { name: "外部リンク投稿ブロック", value: s.linkBlock ? "ON" : "OFF", inline: true },
-      { name: "招待リンク投稿ブロック", value: s.inviteBlock ? "ON" : "OFF", inline: true },
-      { name: "連投スパムブロック", value: s.spamBlock ? "ON" : "OFF", inline: true },
-      { name: "Raidモード", value: s.raidMode ? "ON" : "OFF", inline: true },
-      { name: "スパム判定時間", value: `${s.spamWindowSec}秒`, inline: true },
-      { name: "スパムしきい値", value: `${s.spamThreshold}件`, inline: true },
-    );
+  const enabledLabel = (value: boolean): string => (value ? "ON" : "OFF");
+  const panelText = [
+    "## 自動モデレーション管理",
+    "投稿ブロックとRaidモードをまとめて切り替えます。",
+    "Raidモードの変更は確認画面を経てから反映されます。",
+    "",
+    "**現在の設定**",
+    `全体: **${enabledLabel(s.enabled)}**`,
+    `外部リンク: **${enabledLabel(s.linkBlock)}**`,
+    `招待リンク: **${enabledLabel(s.inviteBlock)}**`,
+    `連投スパム: **${enabledLabel(s.spamBlock)}**`,
+    `Raidモード: **${enabledLabel(s.raidMode)}**`,
+    `スパム判定時間: **${s.spamWindowSec}秒**`,
+    `スパムしきい値: **${s.spamThreshold}件**`,
+    "",
+  ].join("\n");
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`${AUTOMOD_SELECT_PREFIX}${guildId}`)
@@ -63,7 +61,7 @@ export async function buildAutoModPanelPayload(ctx: BotContext, guildId: string)
     );
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
-  return { embeds: [embed], components: [row] as const };
+  return buildContainerPanelPayload(panelText, [row]);
 }
 
 // !Setup の ADMIN チャンネル（panel_channels.admin_channel_id）
@@ -93,12 +91,13 @@ export async function reconcileAutoModPanel(ctx: BotContext, guild: Guild, chann
   }
 
   const payload = await buildAutoModPanelPayload(ctx, guildId);
+  const editPayload = { ...payload, content: null } satisfies MessageEditOptions;
   const botId = ctx.client.user?.id ?? "";
 
   if (row.message_id && botId) {
     const oldMsg = await channel.messages.fetch(row.message_id).catch(() => null);
     if (oldMsg?.author?.id === botId && automodPanelMessageMatches(oldMsg, botId, guildId)) {
-      await oldMsg.edit(payload).catch(() => undefined);
+      await oldMsg.edit(editPayload).catch(() => undefined);
       await savePanelMessageRow(ctx, row.id, channelId, oldMsg.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,
@@ -113,7 +112,7 @@ export async function reconcileAutoModPanel(ctx: BotContext, guild: Guild, chann
   if (recent && botId) {
     const existing = recent.find((m) => m.author?.id === botId && automodPanelMessageMatches(m, botId, guildId));
     if (existing) {
-      await existing.edit(payload).catch(() => undefined);
+      await existing.edit(editPayload).catch(() => undefined);
       await savePanelMessageRow(ctx, row.id, channelId, existing.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,
