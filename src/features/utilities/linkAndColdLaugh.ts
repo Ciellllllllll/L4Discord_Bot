@@ -6,8 +6,8 @@ import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 import { COLD_LAUGH_KEYWORD } from "./coldLaughConstants.js";
+import { buildVxTwitterReplyPayloads, collectVxTwitterReplyTargets } from "./vxtwitterPreview.js";
 
-const VX_DOMAIN = "vxtwitter.com";
 const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
 
 const URL_CANDIDATE_PATTERN =
@@ -44,20 +44,6 @@ function isXLikeUrl(urlText: string): boolean {
     return X_DOMAINS.has(host);
   } catch {
     return false;
-  }
-}
-
-function toVxTwitterUrl(urlText: string): string | null {
-  try {
-    const parsed = new URL(ensureScheme(urlText));
-    const host = hostWithoutWww(parsed.host);
-    if (!host || host === VX_DOMAIN || !X_DOMAINS.has(host)) {
-      return null;
-    }
-    parsed.host = VX_DOMAIN;
-    return parsed.toString();
-  } catch {
-    return null;
   }
 }
 
@@ -207,31 +193,20 @@ export class LinkAndColdLaugh {
       return;
     }
 
-    const converted: string[] = [];
-    const seen = new Set<string>();
-    for (const link of xLinks) {
-      const v = toVxTwitterUrl(link);
-      if (v && !seen.has(v)) {
-        seen.add(v);
-        converted.push(v);
-      }
-    }
-
-    if (converted.length === 0) {
-      return;
-    }
+    const replyTargets = collectVxTwitterReplyTargets(xLinks);
+    if (replyTargets.length === 0) return;
 
     try {
       await message.suppressEmbeds(true);
     } catch {}
 
-    try {
-      await message.reply({
-        content: converted.join("\n"),
-        allowedMentions: { parse: [], repliedUser: false },
-      });
-    } catch (err) {
-      this.ctx.log.warn({ err: String(err) }, "vxtwitter reply error");
+    const replyPayloads = await buildVxTwitterReplyPayloads(replyTargets);
+    for (const payload of replyPayloads) {
+      try {
+        await message.reply(payload);
+      } catch (err) {
+        this.ctx.log.warn({ err: String(err) }, "vxtwitter reply error");
+      }
     }
   }
 }
