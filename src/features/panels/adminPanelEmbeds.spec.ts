@@ -29,6 +29,29 @@ function assertPanelContainer(payload: MessageCreateOptions, heading: string): v
   assert.ok(text.startsWith(`## ${heading}`));
 }
 
+function containerChildren(payload: MessageCreateOptions): Array<{
+  type: ComponentType;
+  content?: string;
+  components?: Array<{
+    type: ComponentType;
+    options?: Array<{ label?: string; description?: string }>;
+  }>;
+}> {
+  const container = payload.components?.[0] as {
+    type: ComponentType;
+    components?: Array<{
+      type: ComponentType;
+      content?: string;
+      components?: Array<{
+        type: ComponentType;
+        options?: Array<{ label?: string; description?: string }>;
+      }>;
+    }>;
+  };
+  assert.equal(container.type, ComponentType.Container);
+  return container.components ?? [];
+}
+
 function makeAutomodCtx(): BotContext {
   const emptySelect = {
     selectAll: () => emptySelect,
@@ -98,6 +121,12 @@ async function run(): Promise<void> {
   assert.doesNotMatch(automodText, /[🟢⚪🟠🔴🟣🔵]/u);
   assert.match(automodText, /全体: \*\*ON\*\*/);
   assert.match(automodText, /スパム判定時間: \*\*8秒\*\*/);
+  const automodSelect = containerChildren(automodPayload)
+    .find((component) => component.type === ComponentType.ActionRow)
+    ?.components?.find((component) => component.type === ComponentType.StringSelect);
+  const automodOptionLabels = automodSelect?.options?.map((option) => option.label ?? "") ?? [];
+  assert.ok(automodOptionLabels.includes("全体を有効化"));
+  assert.equal(automodOptionLabels.some((label) => label.includes("自動モデレーション全体")), false);
 
   const aiHistory = await buildAiHistoryAdminPanelPayload(makeAiHistoryCtx(), "guild");
   assertPanelContainer(aiHistory, "/q 履歴管理");
