@@ -62,6 +62,7 @@ type AppDetailsResponse = Record<
         initial?: unknown;
         final?: unknown;
         discount_percent?: unknown;
+        discount_expiration?: unknown;
         initial_formatted?: unknown;
         final_formatted?: unknown;
       };
@@ -172,6 +173,7 @@ function normalizeDetails(appid: string, raw: AppDetailsResponse[string]): Steam
           initial: typeof po.initial === "number" ? po.initial : undefined,
           final: typeof po.final === "number" ? po.final : undefined,
           discountPercent: typeof po.discount_percent === "number" ? po.discount_percent : undefined,
+          discountExpiration: typeof po.discount_expiration === "number" ? po.discount_expiration : undefined,
           initialFormatted: typeof po.initial_formatted === "string" ? po.initial_formatted : undefined,
           finalFormatted: typeof po.final_formatted === "string" ? po.final_formatted : undefined,
         }

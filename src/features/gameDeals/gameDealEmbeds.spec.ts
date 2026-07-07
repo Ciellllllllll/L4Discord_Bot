@@ -16,6 +16,7 @@ const event: SteamFreeEvent = {
   evidenceJson: "[]",
   steamUrl: "https://store.steampowered.com/app/123/Free_Steam_Game/",
   imageUrl: null,
+  freeUntilUnix: 1783468800,
 };
 
 const card = buildSteamFreeEventEmbed(event);
@@ -24,6 +25,7 @@ const text = container.components.find((component) => component.type === Compone
 
 assert.equal(text.includes("Steam URL"), false);
 assert.equal(text.includes(event.steamUrl), false);
+assert.match(text, /\*\*配布終了\*\*\n<t:1783468800:R>/);
 
 const actionRow = container.components.find((component) => component.type === ComponentType.ActionRow);
 assert.ok(actionRow);

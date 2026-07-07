@@ -12,19 +12,11 @@ function priceText(value: number | null, currency: string | null): string {
   return `${value.toLocaleString("ja-JP")} ${currency ?? "JPY"}`;
 }
 
-function formatJst(value: string | null): string {
+function formatDiscordRelativeTime(value: string | null): string {
   if (!value) return "不明";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "不明";
-  return new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(d);
+  return `<t:${Math.floor(d.getTime() / 1000)}:R>`;
 }
 
 function buildEpicLauncherUrl(storeUrl: string): string {
@@ -43,7 +35,7 @@ export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardB
     .setColor(candidate.detectedType === "current_free_game" ? 0x2ecc71 : 0x3498db)
     .setDescription(`**${candidate.title}**\n${note}`)
     .addFields(
-      { name: "配布期間", value: `${formatJst(candidate.startDate)} ～ ${formatJst(candidate.endDate)}`, inline: false },
+      { name: "配布終了", value: formatDiscordRelativeTime(candidate.endDate), inline: false },
       { name: "通常価格", value: priceText(candidate.originalPrice, candidate.currencyCode), inline: true },
       { name: "現在価格", value: priceText(candidate.discountPrice, candidate.currencyCode), inline: true },
     )

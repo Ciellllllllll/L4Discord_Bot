@@ -28,6 +28,8 @@ const text = container.components.find((component) => component.type === Compone
 
 assert.equal(text.includes("ストアURL"), false);
 assert.equal(text.includes(candidate.url), false);
+assert.equal(text.includes("2026/07/01"), false);
+assert.match(text, /\*\*配布終了\*\*\n<t:1783468800:R>/);
 
 const actionRow = container.components.find((component) => component.type === ComponentType.ActionRow);
 assert.ok(actionRow);

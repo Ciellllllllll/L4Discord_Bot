@@ -74,8 +74,14 @@ function steamEvidenceText(evidenceJson: string): string {
   }
 }
 
+function discordRelativeUnix(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return `<t:${Math.floor(value)}:R>`;
+}
+
 export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBuilder {
   const discount = event.discountPercent !== null && event.discountPercent >= 100 ? "100%" : event.discountPercent !== null ? `${event.discountPercent}%` : "Free to Keep";
+  const freeUntil = discordRelativeUnix(event.freeUntilUnix);
   const embed = new ComponentCardBuilder()
     .setTitle("Steam 無料配布")
     .setColor(0x2ecc71)
@@ -84,6 +90,7 @@ export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBu
       { name: "通常価格", value: centsPriceText(event.normalPriceCents), inline: true },
       { name: "現在価格", value: centsPriceText(event.currentPriceCents), inline: true },
       { name: "割引率", value: discount, inline: true },
+      ...(freeUntil ? [{ name: "配布終了", value: freeUntil, inline: false }] : []),
       { name: "検証根拠", value: steamEvidenceText(event.evidenceJson), inline: false },
     )
     .setTimestamp(new Date());

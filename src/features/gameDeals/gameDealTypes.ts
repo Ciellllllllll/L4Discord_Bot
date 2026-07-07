@@ -60,6 +60,7 @@ export type SteamFreeEvent = {
   evidenceJson: string;
   steamUrl: string;
   imageUrl: string | null;
+  freeUntilUnix?: number | null;
 };
 
 export type GameDealSubscription = {

@@ -126,6 +126,7 @@ function steamNowEvent(item: SteamSearchItem, details: SteamAppDetails): SteamFr
     evidenceJson: JSON.stringify([{ source: "steam_search", normalPriceCents, currentPriceCents: 0, discountPercent: 100 }]),
     steamUrl: item.storeUrl || `https://store.steampowered.com/app/${item.appid}/`,
     imageUrl: details.headerImage ?? details.capsuleImage ?? null,
+    freeUntilUnix: details.priceOverview?.discountExpiration ?? null,
   };
 }
 
@@ -196,6 +197,7 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
       evidenceJson: JSON.stringify(detected.evidence),
       steamUrl: detected.steamUrl,
       imageUrl: detected.imageUrl,
+      freeUntilUnix: detected.freeUntilUnix,
     };
     verifiedCount += 1;
     repo.removeSteamVerifyQueue(change.appid);

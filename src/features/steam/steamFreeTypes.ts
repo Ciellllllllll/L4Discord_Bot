@@ -20,6 +20,7 @@ export type SteamAppDetails = {
     initial?: number;
     final?: number;
     discountPercent?: number;
+    discountExpiration?: number;
     initialFormatted?: string;
     finalFormatted?: string;
   };

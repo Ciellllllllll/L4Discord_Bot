@@ -7,6 +7,7 @@ export type SteamFreeEvidence = {
   normalPriceCents?: number | null;
   currentPriceCents?: number | null;
   discountPercent?: number | null;
+  freeUntilUnix?: number | null;
   text?: string | null;
 };
 
@@ -29,6 +30,7 @@ export type SteamFreeDetectionResult =
       normalPriceCents: number;
       currentPriceCents: number;
       discountPercent: number | null;
+      freeUntilUnix: number | null;
       evidence: SteamFreeEvidence[];
     }
   | {
@@ -76,6 +78,7 @@ function appdetailsCurrentFree(details: SteamAppDetails | null): SteamFreeEviden
       normalPriceCents: initial,
       currentPriceCents: 0,
       discountPercent,
+      freeUntilUnix: po.discountExpiration ?? null,
       text: po.initialFormatted ?? null,
     };
   }
@@ -85,6 +88,7 @@ function appdetailsCurrentFree(details: SteamAppDetails | null): SteamFreeEviden
       normalPriceCents: initial,
       currentPriceCents: final,
       discountPercent,
+      freeUntilUnix: po.discountExpiration ?? null,
       text: po.initialFormatted ?? null,
     };
   }
@@ -101,6 +105,7 @@ function searchCurrentFree(item: SteamSearchItem | null): SteamFreeEvidence | nu
       normalPriceCents: original,
       currentPriceCents: 0,
       discountPercent: item.discountPercent,
+      freeUntilUnix: null,
       text: item.rawPriceText,
     };
   }
@@ -110,6 +115,7 @@ function searchCurrentFree(item: SteamSearchItem | null): SteamFreeEvidence | nu
       normalPriceCents: original,
       currentPriceCents: 0,
       discountPercent: item.discountPercent ?? 100,
+      freeUntilUnix: null,
       text: item.rawPriceText,
     };
   }
@@ -124,6 +130,7 @@ export function cheapSharkPaidFreeEvidence(deals: CheapSharkDeal[]): SteamFreeEv
     normalPriceCents: dollarsToCents(matched.normalPrice),
     currentPriceCents: 0,
     discountPercent: Math.round(matched.savings),
+    freeUntilUnix: null,
     text: matched.dealId,
   };
 }
@@ -196,6 +203,7 @@ export function detectSteamFreeEvent(input: SteamFreeDetectionInput): SteamFreeD
     normalPriceCents: normalPrice,
     currentPriceCents: 0,
     discountPercent: currentFreeEvidence.discountPercent ?? 100,
+    freeUntilUnix: currentFreeEvidence.freeUntilUnix ?? null,
     evidence,
   };
 }
