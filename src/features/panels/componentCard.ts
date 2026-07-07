@@ -46,6 +46,8 @@ export class ComponentCardBuilder {
     timestamp?: string;
     url?: string;
     actionRows?: ActionRowLike[];
+    bottomActionRows?: ActionRowLike[];
+    textDisplays?: string[];
   } = {};
 
   setTitle(title: string): this {
@@ -103,6 +105,17 @@ export class ComponentCardBuilder {
     return this;
   }
 
+  addBottomActionRows(...rows: ActionRowLike[]): this {
+    this.data.bottomActionRows = [...(this.data.bottomActionRows ?? []), ...rows];
+    return this;
+  }
+
+  addTextDisplays(...contents: string[]): this {
+    const filtered = contents.map((content) => content.slice(0, 4000)).filter((content) => content.length > 0);
+    this.data.textDisplays = [...(this.data.textDisplays ?? []), ...filtered];
+    return this;
+  }
+
   private toTextParts(): { body: string; footer: string } {
     const lines: string[] = [];
     if (this.data.author?.name) {
@@ -148,6 +161,11 @@ export class ComponentCardBuilder {
         ],
       }));
     const actionRows = (this.data.actionRows ?? []).map((row) => row.toJSON());
+    const bottomActionRows = (this.data.bottomActionRows ?? []).map((row) => row.toJSON());
+    const textDisplays = (this.data.textDisplays ?? []).map((content): APITextDisplayComponent => ({
+      type: ComponentType.TextDisplay,
+      content,
+    }));
     const components: APIContainerComponent["components"] = [
       ...(body
         ? [{
@@ -155,6 +173,7 @@ export class ComponentCardBuilder {
           content: body,
         } satisfies APITextDisplayComponent]
         : []),
+      ...textDisplays,
       ...actionRows,
       ...(footer
         ? [{
@@ -163,6 +182,7 @@ export class ComponentCardBuilder {
         } satisfies APITextDisplayComponent]
         : []),
       ...mediaComponents,
+      ...bottomActionRows,
     ];
     if (components.length === 0) {
       components.push({

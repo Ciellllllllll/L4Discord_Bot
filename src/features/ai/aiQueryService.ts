@@ -572,20 +572,22 @@ export class AiQueryService {
     const r18 = options.r18 ?? (await getAiR18Enabled(this.ctx, guildId, userId));
 
     const replyQuestion = async (answer: string) => {
-      const embed = new ComponentCardBuilder()
-        .setTitle("回答")
-        .setDescription(answer.slice(0, 4000))
-        .setColor(0x2ecc71);
-      if (answer.length > 4000) {
-        embed.setFooter({ text: "回答が長いため一部のみ表示しています。" });
-      }
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
           .setCustomId(`${HISTORY_CLEAR_Q_PREFIX}${guildId}:${userId}`)
           .setLabel("この会話履歴を削除")
           .setStyle(ButtonStyle.Secondary),
       );
-      await interaction.editReply({ ...componentCardsPayload([embed], [row]), allowedMentions: noMentions });
+      const card = new ComponentCardBuilder()
+        .addTextDisplays(
+          ["### 質問", text.slice(0, 4000)].join("\n"),
+          ["### 回答", answer.slice(0, 4000)].join("\n"),
+        )
+        .addBottomActionRows(row);
+      if (answer.length > 4000) {
+        card.setFooter({ text: "回答が長いため一部のみ表示しています。" });
+      }
+      await interaction.editReply({ ...componentCardsPayload([card]), allowedMentions: noMentions });
     };
 
     const replyCommand = async (userMessage: string, cards?: ComponentCardBuilder[]) => {

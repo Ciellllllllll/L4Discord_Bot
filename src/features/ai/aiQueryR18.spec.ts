@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { ComponentType, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import type { Kysely } from "kysely";
 import type { BotContext } from "../../bot/context.js";
 import type { AppConfig } from "../../core/config.js";
@@ -211,7 +211,7 @@ async function run(): Promise<void> {
   const originalFetch = globalThis.fetch;
   const calls: FetchCall[] = [];
 
-  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+  const standardFetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? "{}")) as FetchCall["body"];
     calls.push({ url: input.toString(), body });
     const isLocal = input.toString().startsWith("http://local.test");
@@ -219,6 +219,7 @@ async function run(): Promise<void> {
       choices: [{ message: { content: isLocal ? "local answer" : "deepseek answer" } }],
     });
   }) as typeof fetch;
+  globalThis.fetch = standardFetch;
 
   try {
     {
@@ -231,6 +232,38 @@ async function run(): Promise<void> {
       const rows = await historyRows(aiHistoryDb);
       assert.equal(rows.length, 2);
       assert.deepEqual(JSON.parse(String(rows[0]?.meta)), { provider: "deepseek", r18: false });
+      const payload = rec.edits[0] as { components?: Array<{ type: ComponentType; components?: Array<{ type: ComponentType; content?: string }> }> };
+      assert.equal(payload.components?.length, 1);
+      const container = payload.components?.[0];
+      assert.equal(container?.type, ComponentType.Container);
+      const texts = container?.components
+        ?.filter((component) => component.type === ComponentType.TextDisplay)
+        .map((component) => component.content ?? "") ?? [];
+      assert.deepEqual(texts.slice(0, 2), ["### 質問\n質問です", "### 回答\ndeepseek answer"]);
+      assert.equal(/^## 回答$/m.test(texts.join("\n")), false);
+    }
+
+    {
+      calls.length = 0;
+      const longAnswer = `long answer ${"x".repeat(4100)}`;
+      globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as FetchCall["body"];
+        calls.push({ url: input.toString(), body });
+        return Response.json({ choices: [{ message: { content: longAnswer } }] });
+      }) as typeof fetch;
+      const config = makeConfig(dir);
+      const ctx = makeCtx(db, aiHistoryDb, config);
+      const rec = makeInteraction({ userId: "long-answer-user", channelId: "normal-channel" });
+      await handleSlashCommand(rec.interaction, ctx);
+
+      const payload = rec.edits[0] as { components?: Array<{ type: ComponentType; components?: Array<{ type: ComponentType; content?: string }> }> };
+      const container = payload.components?.[0];
+      assert.equal(container?.type, ComponentType.Container);
+      const children = container?.components ?? [];
+      assert.match(children.find((component) => component.type === ComponentType.TextDisplay)?.content ?? "", /### 質問/);
+      assert.match(children.filter((component) => component.type === ComponentType.TextDisplay).at(-1)?.content ?? "", /一部のみ表示/);
+      assert.equal(children.at(-1)?.type, ComponentType.ActionRow);
+      globalThis.fetch = standardFetch;
     }
 
     {
