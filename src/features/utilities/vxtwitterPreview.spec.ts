@@ -6,6 +6,7 @@ import {
   type APIActionRowComponent,
   type APIButtonComponent,
   type APIContainerComponent,
+  type APISectionComponent,
 } from "discord.js";
 import {
   buildVxTwitterFallbackReply,
@@ -16,6 +17,18 @@ import {
   normalizeFixTweetResponse,
   parseXStatusUrl,
 } from "./vxtwitterPreview.js";
+
+function collectContainerText(container: APIContainerComponent | undefined): string {
+  const contents: string[] = [];
+  for (const component of container?.components ?? []) {
+    if (component.type === ComponentType.TextDisplay) {
+      contents.push(component.content);
+    } else if (component.type === ComponentType.Section) {
+      contents.push(...(component as APISectionComponent).components.map((item) => item.content));
+    }
+  }
+  return contents.join("\n");
+}
 
 async function run(): Promise<void> {
   assert.deepEqual(parseXStatusUrl("x.com/user/status/1234567890"), {
@@ -147,21 +160,38 @@ async function run(): Promise<void> {
   assert.equal(extraMedia.tweet.media[0]?.kind, "video");
   assert.equal(extraMedia.tweet.media[1]?.kind, "photo");
 
-  const payload = buildVxTwitterPreviewPayload(preview.tweet, "https://vxtwitter.com/main/status/123");
+  const payload = buildVxTwitterPreviewPayload(preview.tweet, "https://vxtwitter.com/main/status/123", {
+    main: {
+      shouldTranslate: true,
+      sourceLanguage: "en",
+      confidence: 0.98,
+      translatedText: "本文の日本語訳です。",
+    },
+    quote: {
+      shouldTranslate: true,
+      sourceLanguage: "en",
+      confidence: 0.97,
+      translatedText: "引用文の日本語訳です。",
+    },
+  });
   assert.deepEqual(payload.embeds, []);
   assert.equal(payload.flags, MessageFlags.IsComponentsV2);
   assert.equal("content" in payload, false);
   const container = payload.components[0];
   assert.equal(container?.type, ComponentType.Container);
-  const text = container?.components
-    .filter((component) => component.type === ComponentType.TextDisplay)
-    .map((component) => component.content)
-    .join("\n");
-  assert.match(text ?? "", /## Main User \(@main\)/);
-  assert.match(text ?? "", /### 本文/);
+  const text = collectContainerText(container);
+  assert.match(text ?? "", /\*\*Main User \(@main\)\*\*/);
+  assert.doesNotMatch(text ?? "", /## Main User \(@main\)/);
+  assert.match(text ?? "", /本文/);
+  assert.doesNotMatch(text ?? "", /### 本文/);
+  assert.match(text ?? "", /本文の日本語訳です。/);
   assert.match(text ?? "", /引用: @quote/);
+  assert.match(text ?? "", /> 日本語訳: 引用文の日本語訳です。/);
   assert.match(text ?? "", /2026\/07\/07 \/ 💬 1 \/ 🔁 2 \/ ❤️ 10 \/ 👁️ 300/);
   assert.equal(text?.includes("https://vxtwitter.com/main/status/123"), false);
+  const section = container?.components.find((component) => component.type === ComponentType.Section);
+  assert.equal(section?.accessory.type, ComponentType.Thumbnail);
+  assert.equal(section?.accessory.media.url, "https://pbs.twimg.com/profile_images/main.jpg");
   const gallery = container?.components.find((component) => component.type === ComponentType.MediaGallery);
   assert.equal(gallery?.items.length, 3);
   assert.equal(gallery?.items.every((item) => item.spoiler === true), true);
@@ -171,6 +201,12 @@ async function run(): Promise<void> {
   const row = container?.components.find((component) => component.type === ComponentType.ActionRow) as
     | APIActionRowComponent<APIButtonComponent>
     | undefined;
+  const galleryIndex = container?.components.findIndex((component) => component.type === ComponentType.MediaGallery) ?? -1;
+  const metaIndex = container?.components.findIndex(
+    (component) => component.type === ComponentType.TextDisplay && component.content.includes("2026/07/07"),
+  ) ?? -1;
+  const rowIndex = container?.components.findIndex((component) => component.type === ComponentType.ActionRow) ?? -1;
+  assert.ok(galleryIndex >= 0 && metaIndex > galleryIndex && rowIndex > metaIndex);
   assert.equal(row?.components.length, 1);
   assert.equal(row?.components[0]?.style, ButtonStyle.Link);
   assert.equal(row?.components[0]?.label, "Xで開く");
@@ -250,6 +286,164 @@ async function run(): Promise<void> {
   assert.equal(
     malformedContainer?.components.some((component) => component.type === ComponentType.MediaGallery),
     false,
+  );
+
+  let translationCalls = 0;
+  const translatedPayloads = await buildVxTwitterReplyPayloads(
+    ["https://x.com/translate/status/12"],
+    async (): Promise<Response> =>
+      new Response(JSON.stringify({
+        code: 200,
+        message: "OK",
+        tweet: {
+          id: "12",
+          url: "https://twitter.com/translate/status/12",
+          text: "Hello from abroad",
+          author: { screen_name: "translate" },
+          quote: {
+            id: "1200",
+            text: "Quoted hello",
+            author: { screen_name: "quoted" },
+          },
+        },
+      }), { status: 200 }),
+    {
+      config: { DEEPSEEK_API_KEY: "test-key" },
+      log: { warn() {} },
+      translate: async (_tweet) => {
+        translationCalls += 1;
+        return {
+          main: {
+            shouldTranslate: true,
+            sourceLanguage: "en",
+            confidence: 0.99,
+            translatedText: "海外からのこんにちは",
+          },
+          quote: {
+            shouldTranslate: true,
+            sourceLanguage: "en",
+            confidence: 0.99,
+            translatedText: "引用のこんにちは",
+          },
+        };
+      },
+    },
+  );
+  assert.equal(translationCalls, 1);
+  const translatedContainer = translatedPayloads[0]?.components?.[0] as APIContainerComponent | undefined;
+  const translatedText = collectContainerText(translatedContainer);
+  assert.match(translatedText ?? "", /Hello from abroad/);
+  assert.match(translatedText ?? "", /海外からのこんにちは/);
+  assert.match(translatedText ?? "", /> 日本語訳: 引用のこんにちは/);
+
+  let fetchCalls = 0;
+  const buildStatusResponse = (): Response =>
+    new Response(JSON.stringify({
+      code: 200,
+      message: "OK",
+      tweet: {
+        id: "13",
+        url: "https://twitter.com/configured/status/13",
+        text: "Configured status text",
+        author: { screen_name: "configured" },
+        quote: {
+          id: "1300",
+          text: "Quoted configured text",
+          author: { screen_name: "quoted_configured" },
+        },
+      },
+    }), { status: 200 });
+
+  const configuredPayloads = await buildVxTwitterReplyPayloads(
+    ["https://x.com/configured/status/13"],
+    {
+      config: { DEEPSEEK_API_KEY: "" },
+      log: { warn() {} },
+      fetcher: async (): Promise<Response> => {
+        fetchCalls += 1;
+        return buildStatusResponse();
+      },
+    },
+  );
+  assert.equal(fetchCalls, 1);
+  assert.equal(configuredPayloads[0]?.flags, MessageFlags.IsComponentsV2);
+  const configuredContainer = configuredPayloads[0]?.components?.[0] as APIContainerComponent | undefined;
+  const configuredText = collectContainerText(configuredContainer);
+  assert.match(configuredText ?? "", /Configured status text/);
+
+  const fallbackScenarios = [
+    {
+      name: "DeepSeek失敗でもカードを維持する",
+      options: {
+        config: { DEEPSEEK_API_KEY: "test-key" },
+        log: { warn() {} },
+        translate: async () => {
+          throw new Error("deepseek failed");
+        },
+      },
+    },
+    {
+      name: "不正JSONでもカードを維持する",
+      options: {
+        config: { DEEPSEEK_API_KEY: "test-key" },
+        log: { warn() {} },
+        translate: async () => {
+          throw new SyntaxError("Unexpected token");
+        },
+      },
+    },
+  ] as const;
+
+  for (const scenario of fallbackScenarios) {
+    const payloads = await buildVxTwitterReplyPayloads(
+      ["https://x.com/configured/status/13"],
+      {
+        ...scenario.options,
+        fetcher: async (): Promise<Response> => buildStatusResponse(),
+      },
+    );
+    assert.equal(payloads[0]?.flags, MessageFlags.IsComponentsV2, scenario.name);
+    assert.equal("content" in payloads[0]!, false, scenario.name);
+    const cardContainer = payloads[0]?.components?.[0] as APIContainerComponent | undefined;
+    const cardText = collectContainerText(cardContainer);
+    assert.match(cardText ?? "", /Configured status text/, scenario.name);
+    assert.doesNotMatch(cardText ?? "", /日本語訳/, scenario.name);
+    assert.equal(
+      cardContainer?.components.some((component) => component.type === ComponentType.ActionRow),
+      true,
+      scenario.name,
+    );
+  }
+
+  const configuredDeepSeekFailurePayloads = await buildVxTwitterReplyPayloads(
+    ["https://x.com/configured/status/13"],
+    {
+      config: {
+        DEEPSEEK_API_KEY: "test-key",
+        DEEPSEEK_API_BASE: "http://127.0.0.1:1",
+        AI_REQUEST_TIMEOUT_MS: 5_000,
+        AI_MAX_RESPONSE_BYTES: 64_000,
+        AI_MAX_RETRIES: 0,
+        AI_TEMPERATURE: 0,
+        DEEPSEEK_MODEL: "deepseek-chat",
+        DEEPSEEK_THINKING_ENABLED: false,
+        DEEPSEEK_THINKING_EFFORT: "high",
+      },
+      log: { warn() {} },
+      fetcher: async (): Promise<Response> => buildStatusResponse(),
+    },
+  );
+  assert.equal(configuredDeepSeekFailurePayloads[0]?.flags, MessageFlags.IsComponentsV2);
+  assert.equal("content" in configuredDeepSeekFailurePayloads[0]!, false);
+  const configuredDeepSeekFailureContainer = configuredDeepSeekFailurePayloads[0]?.components?.[0] as
+    | APIContainerComponent
+    | undefined;
+  const configuredDeepSeekFailureText = collectContainerText(configuredDeepSeekFailureContainer);
+  assert.match(configuredDeepSeekFailureText ?? "", /Configured status text/);
+  assert.doesNotMatch(configuredDeepSeekFailureText ?? "", /日本語訳/);
+  assert.equal(
+    configuredDeepSeekFailureContainer?.components.some((component) => component.type === ComponentType.ActionRow),
+    true,
   );
 }
 

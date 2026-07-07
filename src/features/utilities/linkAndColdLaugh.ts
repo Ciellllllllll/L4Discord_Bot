@@ -200,7 +200,10 @@ export class LinkAndColdLaugh {
       await message.suppressEmbeds(true);
     } catch {}
 
-    const replyPayloads = await buildVxTwitterReplyPayloads(replyTargets);
+    const replyPayloads = await buildVxTwitterReplyPayloads(replyTargets, {
+      config: this.ctx.config,
+      log: this.ctx.log,
+    });
     for (const payload of replyPayloads) {
       try {
         await message.reply(payload);

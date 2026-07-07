@@ -11,9 +11,12 @@ import {
   type APIContainerComponent,
   type APIMediaGalleryComponent,
   type APIMessageTopLevelComponent,
+  type APISectionComponent,
   type APITextDisplayComponent,
   type MessageCreateOptions,
 } from "discord.js";
+import type { AppConfig } from "../../core/config.js";
+import { translateVxTwitterTexts, type VxTwitterTextTranslations } from "./vxtwitterTranslation.js";
 
 const VX_DOMAIN = "vxtwitter.com";
 const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
@@ -82,6 +85,17 @@ export type VxTwitterPreviewPayload = {
   flags: MessageFlags.IsComponentsV2;
   components: APIMessageTopLevelComponent[];
   allowedMentions: { parse: []; repliedUser: false };
+};
+
+type LoggerLike = {
+  warn: (obj: unknown, msg?: string) => void;
+};
+
+type VxTwitterReplyBuildOptions = {
+  fetcher?: FetchLike;
+  config?: Pick<AppConfig, "DEEPSEEK_API_KEY"> & Partial<AppConfig>;
+  log?: LoggerLike;
+  translate?: (tweet: TweetPreview) => Promise<VxTwitterTextTranslations>;
 };
 
 function ensureScheme(urlText: string): string {
@@ -304,7 +318,7 @@ export function normalizeFixTweetResponse(raw: unknown): FixTweetPreviewResult {
       author: {
         name: firstString(author?.name),
         screenName,
-        avatarUrl: firstString(author?.avatar_url, author?.avatarUrl),
+        avatarUrl: safeHttpsUrl(firstString(author?.avatar_url, author?.avatarUrl)),
       },
       likes: numberValue(tweet.likes),
       retweets: numberValue(tweet.retweets),
@@ -370,27 +384,48 @@ function formatDate(timestamp: number | undefined): string | null {
   return `${year}/${month}/${day}`;
 }
 
-function markdownHeading(level: 2 | 3, text: string): string {
-  const prefix = "#".repeat(level);
-  return text
-    .split(/\r?\n/)
-    .map((line) => `${prefix} ${line}`)
-    .join("\n");
-}
-
-function buildBody(tweet: TweetPreview): string {
+function buildBodyText(tweet: TweetPreview, translations?: VxTwitterTextTranslations): string {
   const lines: string[] = [];
   const authorName = tweet.author.name ? `${tweet.author.name} (@${tweet.author.screenName})` : `@${tweet.author.screenName}`;
-  lines.push(markdownHeading(2, authorName));
+  lines.push(`**${authorName}**`);
   if (tweet.text) {
     lines.push("");
-    lines.push(markdownHeading(3, tweet.text.slice(0, 3000)));
+    lines.push(tweet.text.slice(0, 3000));
+    if (translations?.main?.translatedText) {
+      lines.push("");
+      lines.push(translations.main.translatedText.slice(0, 3000));
+    }
   }
   if (tweet.quote) {
     lines.push("");
     lines.push(`> 引用: @${tweet.quote.author.screenName} ${compactText(tweet.quote.text, 180)}`);
     if (tweet.quote.url) lines.push(`> ${tweet.quote.url}`);
+    if (translations?.quote?.translatedText) {
+      lines.push(`> 日本語訳: ${compactText(translations.quote.translatedText, 180)}`);
+    }
   }
+  return lines.join("\n").slice(0, 4000);
+}
+
+function buildBodyComponent(tweet: TweetPreview, translations?: VxTwitterTextTranslations): APITextDisplayComponent | APISectionComponent {
+  const body: APITextDisplayComponent = {
+    type: ComponentType.TextDisplay,
+    content: buildBodyText(tweet, translations),
+  };
+  if (!tweet.author.avatarUrl) return body;
+  const authorName = tweet.author.name ? `${tweet.author.name} (@${tweet.author.screenName})` : `@${tweet.author.screenName}`;
+  return {
+    type: ComponentType.Section,
+    components: [body],
+    accessory: {
+      type: ComponentType.Thumbnail,
+      media: { url: tweet.author.avatarUrl },
+      description: `${authorName} icon`,
+    },
+  };
+}
+
+function buildMetaDisplay(tweet: TweetPreview): APITextDisplayComponent | null {
   const stats = [
     formatCount("💬", tweet.replies),
     formatCount("🔁", tweet.retweets),
@@ -401,11 +436,11 @@ function buildBody(tweet: TweetPreview): string {
     formatDate(tweet.createdTimestamp),
     stats.length ? stats.join(" / ") : null,
   ].filter(Boolean);
-  if (meta.length) {
-    lines.push("");
-    lines.push(`-# ${meta.join(" / ")}`);
-  }
-  return lines.join("\n").slice(0, 4000);
+  if (meta.length === 0) return null;
+  return {
+    type: ComponentType.TextDisplay,
+    content: `-# ${meta.join(" / ")}`,
+  };
 }
 
 function mediaDisplayUrl(media: TweetMedia): string {
@@ -435,15 +470,18 @@ function buildLinkRow(tweet: TweetPreview): APIActionRowComponent<APIButtonCompo
     .toJSON() as APIActionRowComponent<APIButtonComponent>;
 }
 
-export function buildVxTwitterPreviewPayload(tweet: TweetPreview, _vxUrl: string): VxTwitterPreviewPayload {
-  const body: APITextDisplayComponent = {
-    type: ComponentType.TextDisplay,
-    content: buildBody(tweet),
-  };
+export function buildVxTwitterPreviewPayload(
+  tweet: TweetPreview,
+  _vxUrl: string,
+  translations?: VxTwitterTextTranslations,
+): VxTwitterPreviewPayload {
+  const body = buildBodyComponent(tweet, translations);
   const gallery = buildMediaGallery(tweet);
+  const meta = buildMetaDisplay(tweet);
   const components: APIComponentInContainer[] = [
     body,
     ...(gallery ? [gallery] : []),
+    ...(meta ? [meta] : []),
     buildLinkRow(tweet),
   ];
   const container: APIContainerComponent = {
@@ -467,8 +505,11 @@ export function buildVxTwitterFallbackReply(vxUrls: readonly string[]): MessageC
 
 export async function buildVxTwitterReplyPayloads(
   links: readonly string[] | readonly VxTwitterReplyTarget[],
-  fetcher: FetchLike = fetch,
+  fetcherOrOptions: FetchLike | VxTwitterReplyBuildOptions = fetch,
+  maybeOptions?: VxTwitterReplyBuildOptions,
 ): Promise<MessageCreateOptions[]> {
+  const fetcher = typeof fetcherOrOptions === "function" ? fetcherOrOptions : (fetcherOrOptions.fetcher ?? fetch);
+  const options = typeof fetcherOrOptions === "function" ? (maybeOptions ?? {}) : fetcherOrOptions;
   const targets = typeof links[0] === "string"
     ? collectVxTwitterReplyTargets(links as readonly string[])
     : (links as readonly VxTwitterReplyTarget[]);
@@ -478,11 +519,26 @@ export async function buildVxTwitterReplyPayloads(
     }
     const result = await fetchFixTweetPreview({ id: target.statusId, screenName: target.screenName }, fetcher);
     if (result.status === "ok") {
+      let translations: VxTwitterTextTranslations | undefined;
       try {
-        return buildVxTwitterPreviewPayload(result.tweet, target.vxUrl);
+        translations = options.translate
+          ? await options.translate(result.tweet)
+          : options.config
+            ? await translateVxTwitterTexts(
+              {
+                mainText: result.tweet.text,
+                quoteText: result.tweet.quote?.text,
+              },
+              {
+                config: options.config,
+                log: options.log,
+              },
+            )
+            : undefined;
       } catch {
-        return buildVxTwitterFallbackReply([target.vxUrl]);
+        translations = undefined;
       }
+      return buildVxTwitterPreviewPayload(result.tweet, target.vxUrl, translations);
     }
     return buildVxTwitterFallbackReply([target.vxUrl]);
   }));
