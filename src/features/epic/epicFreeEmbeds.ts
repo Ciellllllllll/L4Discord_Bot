@@ -27,6 +27,12 @@ function formatJst(value: string | null): string {
   }).format(d);
 }
 
+function buildEpicLauncherUrl(storeUrl: string): string {
+  const url = new URL(storeUrl);
+  url.hostname = "launcher.store.epicgames.com";
+  return url.toString();
+}
+
 export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardBuilder {
   const note =
     candidate.detectedType === "upcoming_free_game"
@@ -40,18 +46,21 @@ export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardB
       { name: "配布期間", value: `${formatJst(candidate.startDate)} ～ ${formatJst(candidate.endDate)}`, inline: false },
       { name: "通常価格", value: priceText(candidate.originalPrice, candidate.currencyCode), inline: true },
       { name: "現在価格", value: priceText(candidate.discountPrice, candidate.currencyCode), inline: true },
-      { name: "ストアURL", value: candidate.url, inline: false },
     )
     .setTimestamp(new Date());
   if (candidate.imageUrl) embed.setImage(candidate.imageUrl);
-  return embed;
+  return embed.addActionRows(buildEpicLinkButtons(candidate));
 }
 
 export function buildEpicLinkButtons(candidate: EpicFreeCandidate): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setLabel("Epicで購入")
+      .setLabel("ブラウザで閲覧")
       .setStyle(ButtonStyle.Link)
       .setURL(candidate.url),
+    new ButtonBuilder()
+      .setLabel("Epic Launcherで開く")
+      .setStyle(ButtonStyle.Link)
+      .setURL(buildEpicLauncherUrl(candidate.url)),
   );
 }

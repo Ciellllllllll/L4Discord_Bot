@@ -85,18 +85,21 @@ export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBu
       { name: "現在価格", value: centsPriceText(event.currentPriceCents), inline: true },
       { name: "割引率", value: discount, inline: true },
       { name: "検証根拠", value: steamEvidenceText(event.evidenceJson), inline: false },
-      { name: "Steam URL", value: event.steamUrl, inline: false },
     )
     .setTimestamp(new Date());
   if (event.imageUrl) embed.setImage(event.imageUrl);
-  return embed;
+  return embed.addActionRows(buildSteamLinkButtons(event));
 }
 
-export function buildSteamLinkButtons(event: Pick<SteamFreeEvent, "steamUrl">): ActionRowBuilder<ButtonBuilder> {
+export function buildSteamLinkButtons(event: Pick<SteamFreeEvent, "appid" | "steamUrl">): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setLabel("Steamで購入")
+      .setLabel("ブラウザで閲覧")
       .setStyle(ButtonStyle.Link)
       .setURL(event.steamUrl),
+    new ButtonBuilder()
+      .setLabel("Steam Clientで開く")
+      .setStyle(ButtonStyle.Link)
+      .setURL(`https://s.team/a/${encodeURIComponent(event.appid)}`),
   );
 }

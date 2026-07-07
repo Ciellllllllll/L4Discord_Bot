@@ -45,6 +45,7 @@ export class ComponentCardBuilder {
     image?: ImageData;
     timestamp?: string;
     url?: string;
+    actionRows?: ActionRowLike[];
   } = {};
 
   setTitle(title: string): this {
@@ -97,7 +98,12 @@ export class ComponentCardBuilder {
     return this;
   }
 
-  toText(): string {
+  addActionRows(...rows: ActionRowLike[]): this {
+    this.data.actionRows = [...(this.data.actionRows ?? []), ...rows];
+    return this;
+  }
+
+  private toTextParts(): { body: string; footer: string } {
     const lines: string[] = [];
     if (this.data.author?.name) {
       lines.push(`**${this.data.author.name}**`);
@@ -117,16 +123,20 @@ export class ComponentCardBuilder {
       lines.push(`**${field.name}**`);
       lines.push(field.value || "-");
     }
+    let footer = "";
     if (this.data.footer?.text || this.data.timestamp) {
-      if (lines.length) lines.push("");
-      const footer = [this.data.footer?.text, this.data.timestamp].filter(Boolean).join(" / ");
-      lines.push(footer);
+      footer = [this.data.footer?.text, this.data.timestamp].filter(Boolean).join(" / ");
     }
-    return lines.join("\n").slice(0, 4000);
+    return { body: lines.join("\n").slice(0, 4000), footer };
+  }
+
+  toText(): string {
+    const { body, footer } = this.toTextParts();
+    return [body, footer].filter(Boolean).join("\n\n").slice(0, 4000);
   }
 
   toContainer(): APIContainerComponent {
-    const content = this.toText();
+    const { body, footer } = this.toTextParts();
     const mediaComponents = [this.data.image, this.data.thumbnail]
       .filter((image): image is ImageData & { url: string } => Boolean(image?.url))
       .map((image): APIMediaGalleryComponent => ({
@@ -137,11 +147,19 @@ export class ComponentCardBuilder {
           },
         ],
       }));
+    const actionRows = (this.data.actionRows ?? []).map((row) => row.toJSON());
     const components: APIContainerComponent["components"] = [
-      ...(content
+      ...(body
         ? [{
           type: ComponentType.TextDisplay,
-          content,
+          content: body,
+        } satisfies APITextDisplayComponent]
+        : []),
+      ...actionRows,
+      ...(footer
+        ? [{
+          type: ComponentType.TextDisplay,
+          content: footer,
         } satisfies APITextDisplayComponent]
         : []),
       ...mediaComponents,
@@ -199,7 +217,8 @@ export function ephemeralComponentCardsPayload(
 
 export function ephemeralComponentPayload(payload: ComponentCardsPayload): EphemeralComponentCardsPayload {
   return {
-    ...payload,
+    embeds: [],
+    components: payload.components,
     flags: [payload.flags, MessageFlags.Ephemeral] as const,
   };
 }
