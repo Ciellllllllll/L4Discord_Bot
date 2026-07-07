@@ -2,9 +2,9 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   StringSelectMenuBuilder,
 } from "discord.js";
+import { buildContainerPanelPayload, type ContainerPanelPayload } from "../panels/componentPanelPayload.js";
 
 export const VC_OPEN_MODAL_ID = "open_vc_modal";
 export const VC_GENRE_SELECT_ID = "vc_genre_select";
@@ -19,15 +19,6 @@ const VC_GENRE_OPTIONS = [
   { label: "作業", description: "作業や勉強向けVC", value: "作業" },
 ] as const;
 
-export function buildVcCreatorMainEmbed(): EmbedBuilder {
-  return new EmbedBuilder()
-    .setTitle("VC作成")
-    .setDescription(
-      "ジャンルと名前を選んでVCを作成できます。\n接続中の一時VCは「VC名変更」ボタンから名前を変えられます。\nVCは全員が退出した後に自動で削除されます。",
-    )
-    .setColor(0x9b59b6);
-}
-
 export function buildVcCreatorMainRows(): ActionRowBuilder<ButtonBuilder>[] {
   const createButton = new ButtonBuilder()
     .setCustomId(VC_OPEN_MODAL_ID)
@@ -38,6 +29,26 @@ export function buildVcCreatorMainRows(): ActionRowBuilder<ButtonBuilder>[] {
     .setLabel("VC名変更")
     .setStyle(ButtonStyle.Primary);
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(createButton, renameButton)];
+}
+
+export function buildVcCreatorMainPayload(): ContainerPanelPayload {
+  return buildContainerPanelPayload(
+    [
+      "## VC作成",
+      "ジャンルと名前を選んで一時VCを作成できます。",
+      "接続中の一時VCは名前を変更できます。",
+      "",
+      "**作成**",
+      "ジャンルを選択して、VC名を入力します。",
+      "",
+      "**名前変更**",
+      "現在接続中の一時VCの名前を変更します。",
+      "",
+      "**自動削除**",
+      "全員が退出した一時VCは自動で削除されます。",
+    ].join("\n"),
+    buildVcCreatorMainRows(),
+  );
 }
 
 export function buildVcCreatorGenreRows(customId = VC_GENRE_SELECT_ID): ActionRowBuilder<StringSelectMenuBuilder>[] {

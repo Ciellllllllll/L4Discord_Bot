@@ -13,7 +13,7 @@ export async function handleUserContactPanelButton(
   if (id === USER_PANEL_TICKET_BUTTON_ID) {
     await interaction.reply({
       content:
-        "「チケットを作る」は廃止されました。「Modmailを始める」から DM で受付してください。",
+        "「チケットを作る」は廃止されました。「お問い合わせを始める」から DM で受付してください。",
       flags: MessageFlags.Ephemeral,
     });
     return true;

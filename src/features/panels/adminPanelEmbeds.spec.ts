@@ -6,7 +6,9 @@ import { buildAiHistoryAdminPanelPayload } from "../ai/aiHistoryAdminPanel.js";
 import { buildAutoModPanelPayload } from "../moderation/autoModerationPanel.js";
 import { buildReactionRoleAdminPanelPayload } from "../reactionRoles/reactionRoleService.js";
 import { buildReminderHubPanelPayload } from "../reminders/reminderHubPayload.js";
+import { buildVcCreatorMainPayload } from "../vc/vcCreatorUi.js";
 import { buildMessageLogPanelPayload } from "./adminPanelsPayload.js";
+import { buildUserContactPanelPayload } from "./userPanelsPayload.js";
 
 function containerText(payload: MessageCreateOptions): string {
   assert.equal(payload.embeds?.length ?? 0, 0);
@@ -74,6 +76,15 @@ async function run(): Promise<void> {
   assert.match(containerText(buildReminderHubPanelPayload()), /リマインダー/);
   assert.match(containerText(buildReminderHubPanelPayload()), /確認・編集/);
 
+  assertPanelContainer(buildVcCreatorMainPayload(), "VC作成");
+  assert.match(containerText(buildVcCreatorMainPayload()), /自動削除/);
+  assert.doesNotMatch(containerText(buildVcCreatorMainPayload()), /[🟢⚪🟠🔴🟣🔵]/u);
+
+  assertPanelContainer(buildUserContactPanelPayload(), "サポート・お問い合わせ");
+  const userContactText = containerText(buildUserContactPanelPayload());
+  assert.match(userContactText, /スタッフへ個別に相談/);
+  assert.doesNotMatch(userContactText, /Modmail|Admin panel|Role panel/);
+
   const reactionRole = buildReactionRoleAdminPanelPayload("<#123456789012345678>");
   assertPanelContainer(reactionRole, "リアクションロール管理");
   assert.match(containerText(reactionRole), /最大5件/);
@@ -104,6 +115,8 @@ async function run(): Promise<void> {
     assert.equal(PERMANENT_UI_VERSION[kind], "1.2.1");
   }
   assert.equal(PERMANENT_UI_VERSION.automod_panel, "1.2.1");
+  assert.equal(PERMANENT_UI_VERSION.vc_creator, "1.2.0");
+  assert.equal(PERMANENT_UI_VERSION.user_contact_panel, "1.2.0");
 }
 
 void run()

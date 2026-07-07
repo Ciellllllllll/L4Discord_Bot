@@ -38,7 +38,7 @@ export async function reconcileStaticPanelMessage(
   }
 
   const payload = buildPayload();
-  const editOpt = payload as MessageEditOptions;
+  const editOpt = { ...payload, content: null } as MessageEditOptions;
   const botId = ctx.client.user?.id ?? "";
 
   if (row.message_id) {

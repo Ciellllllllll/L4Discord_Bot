@@ -66,10 +66,10 @@ export const PREFIX_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
 // レイアウト変更時はここだけ上げると次回起動で編集反映される。
 
 export const PERMANENT_UI_VERSION: Record<string, string> = {
-  vc_creator: "1.1.0",
+  vc_creator: "1.2.0",
   reaction_role_admin: "1.2.1",
   message_log_panel: "1.2.1",
-  user_contact_panel: "1.0.0",
+  user_contact_panel: "1.2.0",
   ai_query_history_admin: "1.2.1",
   reminder_hub: "1.2.1",
   automod_panel: "1.2.1",
