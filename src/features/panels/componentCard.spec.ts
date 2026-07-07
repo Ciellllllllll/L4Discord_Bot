@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { ComponentType } from "discord.js";
-import { ComponentCardBuilder } from "./componentCard.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from "discord.js";
+import { ComponentCardBuilder, componentCardsPayload } from "./componentCard.js";
 
 function run(): void {
   const card = new ComponentCardBuilder()
@@ -28,6 +28,18 @@ function run(): void {
       assert.notEqual(component.content, "");
     }
   }
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("component-card:test")
+      .setLabel("テスト")
+      .setStyle(ButtonStyle.Primary),
+  );
+  const payload = componentCardsPayload([card], [row]);
+  assert.equal(payload.components.length, 1);
+  assert.equal(payload.components[0]?.type, ComponentType.Container);
+  const payloadContainer = payload.components[0];
+  assert.equal(payloadContainer.components.at(-1)?.type, ComponentType.ActionRow);
 }
 
 run();

@@ -211,13 +211,15 @@ export function componentCardsPayload(
   cards: readonly ComponentCardBuilder[],
   rows: readonly ActionRowLike[] = [],
 ): ComponentCardsPayload {
+  const containers = cards.map((card) => card.toContainer());
+  const rowComponents = rows.map((row) => row.toJSON());
+  if (containers.length > 0 && rowComponents.length > 0) {
+    containers[containers.length - 1]!.components.push(...rowComponents);
+  }
   return {
     embeds: [],
     flags: MessageFlags.IsComponentsV2,
-    components: [
-      ...cards.map((card) => card.toContainer()),
-      ...rows.map((row) => row.toJSON()),
-    ],
+    components: containers.length > 0 ? containers : rowComponents,
   };
 }
 
