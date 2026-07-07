@@ -1,5 +1,5 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
-  EmbedBuilder,
   PermissionFlagsBits,
   type APIEmbed,
   type GuildMember,
@@ -17,7 +17,7 @@ const MAX_EXPANDED_EMBEDS = 10;
 // メンバー退出通知は `MOD_LOG_CHANNEL_ID`（.env）のみへ送信
 
 type MessageLinkExpansionPayload = {
-  embeds: EmbedBuilder[];
+  cards: ComponentCardBuilder[];
   files: [];
 };
 
@@ -27,8 +27,8 @@ function truncateText(value: string | null | undefined, max: number): string | n
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
-function copyMessageEmbed(raw: APIEmbed): EmbedBuilder | null {
-  const embed = new EmbedBuilder();
+function copyMessageEmbed(raw: APIEmbed): ComponentCardBuilder | null {
+  const embed = new ComponentCardBuilder();
   let used = false;
 
   const title = truncateText(raw.title, 256);
@@ -81,9 +81,9 @@ function copyMessageEmbed(raw: APIEmbed): EmbedBuilder | null {
   return used ? embed : null;
 }
 
-function buildMessageLinkHeaderEmbed(targetMessage: Message, channelName: string): EmbedBuilder {
+function buildMessageLinkHeaderEmbed(targetMessage: Message, channelName: string): ComponentCardBuilder {
   const content = truncateText(targetMessage.content, 4096);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTimestamp(targetMessage.createdAt)
     .setColor(0x34_98_db)
     .setAuthor({
@@ -108,16 +108,16 @@ export function buildMessageLinkExpansionPayload(
   targetMessage: Message,
   channelName: string,
 ): MessageLinkExpansionPayload {
-  const embeds: EmbedBuilder[] = [];
-  embeds.push(buildMessageLinkHeaderEmbed(targetMessage, channelName));
+  const cards: ComponentCardBuilder[] = [];
+  cards.push(buildMessageLinkHeaderEmbed(targetMessage, channelName));
 
   for (const sourceEmbed of targetMessage.embeds) {
-    if (embeds.length >= MAX_EXPANDED_EMBEDS) break;
+    if (cards.length >= MAX_EXPANDED_EMBEDS) break;
     const copied = copyMessageEmbed(sourceEmbed.toJSON());
-    if (copied) embeds.push(copied);
+    if (copied) cards.push(copied);
   }
 
-  return { embeds, files: [] };
+  return { cards, files: [] };
 }
 
 export async function sendMemberLeaveEmbed(
@@ -145,7 +145,7 @@ export async function sendMemberLeaveEmbed(
     return;
   }
 
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("メンバーが退出しました")
     .setDescription(
       `${member} (${member.user?.username ?? member.displayName}) がサーバーを抜けました。`,
@@ -153,7 +153,7 @@ export async function sendMemberLeaveEmbed(
     .setColor(0xff_00_00)
     .setThumbnail(member.displayAvatarURL());
 
-  await channel.send({ embeds: [embed] }).catch((err: unknown) => {
+  await channel.send({ ...componentCardsPayload([embed]) }).catch((err: unknown) => {
     ctx.log.warn({ err: String(err) }, "leave notifier channel.send failed");
   });
 }
@@ -207,10 +207,10 @@ export class LeaveNotifierMessageHandler {
         if (!replyCh.isTextBased() || replyCh.isDMBased()) {
           continue;
         }
-        if (payload.embeds.length === 0) {
+        if (payload.cards.length === 0) {
           continue;
         }
-        await replyCh.send({ embeds: payload.embeds });
+        await replyCh.send(componentCardsPayload(payload.cards));
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "message link fetch failed");
       }

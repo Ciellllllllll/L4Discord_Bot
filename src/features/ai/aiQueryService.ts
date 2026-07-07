@@ -1,8 +1,8 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   MessageFlags,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
@@ -572,7 +572,7 @@ export class AiQueryService {
     const r18 = options.r18 ?? (await getAiR18Enabled(this.ctx, guildId, userId));
 
     const replyQuestion = async (answer: string) => {
-      const embed = new EmbedBuilder()
+      const embed = new ComponentCardBuilder()
         .setTitle("回答")
         .setDescription(answer.slice(0, 4000))
         .setColor(0x2ecc71);
@@ -585,13 +585,13 @@ export class AiQueryService {
           .setLabel("この会話履歴を削除")
           .setStyle(ButtonStyle.Secondary),
       );
-      await interaction.editReply({ embeds: [embed], components: [row], allowedMentions: noMentions });
+      await interaction.editReply({ ...componentCardsPayload([embed], [row]), allowedMentions: noMentions });
     };
 
-    const replyCommand = async (userMessage: string, embeds?: EmbedBuilder[]) => {
+    const replyCommand = async (userMessage: string, cards?: ComponentCardBuilder[]) => {
       const safe = userMessage.slice(0, 4000);
-      if (embeds && embeds.length > 0) {
-        await interaction.editReply({ embeds: embeds.slice(0, 10), components: [], allowedMentions: noMentions });
+      if (cards && cards.length > 0) {
+        await interaction.editReply({ ...componentCardsPayload(cards.slice(0, 10)), allowedMentions: noMentions });
       } else {
         await interaction.editReply({ content: safe.slice(0, 2000), components: [], allowedMentions: noMentions });
       }
@@ -644,7 +644,7 @@ export class AiQueryService {
       this.touchHistoryAdminPanel();
     }
 
-    await replyCommand(execResult.userMessage, execResult.embeds);
+    await replyCommand(execResult.userMessage, execResult.cards);
   }
 
   // メンション／Bot 返信時（CHAT_MONITOR_ENABLED）
@@ -664,10 +664,10 @@ export class AiQueryService {
       });
     };
 
-    const replyCommand = async (userMessage: string, embeds?: EmbedBuilder[]) => {
-      if (embeds && embeds.length > 0) {
+    const replyCommand = async (userMessage: string, cards?: ComponentCardBuilder[]) => {
+      if (cards && cards.length > 0) {
         await message.reply({
-          embeds: embeds.slice(0, 10),
+          ...componentCardsPayload(cards.slice(0, 10)),
           allowedMentions: { parse: [], repliedUser: false },
         });
       } else {
@@ -717,7 +717,7 @@ export class AiQueryService {
       this.touchHistoryAdminPanel();
     }
 
-    await replyCommand(execResult.userMessage, execResult.embeds);
+    await replyCommand(execResult.userMessage, execResult.cards);
   }
 }
 

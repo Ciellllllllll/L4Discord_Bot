@@ -1,5 +1,6 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import type { Channel } from "discord.js";
-import { EmbedBuilder } from "discord.js";
+
 import type { Kysely } from "kysely";
 import type pino from "pino";
 import type { Database } from "../../core/db/types.js";
@@ -11,13 +12,13 @@ export function buildNologToggleEmbed(opts: {
   nowExcluded: boolean;
   channelId: string;
   executorUserId: string;
-}): EmbedBuilder {
+}): ComponentCardBuilder {
   const channelMention = `<#${opts.channelId}>`;
   const executorMention = `<@${opts.executorUserId}>`;
   const summaryLine = opts.nowExcluded
     ? "このチャンネルはログ記録の対象外に切り替わりました。"
     : "このチャンネルはログ記録の対象として再度有効になりました。";
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle("ログ対象切り替え")
     .setColor(opts.nowExcluded ? 0xe74c3c : 0x2ecc71)
     .setDescription(
@@ -47,7 +48,7 @@ export async function runNologToggleAndBuildEmbed(
   guildId: string,
   channelId: string,
   executorUserId: string,
-): Promise<EmbedBuilder> {
+): Promise<ComponentCardBuilder> {
   const { nowExcluded } = await toggleMessageLogExcludedForChannel(db, guildId, channelId);
   return buildNologToggleEmbed({ nowExcluded, channelId, executorUserId });
 }
@@ -56,14 +57,14 @@ export async function runNologToggleAndBuildEmbed(
 
 export async function trySendNologEmbedInChannel(
   channel: Channel,
-  embed: EmbedBuilder,
+  embed: ComponentCardBuilder,
   log: pino.Logger,
   executorUserId?: string,
 ): Promise<void> {
   try {
     if (channel.isTextBased() && !channel.isDMBased()) {
       await channel.send({
-        embeds: [embed],
+        ...componentCardsPayload([embed]),
         ...(executorUserId ? { allowedMentions: { users: [executorUserId] } } : {}),
       });
     }

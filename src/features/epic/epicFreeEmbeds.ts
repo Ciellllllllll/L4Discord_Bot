@@ -1,4 +1,9 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
+import { ComponentCardBuilder } from "../panels/componentCard.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from "discord.js";
 import type { EpicFreeCandidate } from "./epicFreeTypes.js";
 
 function priceText(value: number | null, currency: string | null): string {
@@ -22,12 +27,12 @@ function formatJst(value: string | null): string {
   }).format(d);
 }
 
-export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): EmbedBuilder {
+export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardBuilder {
   const note =
     candidate.detectedType === "upcoming_free_game"
       ? "Epic Games Storeで次回無料配布予定です。"
       : "Epic Games Storeで期間限定無料配布中です。期限内にライブラリへ追加すると入手できます。";
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("Epic Games 無料配布")
     .setColor(candidate.detectedType === "current_free_game" ? 0x2ecc71 : 0x3498db)
     .setDescription(`**${candidate.title}**\n${note}`)

@@ -1,9 +1,9 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import { randomUUID } from "node:crypto";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   type Guild,
   type GuildEmoji,
   type Message,
@@ -244,8 +244,8 @@ export function buildEntryRows(entry: ReactionRoleEntry): ActionRowBuilder<Butto
   return rows;
 }
 
-export function buildEntryEmbed(entry: ReactionRoleEntry): EmbedBuilder {
-  return new EmbedBuilder()
+export function buildEntryEmbed(entry: ReactionRoleEntry): ComponentCardBuilder {
+  return new ComponentCardBuilder()
     .setTitle(entry.title || "Reaction Role")
     .setDescription(entry.description || "ボタンを押してロールを付与/解除します。")
     .setColor(0x8e44ad);
@@ -321,8 +321,7 @@ export async function sendOrUpdateEntryMessage(
     throw new Error(`channel not found: ${entry.channelId}`);
   }
   const payload = {
-    embeds: [buildEntryEmbed(entry)],
-    components: buildEntryRows(entry),
+    ...componentCardsPayload([buildEntryEmbed(entry)], buildEntryRows(entry)),
   };
   const botId = ctx.client.user?.id;
 

@@ -1,5 +1,5 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
-  EmbedBuilder,
   type APIInteractionGuildMember,
   type Guild,
   type GuildMember,
@@ -231,15 +231,17 @@ export async function approveModmailReply(
           ? `\n\n一部の添付は直接転送できなかったためリンクを共有します:\n${forwarded.failed.slice(0, 5).join("\n")}`
           : "";
       await user.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("Modmail 返信")
+        ...componentCardsPayload(
+          [
+            new ComponentCardBuilder()
+            .setTitle("お問い合わせ返信")
             .setDescription(`${reply.fixed_reply_body || "(本文なし)"}${failedNote}`)
             .setFooter({ text: "返信するボタン、または !send 本文 で返信できます。" })
             .setColor(0x3498db)
             .setTimestamp(new Date()),
-        ],
-        components: [buildModmailUserReplyRow(appeal.id, appeal.user_id)],
+          ],
+          [buildModmailUserReplyRow(appeal.id, appeal.user_id)],
+        ),
         files: forwarded.files,
       });
     } catch (e) {
@@ -292,15 +294,17 @@ export async function approveModmailReply(
         ? `\n\n一部の添付は直接転送できなかったためリンクを共有します:\n${forwarded.failed.slice(0, 5).join("\n")}`
         : "";
     await user.send({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("Modmail 返信")
+      ...componentCardsPayload(
+        [
+          new ComponentCardBuilder()
+          .setTitle("お問い合わせ返信")
           .setDescription(`${reply.fixed_reply_body || "(本文なし)"}${failedNote}`)
           .setFooter({ text: "返信するボタン、または !send 本文 で返信できます。" })
           .setColor(0x3498db)
           .setTimestamp(new Date()),
-      ],
-      components: [buildModmailUserReplyRow(ticket.id, ticket.user_id)],
+        ],
+        [buildModmailUserReplyRow(ticket.id, ticket.user_id)],
+      ),
       files: forwarded.files,
     });
   } catch (e) {
@@ -373,17 +377,17 @@ export async function closeModmailTicketFull(
       const user = await ctx.client.users.fetch(ticket.user_id);
       await user
         .send({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle("Modmail")
+          ...componentCardsPayload([
+            new ComponentCardBuilder()
+              .setTitle("お問い合わせ")
               .setDescription(
-                ["相談が終了しました。", "必要であれば再度サーバー内 Modmail / チケットボタンから新規相談できます。"].join(
+                ["相談が終了しました。", "必要であれば再度サーバー内の「お問い合わせを始める」から新規相談できます。"].join(
                   "\n",
                 ),
               )
               .setColor(0x95a5a6)
               .setTimestamp(new Date()),
-          ],
+          ]),
         })
         .catch(() => undefined);
     }

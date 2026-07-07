@@ -1,4 +1,4 @@
-import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
+import { type ChatInputCommandInteraction, type GuildMember } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
 import {
@@ -7,6 +7,7 @@ import {
 } from "./surveyService.js";
 import { storeSlashCommand } from "./surveyCommandState.js";
 import { buildAnonymousSurveyMessage } from "./surveyUi.js";
+import { ephemeralComponentPayload } from "../panels/componentCard.js";
 
 export async function maybePromptAnonymousSurvey(
   interaction: ChatInputCommandInteraction,
@@ -24,9 +25,6 @@ export async function maybePromptAnonymousSurvey(
     interaction.user.id,
     storeSlashCommand(interaction),
   );
-  await interaction.reply({
-    ...buildAnonymousSurveyMessage(sessionId),
-    flags: MessageFlags.Ephemeral,
-  });
+  await interaction.reply(ephemeralComponentPayload(buildAnonymousSurveyMessage(sessionId)));
   return true;
 }

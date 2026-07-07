@@ -1,9 +1,9 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   DiscordAPIError,
-  EmbedBuilder,
   MessageFlags,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
@@ -200,10 +200,10 @@ function durationLabelJa(sec: number | null): string {
   return `${Math.floor(sec / (86400 * 7))}週間`;
 }
 
-function buildPoll1Embed(state: TimeoutExtendFlowState, poll1DeadlineMs: number, pollEnded = false): EmbedBuilder {
+function buildPoll1Embed(state: TimeoutExtendFlowState, poll1DeadlineMs: number, pollEnded = false): ComponentCardBuilder {
   const counts = tallyChoices(state.votes_poll1, [...TE_POLL1_KEYS]);
   const lines = TE_POLL1_KEYS.map((k) => `**${TE_POLL1_LABEL[k]}** — ${counts[k] ?? 0} 票`);
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle("タイムアウト処理を選択")
     .setDescription(
       [`対象: <@${state.target_id}>`, "", ...lines, "", discordVoteDeadlineEmbedLine(poll1DeadlineMs, pollEnded)].join("\n"),
@@ -212,10 +212,10 @@ function buildPoll1Embed(state: TimeoutExtendFlowState, poll1DeadlineMs: number,
     .setTimestamp(new Date());
 }
 
-function buildPoll2Embed(state: TimeoutExtendFlowState, poll2DeadlineMs: number, pollEnded = false): EmbedBuilder {
+function buildPoll2Embed(state: TimeoutExtendFlowState, poll2DeadlineMs: number, pollEnded = false): ComponentCardBuilder {
   const counts = tallyChoices(state.votes_poll2, [...TE_POLL2_KEYS]);
   const lines = TE_POLL2_KEYS.map((k) => `**${TE_POLL2_LABEL[k]}** — ${counts[k] ?? 0} 票`);
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle("延長時間を選択")
     .setDescription(
       [`対象: <@${state.target_id}>`, "", ...lines, "", discordVoteDeadlineEmbedLine(poll2DeadlineMs, pollEnded)].join("\n"),
@@ -437,8 +437,7 @@ async function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, st
   let msg: Message;
   try {
     msg = await ch.send({
-      embeds: [embed],
-      components: tePoll1Rows(flowId, false),
+      ...componentCardsPayload([embed], tePoll1Rows(flowId, false)),
       allowedMentions: { users: [state.target_id] },
     });
   } catch (err) {
@@ -474,8 +473,7 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
       const m = await ch.messages.fetch(state.poll1_message_id).catch(() => null);
       if (m) {
         await m.edit({
-          embeds: [buildPoll1Embed(state, state.poll1_deadline_ms, true)],
-          components: tePoll1Rows(flowId, true),
+          ...componentCardsPayload([buildPoll1Embed(state, state.poll1_deadline_ms, true)], tePoll1Rows(flowId, true)),
         });
       }
     } catch {
@@ -523,8 +521,7 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
   let msg: Message;
   try {
     msg = await ch.send({
-      embeds: [embed],
-      components: tePoll2Rows(flowId, false),
+      ...componentCardsPayload([embed], tePoll2Rows(flowId, false)),
       allowedMentions: { users: [state.target_id] },
     });
   } catch (err) {
@@ -561,8 +558,7 @@ async function transitionTePoll2ToAdmin(ctx: BotContext, flowId: string, guildId
       const m = await ch.messages.fetch(state.poll2_message_id).catch(() => null);
       if (m) {
         await m.edit({
-          embeds: [buildPoll2Embed(state, state.poll2_deadline_ms, true)],
-          components: tePoll2Rows(flowId, true),
+          ...componentCardsPayload([buildPoll2Embed(state, state.poll2_deadline_ms, true)], tePoll2Rows(flowId, true)),
         });
       }
     } catch {
@@ -802,8 +798,7 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll1_message_id);
         await m.edit({
-          embeds: [buildPoll1Embed(next, next.poll1_deadline_ms)],
-          components: tePoll1Rows(flowId, false),
+          ...componentCardsPayload([buildPoll1Embed(next, next.poll1_deadline_ms)], tePoll1Rows(flowId, false)),
         });
       } catch (err) {
         ctx.log.warn({ err, flowId }, "timeoutExtend: poll1 edit failed");
@@ -840,8 +835,7 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll2_message_id);
         await m.edit({
-          embeds: [buildPoll2Embed(next, next.poll2_deadline_ms!)],
-          components: tePoll2Rows(flowId, false),
+          ...componentCardsPayload([buildPoll2Embed(next, next.poll2_deadline_ms!)], tePoll2Rows(flowId, false)),
         });
       } catch (err) {
         ctx.log.warn({ err, flowId }, "timeoutExtend: poll2 edit failed");

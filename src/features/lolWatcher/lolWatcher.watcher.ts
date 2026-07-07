@@ -1,5 +1,6 @@
 import type { Client, GuildTextBasedChannel } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { componentCardsPayload } from "../panels/componentCard.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { buildLolWatcherCompletedEmbed, buildLolWatcherStartEmbed } from "./lolWatcher.embeds.js";
 import { buildDeepLolDetailUrl, LolWatcherRiotClient } from "./lolWatcher.client.js";
@@ -106,7 +107,7 @@ async function postStartEmbed(
   game: LolWatcherLiveGame,
 ): Promise<boolean> {
   const sent = await thread
-    .send({ embeds: [buildLolWatcherStartEmbed(account, game)], allowedMentions: { parse: [] } })
+    .send({ ...componentCardsPayload([buildLolWatcherStartEmbed(account, game)]), allowedMentions: { parse: [] } })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       ctx.log.warn({ err, accountKeyNorm, gameId: game.gameId }, "lol watcher start post failed");
@@ -146,7 +147,7 @@ async function postCompletedEmbed(
   },
 ): Promise<boolean> {
   const sent = await thread
-    .send({ embeds: [buildLolWatcherCompletedEmbed(input.account, input.game)], allowedMentions: { parse: [] } })
+    .send({ ...componentCardsPayload([buildLolWatcherCompletedEmbed(input.account, input.game)]), allowedMentions: { parse: [] } })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       ctx.log.warn({ err, accountKeyNorm: input.accountKeyNorm, gameId: input.game.gameId }, "lol watcher completed post failed");
@@ -228,7 +229,7 @@ async function editCompletedEmbed(
     game,
   });
   const edited = await message
-    .edit({ embeds: [buildLolWatcherCompletedEmbed(account, linkedGame)], components: [] })
+    .edit(componentCardsPayload([buildLolWatcherCompletedEmbed(account, linkedGame)]))
     .then(() => true)
     .catch((err) => {
       const text = err instanceof Error ? err.message : String(err);

@@ -1,11 +1,14 @@
-import { EmbedBuilder, type ChatInputCommandInteraction } from "discord.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import {
+  type ChatInputCommandInteraction,
+} from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 
 export async function handlePacchiHelp(
   interaction: ChatInputCommandInteraction,
   _ctx: BotContext,
 ): Promise<void> {
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ ヘルプ")
     .setColor(0x5865f2)
     .addFields(
@@ -50,5 +53,5 @@ export async function handlePacchiHelp(
         ].join("\n"),
       },
     );
-  await interaction.reply({ embeds: [embed], allowedMentions: { parse: [] } });
+  await interaction.reply({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } });
 }

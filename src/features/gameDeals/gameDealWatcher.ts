@@ -1,6 +1,7 @@
 import type { ButtonInteraction, Client, SendableChannels } from "discord.js";
 import { MessageFlags } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { componentCardsPayload } from "../panels/componentCard.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
 import { GameDealRepository } from "./gameDealRepository.js";
 import { checkSubscription, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
@@ -101,8 +102,7 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
       for (const item of chunk) {
         const sent = await channel
           .send({
-            embeds: [item.embed],
-            components: item.components ?? [],
+            ...componentCardsPayload([item.embed], item.components ?? []),
             allowedMentions: { parse: [] },
           })
           .catch((err) => {
@@ -118,7 +118,7 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
     } else {
       const sent = await channel
         .send({
-          embeds: chunk.map((item) => item.embed),
+          ...componentCardsPayload(chunk.map((item) => item.embed)),
           allowedMentions: { parse: [] },
         })
         .catch((err) => {
@@ -184,12 +184,18 @@ async function scanAndNotifySubscriptions(ctx: BotContext): Promise<number> {
         subscriptionId: group.subscriptionIds[0]!,
         userId: users[0]!,
       });
-      const sent = await channel
+      await channel
         .send({
           content: `${users.map((userId) => `<@${userId}>`).join(" ")} 登録したゲームが割引されています!`,
-          embeds: [buildSubscriptionDealEmbed(hit)],
-          components: [buildSubscriptionButtons(notificationId)],
           allowedMentions: { users },
+        })
+        .catch((err) => {
+          ctx.log.warn({ err, subscriptionIds: group.subscriptionIds }, "game deal subscription mention send failed");
+        });
+      const sent = await channel
+        .send({
+          ...componentCardsPayload([buildSubscriptionDealEmbed(hit)], [buildSubscriptionButtons(notificationId)]),
+          allowedMentions: { parse: [] },
         })
         .catch((err) => {
           ctx.log.warn({ err, subscriptionIds: group.subscriptionIds }, "game deal subscription notification send failed");

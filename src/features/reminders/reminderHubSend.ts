@@ -1,4 +1,5 @@
-import { EmbedBuilder } from "discord.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+
 import type { BotContext } from "../../bot/context.js";
 import type { RemindersRow } from "../../core/db/types.js";
 import { EVENT_META, normalizeEventType, type ReminderEvType } from "./reminderHubTypes.js";
@@ -10,7 +11,7 @@ export function buildReminderHubPublicEmbed(
   ev: ReminderEvType,
   titleLine: string,
   bodyText: string,
-): EmbedBuilder {
+): ComponentCardBuilder {
   const meta = EVENT_META[ev];
   const t = titleLine.trim() || meta.label;
   const b = bodyText.trim();
@@ -18,7 +19,7 @@ export function buildReminderHubPublicEmbed(
     .filter((line) => line.length > 0)
     .join("\n")
     .slice(0, 4096);
-  return new EmbedBuilder().setColor(meta.color).setDescription(desc);
+  return new ComponentCardBuilder().setColor(meta.color).setDescription(desc);
 }
 
 export async function sendReminderHubMessage(ctx: BotContext, row: RemindersRow): Promise<void> {
@@ -40,7 +41,7 @@ export async function sendReminderHubMessage(ctx: BotContext, row: RemindersRow)
   const embed = buildReminderHubPublicEmbed(ev, title, row.body);
   await ch
     .send({
-      embeds: [embed],
+      ...componentCardsPayload([embed]),
       allowedMentions: { parse: [] },
     })
     .catch(() => undefined);
@@ -57,5 +58,5 @@ async function dmFallback(
   if (!user) return;
   const title = data.title || label;
   const embed = buildReminderHubPublicEmbed(ev, title, row.body);
-  await user.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => undefined);
+  await user.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } }).catch(() => undefined);
 }

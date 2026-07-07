@@ -1,4 +1,9 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
+import { ComponentCardBuilder } from "../panels/componentCard.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from "discord.js";
 import type { GameDealSubscriptionHit, SteamFreeEvent } from "./gameDealTypes.js";
 
 function priceText(value: number | null): string {
@@ -11,9 +16,9 @@ function discountText(value: number | null): string {
   return value === null ? "不明" : `${value}%`;
 }
 
-export function buildSubscriptionDealEmbed(hit: GameDealSubscriptionHit): EmbedBuilder {
+export function buildSubscriptionDealEmbed(hit: GameDealSubscriptionHit): ComponentCardBuilder {
   const platform = hit.platform === "steam" ? "Steam" : "Epic Games";
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(hit.platform === "steam" ? "Steam無料情報" : "Epic Games 無料配布")
     .setColor(0xf1c40f)
     .setDescription(`**${hit.title}**\n登録したゲームが割引されています!`)
@@ -69,9 +74,9 @@ function steamEvidenceText(evidenceJson: string): string {
   }
 }
 
-export function buildSteamFreeEventEmbed(event: SteamFreeEvent): EmbedBuilder {
+export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBuilder {
   const discount = event.discountPercent !== null && event.discountPercent >= 100 ? "100%" : event.discountPercent !== null ? `${event.discountPercent}%` : "Free to Keep";
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("Steam 無料配布")
     .setColor(0x2ecc71)
     .setDescription(`**${event.title}**\n通常有料ゲームがSteamで無料配布または100%OFFになっています。`)

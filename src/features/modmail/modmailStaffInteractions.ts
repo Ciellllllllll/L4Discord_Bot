@@ -1,11 +1,13 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
-  EmbedBuilder,
+  ComponentType,
   MessageFlags,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
   type ButtonInteraction,
+  type Message,
   type ModalSubmitInteraction,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
@@ -22,6 +24,7 @@ import {
   parseUuidTail,
 } from "./modmailIds.js";
 import {
+  buildModmailStartDmPayload,
   cancelModmailIntake,
   createTicketFromIntakeForm,
   getModmailTicketRow,
@@ -55,6 +58,14 @@ async function replyEphemeral(interaction: ButtonInteraction | ModalSubmitIntera
     else if (interaction.replied) await interaction.followUp({ content: text, ...(flags ? { flags } : {}) });
     else await interaction.reply({ content: text, ...(flags ? { flags } : {}) });
   } catch {}
+}
+
+async function removeTopLevelActionRows(message: ButtonInteraction["message"] | Message | null | undefined): Promise<void> {
+  if (!message) return;
+  const retained = message.components
+    .map((component) => component.toJSON())
+    .filter((component) => component.type !== ComponentType.ActionRow);
+  await message.edit({ components: retained as never }).catch(() => undefined);
 }
 
 export async function routeModmailStaffAndUserInteractions(
@@ -151,7 +162,7 @@ async function handleCloseButton(interaction: ButtonInteraction, ctx: BotContext
     );
   try {
     await interaction.showModal(modal);
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
+    await removeTopLevelActionRows(interaction.message);
   } catch {
     unmarkCloseButtonFired(triggerKey);
     await replyEphemeral(interaction, "モーダル表示に失敗しました。");
@@ -167,7 +178,7 @@ async function handleModmailIntakeCancelButton(interaction: ButtonInteraction, c
   }
 
   const cancelled = await cancelModmailIntake(ctx, parsed.partA, parsed.partB);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(cancelled ? "Modmail 受付待機をキャンセルしました" : "Modmail 受付待機は終了済みです")
     .setDescription(
       cancelled
@@ -178,7 +189,7 @@ async function handleModmailIntakeCancelButton(interaction: ButtonInteraction, c
     .setTimestamp(new Date());
 
   try {
-    await interaction.update({ embeds: [embed], components: [] });
+    await interaction.update(componentCardsPayload([embed]));
   } catch {
     await replyEphemeral(interaction, embed.data.description ?? "受付待機を更新しました。");
   }
@@ -276,7 +287,7 @@ async function handleReplyAttachmentButton(interaction: ButtonInteraction, ctx: 
   }
   const key = `${parsed.partA}:${parsed.partB}:${parsed.nonce}`;
   if (replyAttachmentFired.has(key)) {
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
+    await removeTopLevelActionRows(interaction.message);
     await replyEphemeral(interaction, "このボタンは使用済みです。");
     return true;
   }
@@ -356,7 +367,7 @@ async function handleUserReplyButton(interaction: ButtonInteraction, ctx: BotCon
   }
   const key = `${parsed.partA}:${parsed.partB}:${parsed.nonce}`;
   if (userReplyFired.has(key)) {
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
+    await removeTopLevelActionRows(interaction.message);
     await replyEphemeral(interaction, "この返信ボタンは使用済みです。");
     return true;
   }
@@ -395,7 +406,7 @@ async function removeUserReplyButtonFromDm(key: string, _ctx: BotContext): Promi
   if (!ch?.isTextBased()) return;
   const msg = await ch.messages.fetch(ref.message_id).catch(() => null);
   if (!msg) return;
-  await msg.edit({ components: [] }).catch(() => undefined);
+  await removeTopLevelActionRows(msg);
 }
 
 async function handleUserReplyModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
@@ -472,14 +483,14 @@ async function handleModmailTicketStartButton(interaction: ButtonInteraction, ct
     return true;
   }
   if (pending.buttonFired) {
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
+    await interaction.message?.edit(buildModmailStartDmPayload([])).catch(() => undefined);
     await replyEphemeral(interaction, "このチケット作成ボタンはすでに使用済みです。");
     return true;
   }
   pending.buttonFired = true;
   try {
     await interaction.showModal(buildModmailIntakeTicketModal(ctxId));
-    await interaction.message?.edit({ components: [] }).catch(() => undefined);
+    await interaction.message?.edit(buildModmailStartDmPayload([])).catch(() => undefined);
   } catch (e) {
     pending.buttonFired = false;
     ctx.log.warn({ err: e }, "modmail intake modal show failed");

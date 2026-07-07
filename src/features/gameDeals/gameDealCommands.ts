@@ -1,5 +1,6 @@
 import { MessageFlags, type ChatInputCommandInteraction, type GuildMember, type SendableChannels } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { componentCardsPayload } from "../panels/componentCard.js";
 import { isAdmin } from "../../core/permission.js";
 import { GameDealRepository } from "./gameDealRepository.js";
 import { parseGameStoreLink, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
@@ -70,8 +71,7 @@ async function sendGameDealItemsToChannel(
   if (items.some((item) => item.components && item.components.length > 0)) {
     for (const item of items) {
       await channel.send({
-        embeds: [item.embed],
-        components: item.components ?? [],
+        ...componentCardsPayload([item.embed], item.components ?? []),
         allowedMentions: { parse: [] },
       });
     }
@@ -79,7 +79,7 @@ async function sendGameDealItemsToChannel(
   }
   for (const chunk of chunkItems(items)) {
     await channel.send({
-      embeds: chunk.map((item) => item.embed),
+      ...componentCardsPayload(chunk.map((item) => item.embed)),
       allowedMentions: { parse: [] },
     });
   }

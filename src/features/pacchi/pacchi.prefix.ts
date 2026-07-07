@@ -1,4 +1,9 @@
-import { AttachmentBuilder, EmbedBuilder, type Message, type MessageMentionOptions } from "discord.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import {
+  AttachmentBuilder,
+  type Message,
+  type MessageMentionOptions,
+} from "discord.js";
 import { z } from "zod";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
@@ -194,7 +199,7 @@ async function handleStatus(message: Message, ctx: BotContext): Promise<boolean>
   const settings = repo.getSettings(message.guildId!);
   const channel = repo.getChannelSettings(message.guildId!, message.channelId);
   const stats = repo.stats(message.guildId!);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 状態")
     .setColor(0x5865f2)
     .addFields(
@@ -211,7 +216,7 @@ async function handleStatus(message: Message, ctx: BotContext): Promise<boolean>
       { name: "最終発話", value: settings.lastSpokeAt ?? "-", inline: true },
       { name: "最終学習", value: settings.lastLearnedAt ?? "-", inline: true },
     );
-  await message.reply({ embeds: [embed], allowedMentions: SAFE_REPLY });
+  await message.reply({ ...componentCardsPayload([embed]), allowedMentions: SAFE_REPLY });
   return true;
 }
 
@@ -221,23 +226,23 @@ async function handleMemory(message: Message, ctx: BotContext, args: string[]): 
   const limit = parseLimit(args[0], 10, 50);
   const stats = repo.stats(message.guildId!);
   const words = repo.topWords(message.guildId!, limit);
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 記憶")
     .setColor(0x5865f2)
     .setDescription(`単語: ${stats.wordCount}\n短文: ${stats.phraseCount}\n絵文字: ${stats.emojiCount}`)
     .addFields({ name: "よく使われる単語", value: words.map((w, i) => `${i + 1}. ${w.word} (${w.count})`).join("\n") || "まだありません" });
-  await message.reply({ embeds: [embed], allowedMentions: SAFE_REPLY });
+  await message.reply({ ...componentCardsPayload([embed]), allowedMentions: SAFE_REPLY });
   return true;
 }
 
 async function handleWords(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const words = createPacchiRepository(ctx.sqlite).topWords(message.guildId!, parseLimit(args[0], 10, 50));
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 単語ランキング")
     .setColor(0x5865f2)
     .setDescription(words.map((w, i) => `${i + 1}. ${w.word} (${w.count})`).join("\n") || "まだありません");
-  await message.reply({ embeds: [embed], allowedMentions: SAFE_REPLY });
+  await message.reply({ ...componentCardsPayload([embed]), allowedMentions: SAFE_REPLY });
   return true;
 }
 

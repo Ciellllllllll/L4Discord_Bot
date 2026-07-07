@@ -33,7 +33,7 @@ Preferred CLI tools for Codex work:
 - `psql`: inspect PostgreSQL schemas and migration results.
 - `bru`: run Bruno API collections if API checks are added.
 
-If the personal Codex skill `l4-discordbot` is available, use it before making repository-specific changes.
+If the repository Codex skill `.codex/skills/l4-discordbot` is available, use it before making repository-specific changes.
 
 ## Coding Style & Naming Conventions
 

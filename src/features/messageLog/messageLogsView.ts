@@ -1,10 +1,10 @@
+import { ComponentCardBuilder, componentCardsPayload, ephemeralComponentPayload } from "../panels/componentCard.js";
 import { randomBytes } from "node:crypto";
 import {
   ActionRowBuilder,
   AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   MessageFlags,
   ModalBuilder,
   TextInputBuilder,
@@ -439,8 +439,8 @@ function buildFiltersSummary(session: SearchSession): string {
   ].join("\n");
 }
 
-function buildListEmbed(session: SearchSession, rows: LogRow[], total: number, totalPages: number): EmbedBuilder {
-  const embed = new EmbedBuilder()
+function buildListEmbed(session: SearchSession, rows: LogRow[], total: number, totalPages: number): ComponentCardBuilder {
+  const embed = new ComponentCardBuilder()
     .setTitle("メッセージログ検索結果")
     .setColor(0x3498db)
     .setDescription(buildFiltersSummary(session))
@@ -515,8 +515,10 @@ function buildListComponents(session: SearchSession, rows: LogRow[], total: numb
 function buildListPayload(db: DatabaseLib.Database, session: SearchSession, botUserId: string) {
   const { total, totalPages, rows } = searchLogsPage(db, session, botUserId);
   return {
-    embeds: [buildListEmbed(session, rows, total, totalPages)],
-    components: buildListComponents(session, rows, total, totalPages),
+    ...componentCardsPayload(
+      [buildListEmbed(session, rows, total, totalPages)],
+      buildListComponents(session, rows, total, totalPages),
+    ),
     files: [],
   };
 }
@@ -529,7 +531,7 @@ function buildMessageUrl(guildId: string | null, channelId: string | null, messa
   return `https://discord.com/channels/${g}/${c}/${m}`;
 }
 
-function buildDetailMetaEmbed(row: LogRow): EmbedBuilder {
+function buildDetailMetaEmbed(row: LogRow): ComponentCardBuilder {
   const states: string[] = [];
   if (row.edited_at) states.push(`編集済み: ${formatDiscordDate(row.edited_at)}`);
   if (row.deleted_at) states.push(`削除ログ: ${formatDiscordDate(row.deleted_at)}`);
@@ -541,7 +543,7 @@ function buildDetailMetaEmbed(row: LogRow): EmbedBuilder {
   const mid = snowflakeFromDb(row.message_id);
   const url = buildMessageUrl(gid, channelId, mid);
 
-  const embed = new EmbedBuilder()
+  const embed = new ComponentCardBuilder()
     .setTitle(`メッセージログ詳細 #${row.id}`)
     .setColor(0x2ecc71)
     .addFields({
@@ -615,16 +617,16 @@ function splitLongText(text: string, chunk: number): string[] {
   return out;
 }
 
-function buildContentEmbeds(content: string | null): EmbedBuilder[] {
+function buildContentEmbeds(content: string | null): ComponentCardBuilder[] {
   const source = String(content || "");
   if (!source) {
-    return [new EmbedBuilder().setTitle("本文").setColor(0x1abc9c).setDescription("(本文なし)")];
+    return [new ComponentCardBuilder().setTitle("本文").setColor(0x1abc9c).setDescription("(本文なし)")];
   }
   const chunks = splitLongText(source, CONTENT_CHUNK);
-  const out: EmbedBuilder[] = [];
+  const out: ComponentCardBuilder[] = [];
   for (let i = 0; i < Math.min(chunks.length, MAX_CONTENT_EMBEDS); i += 1) {
     out.push(
-      new EmbedBuilder()
+      new ComponentCardBuilder()
         .setTitle(chunks.length > 1 ? `本文 (${i + 1}/${Math.min(chunks.length, MAX_CONTENT_EMBEDS)})` : "本文")
         .setColor(0x1abc9c)
         .setDescription(chunks[i]!.slice(0, 4096)),
@@ -668,13 +670,13 @@ function attachmentSummaryBlock(row: LogRow, storeDb?: DatabaseLib.Database | nu
 
 function buildOversizeEphemeralEmbed(
   items: { filename: string; storageRelpath: string }[],
-): EmbedBuilder {
+): ComponentCardBuilder {
   const list = items.map((o) => `**${o.filename}**\n\`${o.storageRelpath}\``).join("\n\n");
   const desc =
     "ファイルサイズが大きく送信できなかったため、ダウンロードして閲覧してください。\n" +
     "ダウンロード時はウイルスに注意してください。\n\n" +
     list;
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle("大きな添付ファイル")
     .setColor(0xf39c12)
     .setDescription(desc.slice(0, 4096));
@@ -687,16 +689,16 @@ function buildDetailPayload(
   attachmentStore: DatabaseLib.Database | null | undefined,
   imageIndexRequested: number,
 ): {
-  embeds: EmbedBuilder[];
+  cards: ComponentCardBuilder[];
   components: ActionRowBuilder<ButtonBuilder>[];
   files: AttachmentBuilder[];
-  ephemeralFollowUpEmbed?: EmbedBuilder;
+  ephemeralFollowUpEmbed?: ComponentCardBuilder;
 } {
   const row = fetchLogById(db, session, logId);
   if (!row) {
     return {
-      embeds: [
-        new EmbedBuilder().setTitle("詳細").setColor(0xe74c3c).setDescription("ログが見つかりません。"),
+      cards: [
+        new ComponentCardBuilder().setTitle("詳細").setColor(0xe74c3c).setDescription("ログが見つかりません。"),
       ],
       components: [
         new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -729,7 +731,7 @@ function buildDetailPayload(
   if (slots.skippedImageCount > 0) {
     attachDesc = `${attachDesc}\n\n※ 画像 ${slots.skippedImageCount} 件は読み込みできませんでした。`;
   }
-  const attachEmbed = new EmbedBuilder()
+  const attachEmbed = new ComponentCardBuilder()
     .setTitle("添付一覧")
     .setColor(0x9b59b6)
     .setDescription(attachDesc.slice(0, 4096))
@@ -737,21 +739,21 @@ function buildDetailPayload(
       text:
         slots.imageSlots.length > 1
           ? "画像は「戻る」「次へ」で1枚ずつ表示。動画・ファイルは8MB以下を再送信。超過はパス参照。"
-          : "画像は上の Embed に表示。動画・ファイルは8MB以下を再送信。超過はパス参照。",
+          : "画像は上のカードに表示。動画・ファイルは8MB以下を再送信。超過はパス参照。",
     });
 
-  const imageEmbeds: EmbedBuilder[] = [];
+  const imageCards: ComponentCardBuilder[] = [];
   if (slots.imageSlots.length > 0) {
     const cur = slots.imageSlots[clampedIdx]!;
-    imageEmbeds.push(
-      new EmbedBuilder()
+    imageCards.push(
+      new ComponentCardBuilder()
         .setTitle(`画像 ${clampedIdx + 1}/${slots.imageSlots.length}: ${cur.displayName}`)
         .setColor(0x9b59b6)
         .setImage(`attachment://${cur.attachName}`),
     );
   }
 
-  const embeds = [meta, ...bodyEmbeds, ...imageEmbeds, attachEmbed].slice(0, 10);
+  const cards = [meta, ...bodyEmbeds, ...imageCards, attachEmbed].slice(0, 10);
 
   const files: AttachmentBuilder[] = [];
   if (slots.imageSlots.length > 0) {
@@ -799,7 +801,7 @@ function buildDetailPayload(
     slots.oversizeItems.length > 0 ? buildOversizeEphemeralEmbed(slots.oversizeItems) : undefined;
 
   return {
-    embeds,
+    cards,
     components: componentRows,
     files,
     ephemeralFollowUpEmbed,
@@ -1012,14 +1014,13 @@ export async function routeMessageLogButton(interaction: ButtonInteraction, ctx:
     );
     try {
       await interaction.update({
-        embeds: payload.embeds,
-        components: payload.components,
+        ...componentCardsPayload(payload.cards, payload.components),
         files: payload.files,
       });
       if (payload.ephemeralFollowUpEmbed) {
         await interaction.followUp({
-          embeds: [payload.ephemeralFollowUpEmbed],
-          flags: MessageFlags.Ephemeral,
+          ...componentCardsPayload([payload.ephemeralFollowUpEmbed]),
+          flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
         });
       }
     } catch {
@@ -1088,6 +1089,6 @@ export async function routeMessageLogModal(interaction: ModalSubmitInteraction, 
   searchSessions.set(session.id, session);
 
   const payload = buildListPayload(ctx.messageLogSqlite, session, ctx.client.user?.id ?? "");
-  await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  await interaction.reply(ephemeralComponentPayload(payload));
   return true;
 }

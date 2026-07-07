@@ -83,13 +83,16 @@ async function run(): Promise<void> {
         userId: "user",
         options: [],
       });
-      const replies: Array<{ content?: string }> = [];
+      const replies: Array<{ content?: string; embeds?: unknown[]; components?: unknown[]; flags?: unknown }> = [];
       assert.equal(await handleAnonymousSurveyButton(makeButton(`anon_survey:rating:${sessionId}:4`, replies), makeCtx(db)), true);
       const session = sqlite.prepare("SELECT payload FROM interaction_sessions WHERE id = ?").get(sessionId) as { payload: string };
       assert.equal(JSON.parse(session.payload).selectedRating, undefined);
 
       assert.equal(await handleAnonymousSurveyButton(makeButton(`anon_survey:submit:${sessionId}:4`, replies), makeCtx(db)), true);
       assert.equal(await handleAnonymousSurveyButton(makeButton(`anon_survey:submit:${sessionId}:4`, replies), makeCtx(db)), true);
+      assert.equal(replies[1]?.content, undefined);
+      assert.deepEqual(replies[1]?.embeds, []);
+      assert.equal(Array.isArray(replies[1]?.components), true);
       assert.equal(replies.some((reply) => reply.content === "この機能は準備中です。"), true);
       assert.equal(replies.at(-1)?.content, "期限切れのため、もう一度コマンドを実行してください。");
       const responses = sqlite.prepare("SELECT guild_id, rating FROM anonymous_survey_responses").all();
@@ -112,8 +115,11 @@ async function run(): Promise<void> {
         userId: "user",
         options: [],
       });
-      const replies: Array<{ content?: string }> = [];
+      const replies: Array<{ content?: string; embeds?: unknown[]; components?: unknown[] }> = [];
       assert.equal(await handleAnonymousSurveyButton(makeButton(`anon_survey:skip:${sessionId}`, replies), makeCtx(db)), true);
+      assert.equal(replies[0]?.content, undefined);
+      assert.deepEqual(replies[0]?.embeds, []);
+      assert.equal(Array.isArray(replies[0]?.components), true);
       assert.equal(replies.at(-1)?.content, "この機能は準備中です。");
       const responses = sqlite.prepare("SELECT * FROM anonymous_survey_responses").all();
       assert.equal(responses.length, 0);

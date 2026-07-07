@@ -66,12 +66,12 @@ async function run(): Promise<void> {
     assert.equal(await maybePromptAnonymousSurvey(makeInteraction(adminReplies), makeCtx(db), makeAdminMember()), false);
     assert.equal(adminReplies.length, 0);
 
-    const replies: Array<{ flags?: number; embeds?: unknown[]; components?: unknown[] }> = [];
+    const replies: Array<{ flags?: unknown; embeds?: unknown[]; components?: Array<{ type: number }> }> = [];
     assert.equal(await maybePromptAnonymousSurvey(makeInteraction(replies), makeCtx(db), null), true);
     assert.equal(replies.length, 1);
-    assert.equal(replies[0]?.flags, MessageFlags.Ephemeral);
-    assert.equal(replies[0]?.embeds?.length, 1);
-    assert.equal(replies[0]?.components?.length, 2);
+    assert.deepEqual(replies[0]?.flags, [MessageFlags.IsComponentsV2, MessageFlags.Ephemeral]);
+    assert.equal(replies[0]?.embeds?.length, 0);
+    assert.equal(replies[0]?.components?.[0]?.type, 17);
 
     const sessions = sqlite.prepare("SELECT domain, action, executor_user_id FROM interaction_sessions").all();
     assert.deepEqual(sessions, [{ domain: "anonymousSurvey", action: "slashGate", executor_user_id: "user" }]);

@@ -1,5 +1,6 @@
 import type { Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { componentCardsPayload } from "../panels/componentCard.js";
 import {
   allPendingReplies,
   setReplyConfirmMessageId,
@@ -93,8 +94,7 @@ export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
     const data = parseModmailRowData(t.data);
     const embed = buildModmailThreadSummaryEmbed(t, data);
     const payload = {
-      embeds: [embed],
-      components: [buildModmailCloseRow(t.id)],
+      ...componentCardsPayload([embed], [buildModmailCloseRow(t.id)]),
       allowedMentions: { parse: [] as const },
     };
     const panelId = typeof data.panel_message_id === "string" ? data.panel_message_id : null;

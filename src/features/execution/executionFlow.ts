@@ -1,9 +1,9 @@
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   DiscordAPIError,
-  EmbedBuilder,
   MessageFlags,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
@@ -182,10 +182,10 @@ function choiceToAction1(c: string): ExecutionAction | null {
 }
 
 /** 処刑フロー第1投票（処刑内容）。`pollEnded` 後は `:R` を使わず増加表示を防ぐ */
-function buildPoll1Embed(state: ExecutionFlowState, poll1DeadlineMs: number, pollEnded = false): EmbedBuilder {
+function buildPoll1Embed(state: ExecutionFlowState, poll1DeadlineMs: number, pollEnded = false): ComponentCardBuilder {
   const counts = tallyChoices(state.votes_poll1, POLL1_KEYS);
   const lines = POLL1_KEYS.map((k) => `**${k}.** ${POLL1_LABEL[k]} — ${counts[k] ?? 0} 票`);
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle("処刑内容の投票")
     .setDescription(
       [
@@ -202,10 +202,10 @@ function buildPoll1Embed(state: ExecutionFlowState, poll1DeadlineMs: number, pol
 }
 
 /** 処刑フロー第2投票（タイムアウト時間） */
-function buildPoll2Embed(state: ExecutionFlowState, poll2DeadlineMs: number, pollEnded = false): EmbedBuilder {
+function buildPoll2Embed(state: ExecutionFlowState, poll2DeadlineMs: number, pollEnded = false): ComponentCardBuilder {
   const counts = tallyChoices(state.votes_poll2, POLL2_KEYS);
   const lines = POLL2_KEYS.map((k) => `**${k}.** ${POLL2_LABEL[k]} — ${counts[k] ?? 0} 票`);
-  return new EmbedBuilder()
+  return new ComponentCardBuilder()
     .setTitle("タイムアウト時間の投票")
     .setDescription(
       [
@@ -437,8 +437,7 @@ async function beginPoll1(ctx: BotContext, flowId: string, state: ExecutionFlowS
   let msg: Message;
   try {
     msg = await ch.send({
-      embeds: [embed],
-      components: poll1Rows(flowId, false),
+      ...componentCardsPayload([embed], poll1Rows(flowId, false)),
       allowedMentions: { users: [state.target_id] },
     });
   } catch (err) {
@@ -473,11 +472,7 @@ async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<v
     try {
       const m = await ch.messages.fetch(state.poll1_message_id).catch(() => null);
       if (m) {
-        await m.edit({
-          content: null,
-          embeds: [buildPoll1Embed(state, state.poll1_deadline_ms, true)],
-          components: poll1Rows(flowId, true),
-        });
+        await m.edit(componentCardsPayload([buildPoll1Embed(state, state.poll1_deadline_ms, true)], poll1Rows(flowId, true)));
       }
     } catch {
       /* noop */
@@ -502,8 +497,7 @@ async function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<v
     let msg: Message;
     try {
       msg = await ch.send({
-        embeds: [poll2Embed],
-        components: poll2Rows(flowId, false),
+        ...componentCardsPayload([poll2Embed], poll2Rows(flowId, false)),
         allowedMentions: { users: [state.target_id] },
       });
     } catch (err) {
@@ -559,11 +553,7 @@ async function transitionPoll2ToAdmin(ctx: BotContext, flowId: string): Promise<
     try {
       const m = await ch.messages.fetch(state.poll2_message_id).catch(() => null);
       if (m) {
-        await m.edit({
-          content: null,
-          embeds: [buildPoll2Embed(state, state.poll2_deadline_ms, true)],
-          components: poll2Rows(flowId, true),
-        });
+        await m.edit(componentCardsPayload([buildPoll2Embed(state, state.poll2_deadline_ms, true)], poll2Rows(flowId, true)));
       }
     } catch {
       /* noop */
@@ -746,11 +736,7 @@ async function handleVote(interaction: ButtonInteraction, ctx: BotContext): Prom
     if (ch?.isTextBased() && !ch.isDMBased() && state.poll1_message_id) {
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll1_message_id);
-        await m.edit({
-          content: null,
-          embeds: [buildPoll1Embed(next, next.poll1_deadline_ms)],
-          components: poll1Rows(flowId, false),
-        });
+        await m.edit(componentCardsPayload([buildPoll1Embed(next, next.poll1_deadline_ms)], poll1Rows(flowId, false)));
       } catch (err) {
         ctx.log.warn({ err, flowId }, "execution: poll1 edit failed");
       }
@@ -785,11 +771,7 @@ async function handleVote(interaction: ButtonInteraction, ctx: BotContext): Prom
     if (ch?.isTextBased() && !ch.isDMBased() && state.poll2_message_id) {
       try {
         const m = await (ch as TextChannel).messages.fetch(state.poll2_message_id);
-        await m.edit({
-          content: null,
-          embeds: [buildPoll2Embed(next, next.poll2_deadline_ms!)],
-          components: poll2Rows(flowId, false),
-        });
+        await m.edit(componentCardsPayload([buildPoll2Embed(next, next.poll2_deadline_ms!)], poll2Rows(flowId, false)));
       } catch (err) {
         ctx.log.warn({ err, flowId }, "execution: poll2 edit failed");
       }
