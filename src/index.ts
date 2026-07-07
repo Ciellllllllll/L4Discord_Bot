@@ -43,6 +43,7 @@ import {
   routeStringSelectMenu,
 } from "./interactions/handleComponents.js";
 import { SqliteVcRankingRepository } from "./adapters/legacyDb/sqliteVcRankingRepository.js";
+import { ensureAnonymousSurveySchema } from "./features/anonymousSurvey/surveyService.js";
 import {
   hydrateMessageIfPartial,
   ingestMessageCreate,
@@ -171,6 +172,7 @@ async function main(): Promise<void> {
   ensurePacchiSchemaOnce(sqlite as DatabaseLib.Database);
   ensureGameDealSchemaOnce(sqlite as DatabaseLib.Database);
   ensureAiR18UserSettingsSchema(sqlite as DatabaseLib.Database);
+  if (usePostgres) ensureAnonymousSurveySchema(sqlite as DatabaseLib.Database);
   ensureAiHistorySchema(aiHistorySqlite as DatabaseLib.Database);
   ensureAutomoderationSchema(automodSqlite as DatabaseLib.Database);
   prepareMessageLogsDatabase(messageLogSqlite as DatabaseLib.Database);

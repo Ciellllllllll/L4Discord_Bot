@@ -42,6 +42,7 @@ import {
   handleLolWatchCommand,
 } from "../features/lolWatcher/lolWatcher.commands.js";
 import { handleWerewolfCreate, handleWerewolfEnd } from "../features/werewolf/werewolfGame.js";
+import { maybePromptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -64,6 +65,7 @@ async function ensureVersion(interaction: ChatInputCommandInteraction, ctx: BotC
 export async function handleSlashCommand(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
+  options: { skipSurvey?: boolean } = {},
 ): Promise<void> {
   if (!interaction.inGuild() || interaction.guildId !== ctx.config.GUILD_ID) {
     ctx.log.warn(
@@ -81,6 +83,10 @@ export async function handleSlashCommand(
 
   const member: GuildMember | null =
     interaction.member && "roles" in interaction.member ? (interaction.member as GuildMember) : null;
+
+  if (!options.skipSurvey && await maybePromptAnonymousSurvey(interaction, ctx, member)) {
+    return;
+  }
 
   switch (interaction.commandName) {
     case "q":

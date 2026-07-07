@@ -56,6 +56,7 @@ import { handleExecutionFlowButton } from "../features/execution/executionFlow.j
 import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
 import { handleGameDealButton } from "../features/gameDeals/gameDealWatcher.js";
 import { handleWerewolfButton, handleWerewolfStringSelect } from "../features/werewolf/werewolfGame.js";
+import { handleAnonymousSurveyButton } from "../features/anonymousSurvey/surveyHandlers.js";
 import { parseCustomId } from "./parseCustomId.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
@@ -118,6 +119,7 @@ export async function handleDetecterButton(
 }
 
 export async function routeButton(interaction: ButtonInteraction, ctx: BotContext): Promise<void> {
+  if (await handleAnonymousSurveyButton(interaction, ctx)) return;
   if (await handleExecutionFlowButton(interaction, ctx)) return;
   if (await handleTimeoutExtendFlowButton(interaction, ctx)) return;
   if (await handleWerewolfButton(interaction, ctx)) return;
