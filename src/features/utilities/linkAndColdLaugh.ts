@@ -7,13 +7,24 @@ import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 import { COLD_LAUGH_KEYWORD } from "./coldLaughConstants.js";
 import { buildVxTwitterReplyPayloads, collectVxTwitterReplyTargets } from "./vxtwitterPreview.js";
+import { buildYouTubeReplyPayloads, collectYouTubeReplyTargets } from "./youtubePreview.js";
 
 const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
+const YOUTUBE_DOMAINS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtu.be",
+  "www.youtu.be",
+]);
 
-const URL_CANDIDATE_PATTERN =
+const X_URL_CANDIDATE_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
+const YOUTUBE_URL_CANDIDATE_PATTERN =
+  /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
 const LINK_IN_CONTENT_PATTERN =
-  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+/gi;
+  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
 function stripUrlTail(urlText: string): string {
@@ -47,6 +58,15 @@ function isXLikeUrl(urlText: string): boolean {
   }
 }
 
+function isYouTubeLikeUrl(urlText: string): boolean {
+  try {
+    const parsed = new URL(ensureScheme(urlText));
+    return YOUTUBE_DOMAINS.has(parsed.host.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function countKeywordOccurrences(text: string, keyword: string): number {
   if (!text) {
     return 0;
@@ -75,12 +95,24 @@ export function coldLaughHitsForMessageContent(content: string): number {
   return totalColdLaughHits(stripLinksForColdLaughContent(content));
 }
 
-function extractXLinks(content: string): string[] {
+export function extractXLinks(content: string): string[] {
   const found: string[] = [];
-  for (const match of String(content || "").matchAll(URL_CANDIDATE_PATTERN)) {
+  for (const match of String(content || "").matchAll(X_URL_CANDIDATE_PATTERN)) {
     const raw = match.groups?.url ?? "";
     const trimmed = stripUrlTail(raw);
     if (trimmed && isXLikeUrl(trimmed)) {
+      found.push(trimmed);
+    }
+  }
+  return found;
+}
+
+export function extractYouTubeLinks(content: string): string[] {
+  const found: string[] = [];
+  for (const match of String(content || "").matchAll(YOUTUBE_URL_CANDIDATE_PATTERN)) {
+    const raw = match.groups?.url ?? "";
+    const trimmed = stripUrlTail(raw);
+    if (trimmed && isYouTubeLikeUrl(trimmed)) {
       found.push(trimmed);
     }
   }
@@ -188,19 +220,19 @@ export class LinkAndColdLaugh {
       }
     }
 
-    const xLinks = extractXLinks(content);
-    if (xLinks.length === 0) {
+    const xReplyTargets = collectVxTwitterReplyTargets(extractXLinks(content));
+    const youtubeReplyTargets = this.ctx.config.YOUTUBE_PREVIEW_ENABLED
+      ? collectYouTubeReplyTargets(extractYouTubeLinks(content))
+      : [];
+    if (xReplyTargets.length === 0 && youtubeReplyTargets.length === 0) {
       return;
     }
-
-    const replyTargets = collectVxTwitterReplyTargets(xLinks);
-    if (replyTargets.length === 0) return;
 
     try {
       await message.suppressEmbeds(true);
     } catch {}
 
-    const replyPayloads = await buildVxTwitterReplyPayloads(replyTargets, {
+    const replyPayloads = await buildVxTwitterReplyPayloads(xReplyTargets, {
       config: this.ctx.config,
       log: this.ctx.log,
     });
@@ -209,6 +241,18 @@ export class LinkAndColdLaugh {
         await message.reply(payload);
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "vxtwitter reply error");
+      }
+    }
+
+    const youtubeReplyPayloads = await buildYouTubeReplyPayloads(youtubeReplyTargets, {
+      apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
+      requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+    });
+    for (const payload of youtubeReplyPayloads) {
+      try {
+        await message.reply(payload);
+      } catch (err) {
+        this.ctx.log.warn({ err: String(err) }, "youtube preview reply error");
       }
     }
   }

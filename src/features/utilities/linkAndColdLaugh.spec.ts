@@ -1,20 +1,110 @@
 import assert from "node:assert/strict";
-import { coldLaughHitsForMessageContent, stripLinksForColdLaughContent } from "./linkAndColdLaugh.js";
+import {
+  LinkAndColdLaugh,
+  coldLaughHitsForMessageContent,
+  extractXLinks,
+  extractYouTubeLinks,
+  stripLinksForColdLaughContent,
+} from "./linkAndColdLaugh.js";
 
-function run(): void {
+function createDb(settings: Record<string, unknown> = {}): unknown {
+  return {
+    selectFrom: () => ({
+      selectAll: () => ({
+        where: () => ({
+          executeTakeFirst: async () => ({
+            guild_id: "guild-1",
+            data: JSON.stringify(settings),
+          }),
+        }),
+      }),
+    }),
+  };
+}
+
+function createCtx(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    config: {
+      COLD_LAUGH_STORE_PATH: "NUL",
+      GUILD_ID: "guild-1",
+      YOUTUBE_PREVIEW_ENABLED: true,
+      YOUTUBE_DATA_API_KEY: "",
+      YOUTUBE_REQUEST_TIMEOUT_MS: 10,
+      ...overrides,
+    },
+    db: createDb(),
+    log: {
+      error: () => {},
+      warn: () => {},
+    },
+  };
+}
+
+async function run(): Promise<void> {
   assert.equal(coldLaughHitsForMessageContent("https://example.com/落ち着けw"), 0);
   assert.equal(coldLaughHitsForMessageContent("x.com/user/status/123/落ち着けw"), 0);
   assert.equal(coldLaughHitsForMessageContent("www.example.com/怒んなやw"), 0);
   assert.equal(coldLaughHitsForMessageContent("discord.gg/落ち着けw"), 0);
+  assert.equal(coldLaughHitsForMessageContent("youtu.be/落ち着けw"), 0);
+  assert.equal(coldLaughHitsForMessageContent("youtube.com/watch?v=怒んなやw"), 0);
+  assert.equal(coldLaughHitsForMessageContent("music.youtube.com/watch?v=落ち着けw"), 0);
 
   assert.equal(coldLaughHitsForMessageContent("落ち着けw https://example.com/post"), 2);
   assert.equal(coldLaughHitsForMessageContent("https://example.com/post 怒んなやw"), 1);
 
   assert.equal(stripLinksForColdLaughContent("see https://example.com/落ち着けw now").trim(), "see   now");
+  assert.equal(stripLinksForColdLaughContent("see youtu.be/落ち着けw now").trim(), "see   now");
+
+  const mixed = "x.com/user/status/123 youtube.com/watch?v=abc youtu.be/def www.youtu.be/ghi twitter.com/user/status/456";
+  assert.deepEqual(extractXLinks(mixed), [
+    "x.com/user/status/123",
+    "twitter.com/user/status/456",
+  ]);
+  assert.deepEqual(extractYouTubeLinks(mixed), [
+    "youtube.com/watch?v=abc",
+    "youtu.be/def",
+    "www.youtu.be/ghi",
+  ]);
+
+  const replies: unknown[] = [];
+  let suppressCalls = 0;
+  const message = {
+    author: { bot: false, id: "user-1" },
+    guild: { id: "guild-1" },
+    channelId: "channel-1",
+    content: "x.com/profile youtube.com/c/custom",
+    suppressEmbeds: async (value: boolean) => {
+      assert.equal(value, true);
+      suppressCalls += 1;
+    },
+    reply: async (payload: unknown) => {
+      replies.push(payload);
+    },
+  };
+  await new LinkAndColdLaugh(createCtx() as never).onMessage(message as never);
+  assert.equal(suppressCalls, 1);
+  assert.deepEqual(replies.map((payload) => (payload as { content?: string }).content), [
+    "https://vxtwitter.com/profile",
+    "https://www.youtube.com/c/custom",
+  ]);
+
+  const youtubeDisabledReplies: unknown[] = [];
+  const youtubeDisabledMessage = {
+    ...message,
+    content: "youtube.com/c/custom",
+    suppressEmbeds: async () => {
+      throw new Error("suppress should not be called");
+    },
+    reply: async (payload: unknown) => {
+      youtubeDisabledReplies.push(payload);
+    },
+  };
+  await new LinkAndColdLaugh(createCtx({ YOUTUBE_PREVIEW_ENABLED: false }) as never).onMessage(youtubeDisabledMessage as never);
+  assert.deepEqual(youtubeDisabledReplies, []);
 }
 
 try {
-  run();
+  await run();
   console.log("linkAndColdLaugh.spec.ts: all assertions passed");
 } catch (err) {
   console.error(err);
