@@ -218,6 +218,57 @@ async function run(): Promise<void> {
   assert.equal(noKeyVideo.status, "ok");
   assert.match(oembedUrls[0] ?? "", /^https:\/\/www\.youtube\.com\/oembed\?/);
 
+  const dataApiFailureThenOEmbedUrls: string[] = [];
+  const dataApiFailureThenOEmbed = await fetchYouTubePreview(
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/fallback-oembed",
+      canonicalUrl: "https://www.youtube.com/watch?v=fallback-oembed",
+      id: "fallback-oembed",
+    },
+    {
+      apiKey: "key",
+      fetcher: async (url): Promise<Response> => {
+        dataApiFailureThenOEmbedUrls.push(url);
+        if (url.startsWith("https://www.googleapis.com/youtube/v3/videos?")) {
+          return jsonResponse({ error: { code: 403 } }, 403);
+        }
+        return jsonResponse({
+          title: "OEmbed after Data API failure",
+          author_name: "Fallback author",
+          thumbnail_url: "https://i.ytimg.com/vi/fallback-oembed/hqdefault.jpg",
+        });
+      },
+    },
+  );
+  assert.equal(dataApiFailureThenOEmbed.status, "ok");
+  assert.equal(dataApiFailureThenOEmbed.preview.kind, "oembed");
+  assert.equal(dataApiFailureThenOEmbed.preview.title, "OEmbed after Data API failure");
+  assert.match(dataApiFailureThenOEmbedUrls[0] ?? "", /^https:\/\/www\.googleapis\.com\/youtube\/v3\/videos\?/);
+  assert.match(dataApiFailureThenOEmbedUrls[1] ?? "", /^https:\/\/www\.youtube\.com\/oembed\?/);
+  assert.equal(dataApiFailureThenOEmbedUrls.length, 2);
+
+  const playlistDataApiFailureUrls: string[] = [];
+  const playlistDataApiFailure = await fetchYouTubePreview(
+    {
+      kind: "playlist",
+      originalUrl: "https://www.youtube.com/playlist?list=PL-data-api-fail",
+      canonicalUrl: "https://www.youtube.com/playlist?list=PL-data-api-fail",
+      id: "PL-data-api-fail",
+    },
+    {
+      apiKey: "key",
+      fetcher: async (url): Promise<Response> => {
+        playlistDataApiFailureUrls.push(url);
+        return jsonResponse({ error: { code: 500 } }, 500);
+      },
+    },
+  );
+  assert.deepEqual(playlistDataApiFailure, { status: "fallback", reason: "http_500" });
+  assert.equal(playlistDataApiFailureUrls.length, 1);
+  assert.match(playlistDataApiFailureUrls[0] ?? "", /^https:\/\/www\.googleapis\.com\/youtube\/v3\/playlists\?/);
+  assert.doesNotMatch(playlistDataApiFailureUrls.join("\n"), /youtube\.com\/oembed/);
+
   const noKeyPlaylist = await fetchYouTubePreview(
     { kind: "playlist", originalUrl: "https://www.youtube.com/playlist?list=PL", canonicalUrl: "https://www.youtube.com/playlist?list=PL", id: "PL" },
     { fetcher: async () => jsonResponse({}) },

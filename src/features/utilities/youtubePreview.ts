@@ -524,9 +524,18 @@ export async function fetchYouTubePreview(
   if (cached) previewCache.delete(cacheKey);
 
   const apiKey = options.apiKey?.trim() ?? "";
-  const result = apiKey
-    ? await fetchWithDataApi(target, apiKey, fetcher, requestTimeoutMs)
-    : await fetchWithOEmbed(target, fetcher, requestTimeoutMs);
+  let result: YouTubePreviewResult;
+  if (apiKey) {
+    const dataApiResult = await fetchWithDataApi(target, apiKey, fetcher, requestTimeoutMs);
+    if (target.kind === "video" && dataApiResult.status === "fallback") {
+      const oembedResult = await fetchWithOEmbed(target, fetcher, requestTimeoutMs);
+      result = oembedResult.status === "ok" ? oembedResult : dataApiResult;
+    } else {
+      result = dataApiResult;
+    }
+  } else {
+    result = await fetchWithOEmbed(target, fetcher, requestTimeoutMs);
+  }
 
   previewCache.set(cacheKey, {
     expiresAt: now + CACHE_TTL_MS,
