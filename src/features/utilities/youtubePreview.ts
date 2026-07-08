@@ -1,4 +1,20 @@
 import { URL } from "node:url";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
+  MessageFlags,
+  type APIActionRowComponent,
+  type APIButtonComponent,
+  type APIComponentInContainer,
+  type APIContainerComponent,
+  type APIMediaGalleryComponent,
+  type APIMessageTopLevelComponent,
+  type APISectionComponent,
+  type APITextDisplayComponent,
+  type MessageCreateOptions,
+} from "discord.js";
 
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -39,6 +55,13 @@ export type YouTubePreview = {
 export type YouTubePreviewResult =
   | { status: "ok"; preview: YouTubePreview }
   | { status: "fallback"; reason: string };
+
+export type YouTubePreviewPayload = {
+  embeds: [];
+  flags: MessageFlags.IsComponentsV2;
+  components: APIMessageTopLevelComponent[];
+  allowedMentions: { parse: []; repliedUser: false };
+};
 
 export type YouTubePreviewBuildOptions = {
   fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
@@ -510,4 +533,161 @@ export async function fetchYouTubePreview(
     result,
   });
   return result;
+}
+
+function compactText(text: string, maxLength: number): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function formatCount(value: number | undefined): string | null {
+  return typeof value === "number" ? value.toLocaleString("ja-JP") : null;
+}
+
+function formatPublishedAt(value: string | undefined): string | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return `<t:${Math.floor(timestamp / 1000)}:D>`;
+}
+
+function formatDuration(value: string | undefined): string | null {
+  if (!value) return null;
+  const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i.exec(value);
+  if (!match) return null;
+  const days = Number(match[1] ?? 0);
+  const hours = Number(match[2] ?? 0) + days * 24;
+  const minutes = Number(match[3] ?? 0);
+  const seconds = Number(match[4] ?? 0);
+  if (hours === 0 && minutes === 0 && seconds === 0 && days === 0) return null;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function kindLabel(preview: YouTubePreview): string {
+  const base = preview.kind === "playlist"
+    ? "プレイリスト"
+    : preview.kind === "channel"
+      ? "チャンネル"
+      : "動画";
+  const liveLabel = preview.liveBroadcastContent === "live"
+    ? "ライブ"
+    : preview.liveBroadcastContent === "upcoming"
+      ? "配信予定"
+      : null;
+  return liveLabel ? `${base}・${liveLabel}` : base;
+}
+
+function buildBodyText(preview: YouTubePreview): string {
+  const lines: string[] = [
+    `**${preview.title}**`,
+    kindLabel(preview),
+  ];
+  if (preview.channelTitle) {
+    lines.push(`${preview.kind === "playlist" ? "所有者" : "投稿者"}: ${preview.channelTitle}`);
+  }
+  const description = preview.description ? compactText(preview.description, 300) : null;
+  if (description) {
+    lines.push("");
+    lines.push(description);
+  }
+  const meta = [
+    formatPublishedAt(preview.publishedAt) ? `公開日: ${formatPublishedAt(preview.publishedAt)}` : null,
+    formatDuration(preview.duration) ? `再生時間: ${formatDuration(preview.duration)}` : null,
+    formatCount(preview.viewCount) ? `再生数: ${formatCount(preview.viewCount)}` : null,
+    formatCount(preview.subscriberCount) ? `登録者数: ${formatCount(preview.subscriberCount)}` : null,
+    formatCount(preview.videoCount) ? `動画数: ${formatCount(preview.videoCount)}` : null,
+    formatCount(preview.itemCount) ? `動画数: ${formatCount(preview.itemCount)}` : null,
+  ].filter((part): part is string => Boolean(part));
+  if (meta.length > 0) {
+    lines.push("");
+    lines.push(meta.join(" / "));
+  }
+  if (preview.sampleItems?.length) {
+    lines.push("");
+    lines.push(...preview.sampleItems.slice(0, 3).map((title) => `- ${compactText(title, 120)}`));
+  }
+  return lines.join("\n").slice(0, 4000);
+}
+
+function buildBodyComponent(preview: YouTubePreview, thumbnailUrl: string | undefined): APITextDisplayComponent | APISectionComponent {
+  const body: APITextDisplayComponent = {
+    type: ComponentType.TextDisplay,
+    content: buildBodyText(preview),
+  };
+  if (!thumbnailUrl) return body;
+  return {
+    type: ComponentType.Section,
+    components: [body],
+    accessory: {
+      type: ComponentType.Thumbnail,
+      media: { url: thumbnailUrl },
+      description: `${preview.title} thumbnail`.slice(0, 1024),
+    },
+  };
+}
+
+function buildMediaGallery(thumbnailUrl: string | undefined, title: string): APIMediaGalleryComponent | null {
+  if (!thumbnailUrl) return null;
+  return {
+    type: ComponentType.MediaGallery,
+    items: [{
+      media: { url: thumbnailUrl },
+      description: `${title} thumbnail`.slice(0, 1024),
+    }],
+  };
+}
+
+function buildLinkRow(preview: YouTubePreview): APIActionRowComponent<APIButtonComponent> {
+  return new ActionRowBuilder<ButtonBuilder>()
+    .addComponents(
+      new ButtonBuilder().setLabel("YouTubeで開く").setStyle(ButtonStyle.Link).setURL(preview.url),
+    )
+    .toJSON() as APIActionRowComponent<APIButtonComponent>;
+}
+
+export function buildYouTubePreviewPayload(preview: YouTubePreview): YouTubePreviewPayload {
+  const thumbnailUrl = safeHttpsUrl(preview.thumbnailUrl);
+  const gallery = buildMediaGallery(thumbnailUrl, preview.title);
+  const components: APIComponentInContainer[] = [
+    buildBodyComponent(preview, thumbnailUrl),
+    ...(gallery ? [gallery] : []),
+    buildLinkRow(preview),
+  ];
+  const container: APIContainerComponent = {
+    type: ComponentType.Container,
+    components,
+  };
+  return {
+    embeds: [],
+    flags: MessageFlags.IsComponentsV2,
+    components: [container],
+    allowedMentions: { parse: [], repliedUser: false },
+  };
+}
+
+export function buildYouTubeFallbackReply(urls: readonly string[]): MessageCreateOptions {
+  return {
+    content: urls.join("\n"),
+    allowedMentions: { parse: [], repliedUser: false },
+  };
+}
+
+export async function buildYouTubeReplyPayloads(
+  targets: readonly YouTubeReplyTarget[],
+  options: YouTubePreviewBuildOptions = {},
+): Promise<MessageCreateOptions[]> {
+  return await Promise.all(targets.map(async (target): Promise<MessageCreateOptions> => {
+    if (target.kind === "fallback") {
+      return buildYouTubeFallbackReply([target.canonicalUrl]);
+    }
+    const result = await fetchYouTubePreview(target, options);
+    if (result.status === "ok") {
+      return buildYouTubePreviewPayload(result.preview);
+    }
+    return buildYouTubeFallbackReply([target.canonicalUrl]);
+  }));
 }

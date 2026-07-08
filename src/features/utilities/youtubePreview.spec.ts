@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent } from "discord.js";
 import {
+  buildYouTubeFallbackReply,
+  buildYouTubePreviewPayload,
+  buildYouTubeReplyPayloads,
   collectYouTubeReplyTargets,
   fetchYouTubePreview,
   normalizeYouTubeChannelResponse,
@@ -270,6 +274,114 @@ async function run(): Promise<void> {
     { apiKey: "key", fetcher: async () => new Response("{", { status: 200 }) },
   );
   assert.equal(invalidJson.status, "fallback");
+
+  const payload = buildYouTubePreviewPayload({
+    kind: "video",
+    url: "https://www.youtube.com/watch?v=payload",
+    title: "Payload video",
+    description: "  Long   description\nwith\tspace  ",
+    thumbnailUrl: "https://i.ytimg.com/vi/payload/maxresdefault.jpg",
+    channelTitle: "Creator",
+    publishedAt: "2026-07-01T00:00:00Z",
+    duration: "PT1H2M3S",
+    viewCount: 1234567,
+    liveBroadcastContent: "live",
+  });
+  assert.deepEqual(payload.embeds, []);
+  assert.equal(payload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(payload.allowedMentions, { parse: [], repliedUser: false });
+  assert.equal("content" in payload, false);
+  assert.equal(payload.components.length, 1);
+  const container = payload.components[0]!;
+  assert.equal(container.type, ComponentType.Container);
+  assert.equal(container.components[0]?.type, ComponentType.Section);
+  const section = container.components[0]!;
+  assert.equal(section.accessory.type, ComponentType.Thumbnail);
+  assert.equal(section.accessory.media.url, "https://i.ytimg.com/vi/payload/maxresdefault.jpg");
+  const body = section.components[0]!;
+  assert.equal(body.type, ComponentType.TextDisplay);
+  assert.match(body.content, /\*\*Payload video\*\*/);
+  assert.match(body.content, /動画・ライブ/);
+  assert.match(body.content, /投稿者: Creator/);
+  assert.match(body.content, /Long description with space/);
+  assert.match(body.content, /公開日: <t:1782864000:D>/);
+  assert.match(body.content, /再生時間: 1:02:03/);
+  assert.match(body.content, /再生数: 1,234,567/);
+  assert.ok(body.content.length <= 4000);
+  const gallery = container.components.find((component) => component.type === ComponentType.MediaGallery);
+  assert.equal(gallery?.items[0]?.media.url, "https://i.ytimg.com/vi/payload/maxresdefault.jpg");
+  const row = container.components.at(-1)!;
+  assert.equal(row.type, ComponentType.ActionRow);
+  assert.equal(row.components[0]?.type, ComponentType.Button);
+  assert.equal(row.components[0]?.style, ButtonStyle.Link);
+  assert.equal(row.components[0]?.label, "YouTubeで開く");
+  assert.equal(row.components[0]?.url, "https://www.youtube.com/watch?v=payload");
+
+  const playlistPayload = buildYouTubePreviewPayload({
+    kind: "playlist",
+    url: "https://www.youtube.com/playlist?list=PL",
+    title: "Playlist",
+    channelTitle: "Owner",
+    itemCount: 42,
+    sampleItems: ["First", "Second", "Third", "Fourth"],
+    thumbnailUrl: "http://example.com/not-safe.jpg",
+  });
+  const playlistContainer = playlistPayload.components[0]! as APIContainerComponent;
+  assert.equal(playlistContainer.components[0]?.type, ComponentType.TextDisplay);
+  assert.equal(playlistContainer.components.some((component) => component.type === ComponentType.MediaGallery), false);
+  const playlistBody = playlistContainer.components[0]!;
+  assert.match(playlistBody.content, /プレイリスト/);
+  assert.match(playlistBody.content, /所有者: Owner/);
+  assert.match(playlistBody.content, /動画数: 42/);
+  assert.match(playlistBody.content, /- First\n- Second\n- Third/);
+  assert.doesNotMatch(playlistBody.content, /Fourth/);
+
+  const fallbackReply = buildYouTubeFallbackReply(["https://youtu.be/a", "https://youtu.be/b"]);
+  assert.deepEqual(fallbackReply, {
+    content: "https://youtu.be/a\nhttps://youtu.be/b",
+    allowedMentions: { parse: [], repliedUser: false },
+  });
+
+  const replyPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/reply-ok",
+      canonicalUrl: "https://www.youtube.com/watch?v=reply-ok",
+      id: "reply-ok",
+    },
+    {
+      kind: "fallback",
+      originalUrl: "https://www.youtube.com/c/custom",
+      canonicalUrl: "https://www.youtube.com/c/custom",
+    },
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/reply-fail",
+      canonicalUrl: "https://www.youtube.com/watch?v=reply-fail",
+      id: "reply-fail",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async (url) => jsonResponse(url.includes("reply-fail")
+      ? { items: [] }
+      : {
+        items: [{
+          snippet: { title: "Reply ok", thumbnails: {} },
+          contentDetails: {},
+          statistics: {},
+        }],
+      }),
+  });
+  assert.equal(replyPayloads.length, 3);
+  assert.equal(replyPayloads[0]?.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(replyPayloads[1], {
+    content: "https://www.youtube.com/c/custom",
+    allowedMentions: { parse: [], repliedUser: false },
+  });
+  assert.deepEqual(replyPayloads[2], {
+    content: "https://www.youtube.com/watch?v=reply-fail",
+    allowedMentions: { parse: [], repliedUser: false },
+  });
 }
 
 run()
