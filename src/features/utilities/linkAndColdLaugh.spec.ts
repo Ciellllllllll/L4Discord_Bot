@@ -49,6 +49,9 @@ async function run(): Promise<void> {
   assert.equal(coldLaughHitsForMessageContent("youtube.com/watch?v=怒んなやw"), 0);
   assert.equal(coldLaughHitsForMessageContent("music.youtube.com/watch?v=落ち着けw"), 0);
   assert.equal(coldLaughHitsForMessageContent("notyoutube.com/watch?v=落ち着けw"), 2);
+  assert.equal(coldLaughHitsForMessageContent("notyoutube.com?u=youtube.com/watch?v=落ち着けw"), 2);
+  assert.equal(coldLaughHitsForMessageContent("example.com?next=youtube.com/watch?v=落ち着けw"), 2);
+  assert.equal(coldLaughHitsForMessageContent("abc#youtube.com/watch?v=落ち着けw"), 2);
 
   assert.equal(coldLaughHitsForMessageContent("落ち着けw https://example.com/post"), 2);
   assert.equal(coldLaughHitsForMessageContent("https://example.com/post 怒んなやw"), 1);
@@ -56,6 +59,18 @@ async function run(): Promise<void> {
   assert.equal(stripLinksForColdLaughContent("see https://example.com/落ち着けw now").trim(), "see   now");
   assert.equal(stripLinksForColdLaughContent("see youtu.be/落ち着けw now").trim(), "see   now");
   assert.equal(stripLinksForColdLaughContent("see notyoutube.com/watch?v=落ち着けw now"), "see notyoutube.com/watch?v=落ち着けw now");
+  assert.equal(
+    stripLinksForColdLaughContent("see notyoutube.com?u=youtube.com/watch?v=落ち着けw now"),
+    "see notyoutube.com?u=youtube.com/watch?v=落ち着けw now",
+  );
+  assert.equal(
+    stripLinksForColdLaughContent("see example.com?next=youtube.com/watch?v=落ち着けw now"),
+    "see example.com?next=youtube.com/watch?v=落ち着けw now",
+  );
+  assert.equal(
+    stripLinksForColdLaughContent("see abc#youtube.com/watch?v=落ち着けw now"),
+    "see abc#youtube.com/watch?v=落ち着けw now",
+  );
 
   const mixed = "x.com/user/status/123 youtube.com/watch?v=abc youtu.be/def www.youtu.be/ghi twitter.com/user/status/456";
   assert.deepEqual(extractXLinks(mixed), [
@@ -68,7 +83,34 @@ async function run(): Promise<void> {
     "www.youtu.be/ghi",
   ]);
   assert.deepEqual(extractYouTubeLinks("notyoutube.com/watch?v=落ち着けw"), []);
+  assert.deepEqual(extractYouTubeLinks("notyoutube.com?u=youtube.com/watch?v=落ち着けw"), []);
+  assert.deepEqual(extractYouTubeLinks("example.com?next=youtube.com/watch?v=落ち着けw"), []);
+  assert.deepEqual(extractYouTubeLinks("abc#youtube.com/watch?v=落ち着けw"), []);
   assert.deepEqual(extractYouTubeLinks("https://example.com/path/youtube.com/watch?v=落ち着けw"), []);
+  assert.deepEqual(extractYouTubeLinks("https://youtube.com/watch?v=scheme"), [
+    "https://youtube.com/watch?v=scheme",
+  ]);
+  assert.deepEqual(extractYouTubeLinks([
+    "youtube.com/watch?v=start",
+    " youtube.com/watch?v=space",
+    "\u3000youtube.com/watch?v=fullwidth-space",
+    "<youtube.com/watch?v=angle",
+    "(youtube.com/watch?v=paren",
+    "[youtube.com/watch?v=bracket",
+    "{youtube.com/watch?v=brace",
+    "\"youtube.com/watch?v=double-quote",
+    "'youtube.com/watch?v=single-quote",
+  ].join(" ")), [
+    "youtube.com/watch?v=start",
+    "youtube.com/watch?v=space",
+    "youtube.com/watch?v=fullwidth-space",
+    "youtube.com/watch?v=angle",
+    "youtube.com/watch?v=paren",
+    "youtube.com/watch?v=bracket",
+    "youtube.com/watch?v=brace",
+    "youtube.com/watch?v=double-quote",
+    "youtube.com/watch?v=single-quote",
+  ]);
   assert.deepEqual(extractYouTubeLinks([
     "youtube.com/watch?v=bare",
     "www.youtube.com/watch?v=www",

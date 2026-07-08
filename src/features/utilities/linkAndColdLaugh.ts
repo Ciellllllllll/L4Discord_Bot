@@ -25,7 +25,7 @@ const YOUTUBE_URL_CANDIDATE_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
 const LINK_IN_CONTENT_PATTERN =
   /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
-const URL_CANDIDATE_PREFIX_PATTERN = /[A-Za-z0-9./:@_-]/;
+const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
 function stripUrlTail(urlText: string): string {
@@ -44,11 +44,20 @@ function ensureScheme(urlText: string): string {
   return `https://${u}`;
 }
 
-function hasUrlCandidateBoundary(content: string, index: number): boolean {
+function isSchemeUrl(urlText: string): boolean {
+  return /^https?:\/\//i.test(urlText);
+}
+
+function isBareUrlBoundary(content: string, index: number): boolean {
   if (index <= 0) {
     return true;
   }
-  return !URL_CANDIDATE_PREFIX_PATTERN.test(content[index - 1] ?? "");
+  const previous = content[index - 1] ?? "";
+  return /\s/u.test(previous) || previous === "\u3000" || BARE_URL_BOUNDARY_CHARS.has(previous);
+}
+
+function hasUrlCandidateBoundary(content: string, index: number, urlText: string): boolean {
+  return isSchemeUrl(urlText) || isBareUrlBoundary(content, index);
 }
 
 function hostWithoutWww(host: string): string {
@@ -98,7 +107,7 @@ export function totalColdLaughHits(content: string): number {
 export function stripLinksForColdLaughContent(content: string): string {
   const text = String(content || "");
   return text.replace(LINK_IN_CONTENT_PATTERN, (match, offset: number) => (
-    hasUrlCandidateBoundary(text, offset) ? " " : match
+    hasUrlCandidateBoundary(text, offset, match) ? " " : match
   ));
 }
 
@@ -122,10 +131,10 @@ export function extractYouTubeLinks(content: string): string[] {
   const text = String(content || "");
   const found: string[] = [];
   for (const match of text.matchAll(YOUTUBE_URL_CANDIDATE_PATTERN)) {
-    if (!hasUrlCandidateBoundary(text, match.index ?? 0)) {
+    const raw = match.groups?.url ?? "";
+    if (!hasUrlCandidateBoundary(text, match.index ?? 0, raw)) {
       continue;
     }
-    const raw = match.groups?.url ?? "";
     const trimmed = stripUrlTail(raw);
     if (trimmed && isYouTubeLikeUrl(trimmed)) {
       found.push(trimmed);
