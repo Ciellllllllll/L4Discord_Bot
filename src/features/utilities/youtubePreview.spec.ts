@@ -94,6 +94,7 @@ async function run(): Promise<void> {
         title: "Video title",
         description: "Video description",
         channelTitle: "Channel",
+        channelId: "UCvideo123",
         publishedAt: "2026-07-01T00:00:00Z",
         liveBroadcastContent: "none",
         thumbnails: { high: { url: "https://i.ytimg.com/vi/v/high.jpg" } },
@@ -107,6 +108,7 @@ async function run(): Promise<void> {
   assert.equal(video.preview.title, "Video title");
   assert.equal(video.preview.viewCount, 12345);
   assert.equal(video.preview.thumbnailUrl, "https://i.ytimg.com/vi/v/high.jpg");
+  assert.equal(video.preview.channelId, "UCvideo123");
   assert.equal(normalizeYouTubeVideoResponse({ items: [] }, "https://www.youtube.com/watch?v=v").status, "fallback");
 
   const safeFallbackVideo = normalizeYouTubeVideoResponse({
@@ -182,9 +184,18 @@ async function run(): Promise<void> {
       apiKey: "api-key",
       fetcher: async (url) => {
         fetchedUrls.push(url);
+        if (url.startsWith("https://www.googleapis.com/youtube/v3/channels?")) {
+          return jsonResponse({
+            items: [{
+              snippet: {
+                thumbnails: { default: { url: "https://yt3.ggpht.com/channel-icon.jpg" } },
+              },
+            }],
+          });
+        }
         return jsonResponse({
           items: [{
-            snippet: { title: "API video", thumbnails: {} },
+            snippet: { title: "API video", thumbnails: {}, channelId: "UCapiVideo" },
             contentDetails: { duration: "PT1S" },
             statistics: {},
           }],
@@ -193,8 +204,63 @@ async function run(): Promise<void> {
     },
   );
   assert.equal(apiResult.status, "ok");
+  assert.equal(apiResult.preview.channelIconUrl, "https://yt3.ggpht.com/channel-icon.jpg");
   assert.match(fetchedUrls[0] ?? "", /^https:\/\/www\.googleapis\.com\/youtube\/v3\/videos\?/);
+  assert.match(fetchedUrls[1] ?? "", /^https:\/\/www\.googleapis\.com\/youtube\/v3\/channels\?/);
   assert.doesNotMatch(fetchedUrls.join("\n"), /search/);
+
+  const channelIconFailureResult = await fetchYouTubePreview(
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/icon-fail",
+      canonicalUrl: "https://www.youtube.com/watch?v=icon-fail",
+      id: "icon-fail",
+    },
+    {
+      apiKey: "api-key",
+      fetcher: async (url) => {
+        if (url.startsWith("https://www.googleapis.com/youtube/v3/channels?")) {
+          return jsonResponse({ error: { code: 500 } }, 500);
+        }
+        return jsonResponse({
+          items: [{
+            snippet: { title: "Video without icon", thumbnails: {}, channelId: "UCiconFail" },
+            contentDetails: { duration: "PT2S" },
+            statistics: {},
+          }],
+        });
+      },
+    },
+  );
+  assert.equal(channelIconFailureResult.status, "ok");
+  assert.equal(channelIconFailureResult.preview.title, "Video without icon");
+  assert.equal(channelIconFailureResult.preview.channelIconUrl, undefined);
+
+  const channelIconEmptyResult = await fetchYouTubePreview(
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/icon-empty",
+      canonicalUrl: "https://www.youtube.com/watch?v=icon-empty",
+      id: "icon-empty",
+    },
+    {
+      apiKey: "api-key",
+      fetcher: async (url) => {
+        if (url.startsWith("https://www.googleapis.com/youtube/v3/channels?")) {
+          return jsonResponse({ items: [] });
+        }
+        return jsonResponse({
+          items: [{
+            snippet: { title: "Video with empty icon response", thumbnails: {}, channelId: "UCiconEmpty" },
+            contentDetails: { duration: "PT3S" },
+            statistics: {},
+          }],
+        });
+      },
+    },
+  );
+  assert.equal(channelIconEmptyResult.status, "ok");
+  assert.equal(channelIconEmptyResult.preview.channelIconUrl, undefined);
 
   let now = 1_000;
   let cacheFetchCalls = 0;
@@ -352,11 +418,14 @@ async function run(): Promise<void> {
     title: "Payload video",
     description: "  Long   description\nwith\tspace  ",
     thumbnailUrl: "https://i.ytimg.com/vi/payload/maxresdefault.jpg",
+    channelIconUrl: "https://yt3.ggpht.com/payload-channel.jpg",
     channelTitle: "Creator",
     publishedAt: "2026-07-01T00:00:00Z",
     duration: "PT1H2M3S",
     viewCount: 1234567,
     liveBroadcastContent: "live",
+  }, {
+    mediaUrl: "https://media.example.com/payload.mp4",
   });
   assert.deepEqual(payload.embeds, []);
   assert.equal(payload.flags, MessageFlags.IsComponentsV2);
@@ -372,7 +441,7 @@ async function run(): Promise<void> {
   if (thumbnailAccessory.type !== ComponentType.Thumbnail) {
     throw new Error("expected thumbnail accessory");
   }
-  assert.equal(thumbnailAccessory.media.url, "https://i.ytimg.com/vi/payload/maxresdefault.jpg");
+  assert.equal(thumbnailAccessory.media.url, "https://yt3.ggpht.com/payload-channel.jpg");
   const body = section.components[0]!;
   assert.equal(body.type, ComponentType.TextDisplay);
   assert.match(body.content, /\*\*Payload video\*\*/);
@@ -384,7 +453,7 @@ async function run(): Promise<void> {
   assert.match(body.content, /再生数: 1,234,567/);
   assert.ok(body.content.length <= 4000);
   const gallery = container.components.find((component) => component.type === ComponentType.MediaGallery);
-  assert.equal(gallery?.items[0]?.media.url, "https://i.ytimg.com/vi/payload/maxresdefault.jpg");
+  assert.equal(gallery?.items[0]?.media.url, "https://media.example.com/payload.mp4");
   const row = container.components.at(-1)!;
   assert.equal(row.type, ComponentType.ActionRow);
   assert.equal(row.components[0]?.type, ComponentType.Button);
@@ -394,16 +463,7 @@ async function run(): Promise<void> {
 
   const safeFallbackPayload = buildYouTubePreviewPayload(safeFallbackVideo.preview);
   const safeFallbackContainer = safeFallbackPayload.components[0] as APIContainerComponent;
-  const safeFallbackSection = safeFallbackContainer.components.find(
-    (component): component is APISectionComponent => component.type === ComponentType.Section,
-  );
-  assert.ok(safeFallbackSection);
-  const safeFallbackAccessory = safeFallbackSection.accessory;
-  assert.equal(safeFallbackAccessory.type, ComponentType.Thumbnail);
-  if (safeFallbackAccessory.type !== ComponentType.Thumbnail) {
-    throw new Error("expected thumbnail accessory");
-  }
-  assert.equal(safeFallbackAccessory.media.url, "https://i.ytimg.com/vi/v/medium.jpg");
+  assert.equal(safeFallbackContainer.components[0]?.type, ComponentType.TextDisplay);
   const safeFallbackGallery = safeFallbackContainer.components.find(
     (component) => component.type === ComponentType.MediaGallery,
   );
@@ -427,6 +487,60 @@ async function run(): Promise<void> {
   assert.match(playlistBody.content, /動画数: 42/);
   assert.match(playlistBody.content, /- First\n- Second\n- Third/);
   assert.doesNotMatch(playlistBody.content, /Fourth/);
+
+  const noChannelIconPayload = buildYouTubePreviewPayload({
+    kind: "video",
+    url: "https://www.youtube.com/watch?v=no-channel-icon",
+    title: "No channel icon",
+    thumbnailUrl: "https://i.ytimg.com/vi/no-channel-icon/maxresdefault.jpg",
+  });
+  const noChannelIconContainer = noChannelIconPayload.components[0]! as APIContainerComponent;
+  assert.equal(noChannelIconContainer.components[0]?.type, ComponentType.TextDisplay);
+  const noChannelIconGallery = noChannelIconContainer.components.find((component) => component.type === ComponentType.MediaGallery);
+  assert.equal(noChannelIconGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/no-channel-icon/maxresdefault.jpg");
+
+  const oembedPayload = buildYouTubePreviewPayload({
+    kind: "oembed",
+    url: "https://www.youtube.com/watch?v=oembed-payload",
+    title: "OEmbed payload",
+    thumbnailUrl: "https://i.ytimg.com/vi/oembed-payload/hqdefault.jpg",
+    channelTitle: "OEmbed creator",
+  });
+  const oembedContainer = oembedPayload.components[0]! as APIContainerComponent;
+  assert.equal(oembedContainer.components[0]?.type, ComponentType.TextDisplay);
+
+  const safeHttpsOverridePayload = buildYouTubePreviewPayload({
+    kind: "video",
+    url: "https://www.youtube.com/watch?v=override-media",
+    title: "Override media",
+    thumbnailUrl: "http://example.com/not-safe.jpg",
+    channelIconUrl: "https://yt3.ggpht.com/override-channel.jpg",
+  }, {
+    mediaUrl: "https://media.example.com/override.mp4",
+  });
+  const safeHttpsOverrideContainer = safeHttpsOverridePayload.components[0]! as APIContainerComponent;
+  const safeHttpsOverrideSection = safeHttpsOverrideContainer.components[0] as APISectionComponent;
+  assert.equal(safeHttpsOverrideSection.type, ComponentType.Section);
+  const safeHttpsOverrideAccessory = safeHttpsOverrideSection.accessory;
+  assert.equal(safeHttpsOverrideAccessory.type, ComponentType.Thumbnail);
+  if (safeHttpsOverrideAccessory.type !== ComponentType.Thumbnail) {
+    throw new Error("expected thumbnail accessory");
+  }
+  assert.equal(safeHttpsOverrideAccessory.media.url, "https://yt3.ggpht.com/override-channel.jpg");
+  const safeHttpsOverrideGallery = safeHttpsOverrideContainer.components.find((component) => component.type === ComponentType.MediaGallery);
+  assert.equal(safeHttpsOverrideGallery?.items[0]?.media.url, "https://media.example.com/override.mp4");
+
+  const unsafeOverrideFallbackPayload = buildYouTubePreviewPayload({
+    kind: "video",
+    url: "https://www.youtube.com/watch?v=unsafe-override",
+    title: "Unsafe override fallback",
+    thumbnailUrl: "https://i.ytimg.com/vi/unsafe-override/maxresdefault.jpg",
+  }, {
+    mediaUrl: "http://media.example.com/not-safe.mp4",
+  });
+  const unsafeOverrideFallbackContainer = unsafeOverrideFallbackPayload.components[0]! as APIContainerComponent;
+  const unsafeOverrideFallbackGallery = unsafeOverrideFallbackContainer.components.find((component) => component.type === ComponentType.MediaGallery);
+  assert.equal(unsafeOverrideFallbackGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/unsafe-override/maxresdefault.jpg");
 
   const fallbackReply = buildYouTubeFallbackReply(["https://youtu.be/a", "https://youtu.be/b"]);
   assert.deepEqual(fallbackReply, {
@@ -474,6 +588,159 @@ async function run(): Promise<void> {
     content: "https://www.youtube.com/watch?v=reply-fail",
     allowedMentions: { parse: [], repliedUser: false },
   });
+
+  const mediaResolverCalls: string[] = [];
+  const resolvedVideoPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/with-media",
+      canonicalUrl: "https://www.youtube.com/watch?v=with-media",
+      id: "with-media",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async () => jsonResponse({
+      items: [{
+        snippet: {
+          title: "Video with media",
+          thumbnails: { high: { url: "https://i.ytimg.com/vi/with-media/hqdefault.jpg" } },
+        },
+        contentDetails: {},
+        statistics: {},
+      }],
+    }),
+    mediaResolver: async (url) => {
+      mediaResolverCalls.push(url);
+      return { status: "ok", mediaUrl: "https://media.example.com/with-media.mp4" };
+    },
+  });
+  const resolvedVideoContainer = resolvedVideoPayloads[0]?.components?.[0] as APIContainerComponent;
+  const resolvedVideoGallery = resolvedVideoContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.deepEqual(mediaResolverCalls, ["https://www.youtube.com/watch?v=with-media"]);
+  assert.equal(resolvedVideoGallery?.items[0]?.media.url, "https://media.example.com/with-media.mp4");
+
+  const fallbackResolverPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/media-fallback",
+      canonicalUrl: "https://www.youtube.com/watch?v=media-fallback",
+      id: "media-fallback",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async () => jsonResponse({
+      items: [{
+        snippet: {
+          title: "Video with thumbnail fallback",
+          thumbnails: { high: { url: "https://i.ytimg.com/vi/media-fallback/hqdefault.jpg" } },
+        },
+        contentDetails: {},
+        statistics: {},
+      }],
+    }),
+    mediaResolver: async () => ({ status: "fallback", reason: "cli_error" }),
+  });
+  const fallbackResolverContainer = fallbackResolverPayloads[0]?.components?.[0] as APIContainerComponent;
+  const fallbackResolverGallery = fallbackResolverContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(fallbackResolverGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-fallback/hqdefault.jpg");
+
+  const throwingResolverPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/media-throw",
+      canonicalUrl: "https://www.youtube.com/watch?v=media-throw",
+      id: "media-throw",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async () => jsonResponse({
+      items: [{
+        snippet: {
+          title: "Video with throwing resolver",
+          thumbnails: { high: { url: "https://i.ytimg.com/vi/media-throw/hqdefault.jpg" } },
+        },
+        contentDetails: {},
+        statistics: {},
+      }],
+    }),
+    mediaResolver: async () => {
+      throw new Error("yt-dlp exploded");
+    },
+  });
+  const throwingResolverContainer = throwingResolverPayloads[0]?.components?.[0] as APIContainerComponent;
+  const throwingResolverGallery = throwingResolverContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(throwingResolverGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-throw/hqdefault.jpg");
+
+  let nonVideoResolverCalls = 0;
+  await buildYouTubeReplyPayloads([
+    {
+      kind: "playlist",
+      originalUrl: "https://www.youtube.com/playlist?list=PL-non-video",
+      canonicalUrl: "https://www.youtube.com/playlist?list=PL-non-video",
+      id: "PL-non-video",
+    },
+    {
+      kind: "channel",
+      originalUrl: "https://www.youtube.com/@non-video",
+      canonicalUrl: "https://www.youtube.com/@non-video",
+      handle: "non-video",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async (url) => {
+      if (url.includes("/playlists?")) {
+        return jsonResponse({
+          items: [{
+            snippet: { title: "Playlist target", thumbnails: { medium: { url: "https://i.ytimg.com/playlist/non-video.jpg" } } },
+            contentDetails: { itemCount: 3 },
+          }],
+        });
+      }
+      if (url.includes("/playlistItems?")) {
+        return jsonResponse({ items: [{ snippet: { title: "First item" } }] });
+      }
+      return jsonResponse({
+        items: [{
+          snippet: { title: "Channel target", thumbnails: { default: { url: "https://yt3.ggpht.com/non-video.jpg" } } },
+          statistics: { subscriberCount: "1", videoCount: "2" },
+        }],
+      });
+    },
+    mediaResolver: async () => {
+      nonVideoResolverCalls += 1;
+      return { status: "ok", mediaUrl: "https://media.example.com/should-not-run.mp4" };
+    },
+  });
+  const oembedMediaPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/oembed-only",
+      canonicalUrl: "https://www.youtube.com/watch?v=oembed-only",
+      id: "oembed-only",
+    },
+  ], {
+    fetcher: async () => jsonResponse({
+      title: "OEmbed only",
+      author_name: "Author",
+      thumbnail_url: "https://i.ytimg.com/vi/oembed-only/hqdefault.jpg",
+    }),
+    mediaResolver: async () => {
+      nonVideoResolverCalls += 1;
+      return { status: "ok", mediaUrl: "https://media.example.com/oembed-only.mp4" };
+    },
+  });
+  const oembedMediaContainer = oembedMediaPayloads[0]?.components?.[0] as APIContainerComponent;
+  const oembedMediaGallery = oembedMediaContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(nonVideoResolverCalls, 1);
+  assert.equal(oembedMediaGallery?.items[0]?.media.url, "https://media.example.com/oembed-only.mp4");
 }
 
 run()

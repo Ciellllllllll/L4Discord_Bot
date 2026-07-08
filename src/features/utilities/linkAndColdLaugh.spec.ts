@@ -174,6 +174,41 @@ async function run(): Promise<void> {
   };
   await new LinkAndColdLaugh(createCtx({ YOUTUBE_PREVIEW_ENABLED: false }) as never).onMessage(youtubeDisabledMessage as never);
   assert.deepEqual(youtubeDisabledReplies, []);
+
+  const passedYoutubeOptions: unknown[] = [];
+  const injectedReplies: unknown[] = [];
+  const injectedMessage = {
+    ...message,
+    content: "youtube.com/watch?v=abc123",
+    reply: async (payload: unknown) => {
+      injectedReplies.push(payload);
+    },
+  };
+  const injectedCtx = createCtx({
+    YOUTUBE_YTDLP_ENABLED: false,
+    YOUTUBE_YTDLP_PATH: "custom-ytdlp",
+    YOUTUBE_YTDLP_TIMEOUT_MS: 4321,
+  });
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async (_targets, options) => {
+      passedYoutubeOptions.push(options);
+      return [{
+        content: "youtube injected reply",
+        allowedMentions: { parse: [], repliedUser: false },
+      }];
+    },
+  }).onMessage(injectedMessage as never);
+  assert.deepEqual(passedYoutubeOptions, [{
+    apiKey: "",
+    requestTimeoutMs: 10,
+    ytdlpEnabled: false,
+    ytdlpPath: "custom-ytdlp",
+    ytdlpTimeoutMs: 4321,
+    log: (injectedCtx as { log: unknown }).log,
+  }]);
+  assert.deepEqual(injectedReplies.map((payload) => (payload as { content?: string }).content), [
+    "youtube injected reply",
+  ]);
 }
 
 try {

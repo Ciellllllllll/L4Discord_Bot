@@ -145,6 +145,11 @@ export function extractYouTubeLinks(content: string): string[] {
 
 let lock = Promise.resolve();
 
+type LinkAndColdLaughDeps = {
+  buildVxTwitterReplyPayloads?: typeof buildVxTwitterReplyPayloads;
+  buildYouTubeReplyPayloads?: typeof buildYouTubeReplyPayloads;
+};
+
 async function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const prev = lock;
   let release!: () => void;
@@ -162,9 +167,14 @@ async function withLock<T>(fn: () => Promise<T>): Promise<T> {
 export class LinkAndColdLaugh {
   private readonly storePath: string;
   private coldLaughCounts: Record<string, number> = {};
+  private readonly deps: Required<LinkAndColdLaughDeps>;
 
-  constructor(private readonly ctx: BotContext) {
+  constructor(private readonly ctx: BotContext, deps: LinkAndColdLaughDeps = {}) {
     this.storePath = path.resolve(this.ctx.config.COLD_LAUGH_STORE_PATH);
+    this.deps = {
+      buildVxTwitterReplyPayloads: deps.buildVxTwitterReplyPayloads ?? buildVxTwitterReplyPayloads,
+      buildYouTubeReplyPayloads: deps.buildYouTubeReplyPayloads ?? buildYouTubeReplyPayloads,
+    };
     void this.loadCounts();
   }
 
@@ -256,7 +266,7 @@ export class LinkAndColdLaugh {
       await message.suppressEmbeds(true);
     } catch {}
 
-    const replyPayloads = await buildVxTwitterReplyPayloads(xReplyTargets, {
+    const replyPayloads = await this.deps.buildVxTwitterReplyPayloads(xReplyTargets, {
       config: this.ctx.config,
       log: this.ctx.log,
     });
@@ -268,9 +278,13 @@ export class LinkAndColdLaugh {
       }
     }
 
-    const youtubeReplyPayloads = await buildYouTubeReplyPayloads(youtubeReplyTargets, {
+    const youtubeReplyPayloads = await this.deps.buildYouTubeReplyPayloads(youtubeReplyTargets, {
       apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
       requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+      ytdlpEnabled: this.ctx.config.YOUTUBE_YTDLP_ENABLED,
+      ytdlpPath: this.ctx.config.YOUTUBE_YTDLP_PATH,
+      ytdlpTimeoutMs: this.ctx.config.YOUTUBE_YTDLP_TIMEOUT_MS,
+      log: this.ctx.log,
     });
     for (const payload of youtubeReplyPayloads) {
       try {

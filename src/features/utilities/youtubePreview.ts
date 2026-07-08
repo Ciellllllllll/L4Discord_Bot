@@ -15,6 +15,7 @@ import {
   type APITextDisplayComponent,
   type MessageCreateOptions,
 } from "discord.js";
+import { resolveYouTubeVideoMedia } from "./youtubeVideoMedia.js";
 
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -41,6 +42,8 @@ export type YouTubePreview = {
   title: string;
   description?: string;
   thumbnailUrl?: string;
+  channelId?: string;
+  channelIconUrl?: string;
   channelTitle?: string;
   publishedAt?: string;
   duration?: string;
@@ -68,6 +71,15 @@ export type YouTubePreviewBuildOptions = {
   apiKey?: string;
   requestTimeoutMs?: number;
   nowMs?: () => number;
+  ytdlpEnabled?: boolean;
+  ytdlpPath?: string;
+  ytdlpTimeoutMs?: number;
+  mediaResolver?: typeof resolveYouTubeVideoMedia;
+  log?: { warn?: (...args: unknown[]) => void };
+};
+
+export type YouTubePreviewPayloadOptions = {
+  mediaUrl?: string;
 };
 
 type CacheEntry = {
@@ -310,6 +322,7 @@ export function normalizeYouTubeVideoResponse(raw: unknown, canonicalUrl: string
       title,
       description: firstString(snippet?.description),
       thumbnailUrl: thumbnailUrl(snippet),
+      channelId: firstString(snippet?.channelId),
       channelTitle: firstString(snippet?.channelTitle),
       publishedAt: firstString(snippet?.publishedAt),
       duration: firstString(contentDetails?.duration),
@@ -429,6 +442,12 @@ async function fetchJson(
   }
 }
 
+function channelIconUrl(raw: unknown): string | undefined {
+  const item = firstItem(raw);
+  if (!item) return undefined;
+  return thumbnailUrl(asRecord(item.snippet));
+}
+
 async function fetchWithDataApi(
   target: YouTubeReplyTarget,
   apiKey: string,
@@ -445,7 +464,31 @@ async function fetchWithDataApi(
       fetcher,
       requestTimeoutMs,
     );
-    return fetched.ok ? normalizeYouTubeVideoResponse(fetched.value, target.canonicalUrl) : { status: "fallback", reason: fetched.reason };
+    if (!fetched.ok) return { status: "fallback", reason: fetched.reason };
+    const videoResult = normalizeYouTubeVideoResponse(fetched.value, target.canonicalUrl);
+    if (videoResult.status !== "ok" || !videoResult.preview.channelId) return videoResult;
+
+    const fetchedChannel = await fetchJson(
+      dataApiUrl("channels", {
+        part: "snippet",
+        id: videoResult.preview.channelId,
+        key: apiKey,
+      }),
+      fetcher,
+      requestTimeoutMs,
+    );
+    if (!fetchedChannel.ok) return videoResult;
+
+    const iconUrl = channelIconUrl(fetchedChannel.value);
+    if (!iconUrl) return videoResult;
+
+    return {
+      status: "ok",
+      preview: {
+        ...videoResult.preview,
+        channelIconUrl: iconUrl,
+      },
+    };
   }
 
   if (target.kind === "playlist" && target.id) {
@@ -622,29 +665,29 @@ function buildBodyText(preview: YouTubePreview): string {
   return lines.join("\n").slice(0, 4000);
 }
 
-function buildBodyComponent(preview: YouTubePreview, thumbnailUrl: string | undefined): APITextDisplayComponent | APISectionComponent {
+function buildBodyComponent(preview: YouTubePreview, channelIconUrl: string | undefined): APITextDisplayComponent | APISectionComponent {
   const body: APITextDisplayComponent = {
     type: ComponentType.TextDisplay,
     content: buildBodyText(preview),
   };
-  if (!thumbnailUrl) return body;
+  if (!channelIconUrl) return body;
   return {
     type: ComponentType.Section,
     components: [body],
     accessory: {
       type: ComponentType.Thumbnail,
-      media: { url: thumbnailUrl },
-      description: `${preview.title} thumbnail`.slice(0, 1024),
+      media: { url: channelIconUrl },
+      description: `${preview.channelTitle ?? preview.title} icon`.slice(0, 1024),
     },
   };
 }
 
-function buildMediaGallery(thumbnailUrl: string | undefined, title: string): APIMediaGalleryComponent | null {
-  if (!thumbnailUrl) return null;
+function buildMediaGallery(mediaUrl: string | undefined, title: string): APIMediaGalleryComponent | null {
+  if (!mediaUrl) return null;
   return {
     type: ComponentType.MediaGallery,
     items: [{
-      media: { url: thumbnailUrl },
+      media: { url: mediaUrl },
       description: `${title} thumbnail`.slice(0, 1024),
     }],
   };
@@ -658,11 +701,15 @@ function buildLinkRow(preview: YouTubePreview): APIActionRowComponent<APIButtonC
     .toJSON() as APIActionRowComponent<APIButtonComponent>;
 }
 
-export function buildYouTubePreviewPayload(preview: YouTubePreview): YouTubePreviewPayload {
-  const thumbnailUrl = safeHttpsUrl(preview.thumbnailUrl);
-  const gallery = buildMediaGallery(thumbnailUrl, preview.title);
+export function buildYouTubePreviewPayload(
+  preview: YouTubePreview,
+  options: YouTubePreviewPayloadOptions = {},
+): YouTubePreviewPayload {
+  const mediaUrl = safeHttpsUrl(options.mediaUrl) ?? safeHttpsUrl(preview.thumbnailUrl);
+  const channelIcon = safeHttpsUrl(preview.channelIconUrl);
+  const gallery = buildMediaGallery(mediaUrl, preview.title);
   const components: APIComponentInContainer[] = [
-    buildBodyComponent(preview, thumbnailUrl),
+    buildBodyComponent(preview, channelIcon),
     ...(gallery ? [gallery] : []),
     buildLinkRow(preview),
   ];
@@ -685,6 +732,46 @@ export function buildYouTubeFallbackReply(urls: readonly string[]): MessageCreat
   };
 }
 
+function mediaResolverTargetUrl(target: YouTubeReplyTarget, preview: YouTubePreview): string | null {
+  if (target.kind !== "video") return null;
+  if (!["video", "oembed"].includes(preview.kind)) return null;
+  const previewTarget = parseYouTubeUrl(preview.url);
+  if (previewTarget?.kind === "video") return previewTarget.canonicalUrl;
+  const canonicalTarget = parseYouTubeUrl(target.canonicalUrl);
+  return canonicalTarget?.kind === "video" ? canonicalTarget.canonicalUrl : null;
+}
+
+async function resolvePreviewMediaUrl(
+  target: YouTubeReplyTarget,
+  preview: YouTubePreview,
+  options: YouTubePreviewBuildOptions,
+): Promise<string | undefined> {
+  const resolverTargetUrl = mediaResolverTargetUrl(target, preview);
+  if (!resolverTargetUrl) return undefined;
+
+  const mediaResolver = options.mediaResolver ?? resolveYouTubeVideoMedia;
+  try {
+    const mediaResult = await mediaResolver(resolverTargetUrl, {
+      enabled: options.ytdlpEnabled,
+      ytdlpPath: options.ytdlpPath,
+      timeoutMs: options.ytdlpTimeoutMs,
+    });
+    if (mediaResult.status === "ok") return mediaResult.mediaUrl;
+    if (mediaResult.reason !== "disabled") {
+      options.log?.warn?.(
+        { url: resolverTargetUrl, reason: mediaResult.reason },
+        "youtube preview media resolver fallback",
+      );
+    }
+  } catch (err) {
+    options.log?.warn?.(
+      { err, url: resolverTargetUrl },
+      "youtube preview media resolver error",
+    );
+  }
+  return undefined;
+}
+
 export async function buildYouTubeReplyPayloads(
   targets: readonly YouTubeReplyTarget[],
   options: YouTubePreviewBuildOptions = {},
@@ -695,7 +782,11 @@ export async function buildYouTubeReplyPayloads(
     }
     const result = await fetchYouTubePreview(target, options);
     if (result.status === "ok") {
-      return buildYouTubePreviewPayload(result.preview);
+      const mediaUrl = await resolvePreviewMediaUrl(target, result.preview, options);
+      return buildYouTubePreviewPayload(
+        result.preview,
+        mediaUrl ? { mediaUrl } : {},
+      );
     }
     return buildYouTubeFallbackReply([target.canonicalUrl]);
   }));
