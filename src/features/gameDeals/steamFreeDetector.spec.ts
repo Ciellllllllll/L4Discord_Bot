@@ -72,6 +72,29 @@ function cheapSharkDeal(extra: Partial<CheapSharkDeal> = {}): CheapSharkDeal {
   };
 }
 
+function countCatalogPointLookups(db: Database.Database): { db: Database.Database; getCount: () => number } {
+  let count = 0;
+  const wrapped = new Proxy(db, {
+    get(target, prop, receiver) {
+      if (prop !== "prepare") return Reflect.get(target, prop, receiver);
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!/FROM steam_app_catalog WHERE appid = \?/.test(sql)) return statement;
+        return new Proxy(statement, {
+          get(statementTarget, statementProp, statementReceiver) {
+            if (statementProp !== "get") return Reflect.get(statementTarget, statementProp, statementReceiver);
+            return (...args: unknown[]) => {
+              count += 1;
+              return statement.get(...args);
+            };
+          },
+        });
+      };
+    },
+  }) as Database.Database;
+  return { db: wrapped, getCount: () => count };
+}
+
 function runDetector(input: {
   appdetails?: SteamAppDetails | null;
   searchItem?: SteamSearchItem | null;
@@ -122,6 +145,20 @@ async function run(): Promise<void> {
   assert.equal(baseline.changes.length, 0);
   const changed = repo.upsertSteamAppCatalog([{ appid: "123", name: "Paid Game", lastModified: 101, priceChangeNumber: 2 }]);
   assert.equal(changed.changes.length, 1);
+
+  const lookupDb = new Database(":memory:");
+  const lookupCounter = countCatalogPointLookups(lookupDb);
+  const lookupRepo = new GameDealRepository(lookupCounter.db);
+  lookupRepo.upsertSteamAppCatalog([
+    { appid: "1", name: "One", lastModified: 100, priceChangeNumber: 1 },
+    { appid: "2", name: "Two", lastModified: 100, priceChangeNumber: 1 },
+  ]);
+  lookupRepo.upsertSteamAppCatalog([
+    { appid: "1", name: "One", lastModified: 101, priceChangeNumber: 2 },
+    { appid: "2", name: "Two", lastModified: 100, priceChangeNumber: 1 },
+  ]);
+  assert.equal(lookupCounter.getCount(), 0);
+  lookupDb.close();
 
   const event: SteamFreeEvent = {
     appid: "123",

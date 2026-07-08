@@ -957,10 +957,12 @@ export class GameDealRepository {
     const now = sqliteTimestamp();
     const baselineCreated = !this.hasSteamAppCatalog();
     const changes: SteamAppCatalogChange[] = [];
-    const select = this.db
-      .prepare<[string], SteamAppCatalogRow>(
-        "SELECT appid, name, last_modified, price_change_number FROM steam_app_catalog WHERE appid = ?",
-      );
+    const previousByAppid = new Map(
+      this.db
+        .prepare<[], SteamAppCatalogRow>("SELECT appid, name, last_modified, price_change_number FROM steam_app_catalog")
+        .all()
+        .map((row) => [row.appid, row]),
+    );
     const upsert = this.db.prepare(
       `
       INSERT INTO steam_app_catalog (appid, name, last_modified, price_change_number, first_seen_at, last_seen_at)
@@ -974,7 +976,7 @@ export class GameDealRepository {
     );
     const tx = this.db.transaction((entries: SteamAppCatalogEntry[]) => {
       for (const app of entries) {
-        const previous = select.get(app.appid);
+        const previous = previousByAppid.get(app.appid);
         if (
           previous &&
           (previous.last_modified !== app.lastModified || previous.price_change_number !== app.priceChangeNumber)
