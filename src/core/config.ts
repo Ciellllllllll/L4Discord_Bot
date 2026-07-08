@@ -93,6 +93,9 @@ const profileOverridableKeys = [
   "YOUTUBE_PREVIEW_ENABLED",
   "YOUTUBE_DATA_API_KEY",
   "YOUTUBE_REQUEST_TIMEOUT_MS",
+  "YOUTUBE_YTDLP_ENABLED",
+  "YOUTUBE_YTDLP_PATH",
+  "YOUTUBE_YTDLP_TIMEOUT_MS",
   "GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS",
   "GAME_DEAL_STEAM_VERIFY_INTERVAL_MS",
   "GAME_DEAL_STEAM_NOW_INTERVAL_MS",
@@ -396,6 +399,15 @@ const envSchema = z.object({
   YOUTUBE_REQUEST_TIMEOUT_MS: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  ),
+  YOUTUBE_YTDLP_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
+  YOUTUBE_YTDLP_PATH: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().min(1).default("yt-dlp"),
+  ),
+  YOUTUBE_YTDLP_TIMEOUT_MS: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.coerce.number().int().min(1_000).max(30_000).default(15_000),
   ),
   GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
   GAME_DEAL_STEAM_VERIFY_INTERVAL_MS: z.coerce.number().int().min(10_000).default(60_000),

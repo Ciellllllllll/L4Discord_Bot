@@ -25,6 +25,8 @@ const productionConfig = loadConfig(
     GAME_DEAL_EPIC_INTERVAL_MS: "3600000",
     GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "3600000",
     YOUTUBE_DATA_API_KEY: "common-youtube-key",
+    YOUTUBE_YTDLP_PATH: "common-ytdlp",
+    YOUTUBE_YTDLP_TIMEOUT_MS: "15000",
     PRODUCTION_GAME_DEAL_CHANNEL_ID: "production-game-deal-channel",
     PRODUCTION_GAME_DEAL_NOTIFY_ROLE_ID: "production-game-deal-role",
     PRODUCTION_STEAM_WEB_API_KEY: "production-steam-key",
@@ -35,6 +37,9 @@ const productionConfig = loadConfig(
     PRODUCTION_GAME_DEAL_EPIC_INTERVAL_MS: "7200000",
     PRODUCTION_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "5400000",
     PRODUCTION_YOUTUBE_DATA_API_KEY: "production-youtube-key",
+    PRODUCTION_YOUTUBE_YTDLP_ENABLED: "0",
+    PRODUCTION_YOUTUBE_YTDLP_PATH: "production-ytdlp",
+    PRODUCTION_YOUTUBE_YTDLP_TIMEOUT_MS: "20000",
     DEBUG_GAME_DEAL_CHANNEL_ID: "debug-game-deal-channel",
     DEBUG_GAME_DEAL_NOTIFY_ROLE_ID: "debug-game-deal-role",
     DEBUG_STEAM_WEB_API_KEY: "debug-steam-key",
@@ -45,6 +50,9 @@ const productionConfig = loadConfig(
     DEBUG_GAME_DEAL_EPIC_INTERVAL_MS: "120000",
     DEBUG_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "180000",
     DEBUG_YOUTUBE_DATA_API_KEY: "debug-youtube-key",
+    DEBUG_YOUTUBE_YTDLP_ENABLED: "false",
+    DEBUG_YOUTUBE_YTDLP_PATH: "debug-ytdlp",
+    DEBUG_YOUTUBE_YTDLP_TIMEOUT_MS: "12000",
   }),
 );
 
@@ -59,6 +67,9 @@ assert.equal(productionConfig.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE, 40);
 assert.equal(productionConfig.GAME_DEAL_EPIC_INTERVAL_MS, 7200000);
 assert.equal(productionConfig.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS, 5400000);
 assert.equal(productionConfig.YOUTUBE_DATA_API_KEY, "production-youtube-key");
+assert.equal(productionConfig.YOUTUBE_YTDLP_ENABLED, false);
+assert.equal(productionConfig.YOUTUBE_YTDLP_PATH, "production-ytdlp");
+assert.equal(productionConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 20000);
 
 const debugConfig = loadConfig(
   baseEnv({
@@ -73,6 +84,8 @@ const debugConfig = loadConfig(
     GAME_DEAL_EPIC_INTERVAL_MS: "3600000",
     GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "3600000",
     YOUTUBE_DATA_API_KEY: "common-youtube-key",
+    YOUTUBE_YTDLP_PATH: "common-ytdlp",
+    YOUTUBE_YTDLP_TIMEOUT_MS: "15000",
     PRODUCTION_GAME_DEAL_CHANNEL_ID: "production-game-deal-channel",
     PRODUCTION_GAME_DEAL_NOTIFY_ROLE_ID: "production-game-deal-role",
     PRODUCTION_STEAM_WEB_API_KEY: "production-steam-key",
@@ -83,6 +96,9 @@ const debugConfig = loadConfig(
     PRODUCTION_GAME_DEAL_EPIC_INTERVAL_MS: "7200000",
     PRODUCTION_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "5400000",
     PRODUCTION_YOUTUBE_DATA_API_KEY: "production-youtube-key",
+    PRODUCTION_YOUTUBE_YTDLP_ENABLED: "0",
+    PRODUCTION_YOUTUBE_YTDLP_PATH: "production-ytdlp",
+    PRODUCTION_YOUTUBE_YTDLP_TIMEOUT_MS: "20000",
     DEBUG_GAME_DEAL_CHANNEL_ID: "debug-game-deal-channel",
     DEBUG_GAME_DEAL_NOTIFY_ROLE_ID: "debug-game-deal-role",
     DEBUG_STEAM_WEB_API_KEY: "debug-steam-key",
@@ -93,6 +109,9 @@ const debugConfig = loadConfig(
     DEBUG_GAME_DEAL_EPIC_INTERVAL_MS: "120000",
     DEBUG_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "180000",
     DEBUG_YOUTUBE_DATA_API_KEY: "debug-youtube-key",
+    DEBUG_YOUTUBE_YTDLP_ENABLED: "false",
+    DEBUG_YOUTUBE_YTDLP_PATH: "debug-ytdlp",
+    DEBUG_YOUTUBE_YTDLP_TIMEOUT_MS: "12000",
   }),
 );
 
@@ -107,6 +126,9 @@ assert.equal(debugConfig.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE, 5);
 assert.equal(debugConfig.GAME_DEAL_EPIC_INTERVAL_MS, 120000);
 assert.equal(debugConfig.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS, 180000);
 assert.equal(debugConfig.YOUTUBE_DATA_API_KEY, "debug-youtube-key");
+assert.equal(debugConfig.YOUTUBE_YTDLP_ENABLED, false);
+assert.equal(debugConfig.YOUTUBE_YTDLP_PATH, "debug-ytdlp");
+assert.equal(debugConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 12000);
 
 const fallbackConfig = loadConfig(
   baseEnv({
@@ -129,6 +151,9 @@ assert.equal(fallbackConfig.LOCAL_LLM_TEMPERATURE, fallbackConfig.AI_TEMPERATURE
 assert.equal(fallbackConfig.YOUTUBE_PREVIEW_ENABLED, true);
 assert.equal(fallbackConfig.YOUTUBE_DATA_API_KEY, "");
 assert.equal(fallbackConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 10000);
+assert.equal(fallbackConfig.YOUTUBE_YTDLP_ENABLED, true);
+assert.equal(fallbackConfig.YOUTUBE_YTDLP_PATH, "yt-dlp");
+assert.equal(fallbackConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 15000);
 
 for (const value of ["0", "false", "off", "no"]) {
   const youtubeDisabledConfig = loadConfig(
@@ -140,16 +165,32 @@ for (const value of ["0", "false", "off", "no"]) {
   assert.equal(youtubeDisabledConfig.YOUTUBE_PREVIEW_ENABLED, false);
 }
 
+for (const value of ["0", "false", "off", "no"]) {
+  const youtubeYtdlpDisabledConfig = loadConfig(
+    baseEnv({
+      PROFILE: "debug",
+      YOUTUBE_YTDLP_ENABLED: value,
+    }),
+  );
+  assert.equal(youtubeYtdlpDisabledConfig.YOUTUBE_YTDLP_ENABLED, false);
+}
+
 const youtubeEmptyConfig = loadConfig(
   baseEnv({
     PROFILE: "debug",
     YOUTUBE_PREVIEW_ENABLED: "",
     YOUTUBE_REQUEST_TIMEOUT_MS: "",
+    YOUTUBE_YTDLP_ENABLED: "",
+    YOUTUBE_YTDLP_PATH: "",
+    YOUTUBE_YTDLP_TIMEOUT_MS: "",
   }),
 );
 
 assert.equal(youtubeEmptyConfig.YOUTUBE_PREVIEW_ENABLED, true);
 assert.equal(youtubeEmptyConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 10000);
+assert.equal(youtubeEmptyConfig.YOUTUBE_YTDLP_ENABLED, true);
+assert.equal(youtubeEmptyConfig.YOUTUBE_YTDLP_PATH, "yt-dlp");
+assert.equal(youtubeEmptyConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 15000);
 
 const youtubeNullApiKeyConfig = loadConfig({
   ...baseEnv({ PROFILE: "debug" }),
@@ -174,6 +215,24 @@ assert.throws(
 assert.throws(
   () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_REQUEST_TIMEOUT_MS: "30001" })),
   /YOUTUBE_REQUEST_TIMEOUT_MS/,
+);
+
+const youtubeYtdlpTimeoutConfig = loadConfig(
+  baseEnv({
+    PROFILE: "debug",
+    YOUTUBE_YTDLP_TIMEOUT_MS: "30000",
+  }),
+);
+
+assert.equal(youtubeYtdlpTimeoutConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 30000);
+
+assert.throws(
+  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_YTDLP_TIMEOUT_MS: "999" })),
+  /YOUTUBE_YTDLP_TIMEOUT_MS/,
+);
+assert.throws(
+  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_YTDLP_TIMEOUT_MS: "30001" })),
+  /YOUTUBE_YTDLP_TIMEOUT_MS/,
 );
 
 const localLlmConfig = loadConfig(
