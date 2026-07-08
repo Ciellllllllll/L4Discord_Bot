@@ -48,12 +48,14 @@ async function run(): Promise<void> {
   assert.equal(coldLaughHitsForMessageContent("youtu.be/落ち着けw"), 0);
   assert.equal(coldLaughHitsForMessageContent("youtube.com/watch?v=怒んなやw"), 0);
   assert.equal(coldLaughHitsForMessageContent("music.youtube.com/watch?v=落ち着けw"), 0);
+  assert.equal(coldLaughHitsForMessageContent("notyoutube.com/watch?v=落ち着けw"), 2);
 
   assert.equal(coldLaughHitsForMessageContent("落ち着けw https://example.com/post"), 2);
   assert.equal(coldLaughHitsForMessageContent("https://example.com/post 怒んなやw"), 1);
 
   assert.equal(stripLinksForColdLaughContent("see https://example.com/落ち着けw now").trim(), "see   now");
   assert.equal(stripLinksForColdLaughContent("see youtu.be/落ち着けw now").trim(), "see   now");
+  assert.equal(stripLinksForColdLaughContent("see notyoutube.com/watch?v=落ち着けw now"), "see notyoutube.com/watch?v=落ち着けw now");
 
   const mixed = "x.com/user/status/123 youtube.com/watch?v=abc youtu.be/def www.youtu.be/ghi twitter.com/user/status/456";
   assert.deepEqual(extractXLinks(mixed), [
@@ -64,6 +66,35 @@ async function run(): Promise<void> {
     "youtube.com/watch?v=abc",
     "youtu.be/def",
     "www.youtu.be/ghi",
+  ]);
+  assert.deepEqual(extractYouTubeLinks("notyoutube.com/watch?v=落ち着けw"), []);
+  assert.deepEqual(extractYouTubeLinks("https://example.com/path/youtube.com/watch?v=落ち着けw"), []);
+  assert.deepEqual(extractYouTubeLinks([
+    "youtube.com/watch?v=bare",
+    "www.youtube.com/watch?v=www",
+    "m.youtube.com/watch?v=mobile",
+    "music.youtube.com/watch?v=music",
+    "youtu.be/short",
+    "www.youtu.be/www-short",
+    "https://youtube.com/watch?v=scheme",
+    "https://www.youtube.com/watch?v=scheme-www",
+    "https://m.youtube.com/watch?v=scheme-mobile",
+    "https://music.youtube.com/watch?v=scheme-music",
+    "https://youtu.be/scheme-short",
+    "https://www.youtu.be/scheme-www-short",
+  ].join(" ")), [
+    "youtube.com/watch?v=bare",
+    "www.youtube.com/watch?v=www",
+    "m.youtube.com/watch?v=mobile",
+    "music.youtube.com/watch?v=music",
+    "youtu.be/short",
+    "www.youtu.be/www-short",
+    "https://youtube.com/watch?v=scheme",
+    "https://www.youtube.com/watch?v=scheme-www",
+    "https://m.youtube.com/watch?v=scheme-mobile",
+    "https://music.youtube.com/watch?v=scheme-music",
+    "https://youtu.be/scheme-short",
+    "https://www.youtu.be/scheme-www-short",
   ]);
 
   const replies: unknown[] = [];
