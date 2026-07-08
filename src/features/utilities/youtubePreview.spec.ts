@@ -220,6 +220,51 @@ async function run(): Promise<void> {
   );
   assert.equal(noKeyPlaylist.status, "fallback");
 
+  const playlistItemsInvalidJson = await fetchYouTubePreview(
+    {
+      kind: "playlist",
+      originalUrl: "https://www.youtube.com/playlist?list=PL-invalid-items",
+      canonicalUrl: "https://www.youtube.com/playlist?list=PL-invalid-items",
+      id: "PL-invalid-items",
+    },
+    {
+      apiKey: "key",
+      fetcher: async (url) => {
+        if (url.includes("/playlists?")) {
+          return jsonResponse({
+            items: [{
+              snippet: { title: "Playlist with invalid items", thumbnails: {} },
+              contentDetails: { itemCount: 1 },
+            }],
+          });
+        }
+        return new Response("{", { status: 200 });
+      },
+    },
+  );
+  assert.deepEqual(playlistItemsInvalidJson, { status: "fallback", reason: "invalid_json" });
+
+  const playlistItemsEmpty = await fetchYouTubePreview(
+    {
+      kind: "playlist",
+      originalUrl: "https://www.youtube.com/playlist?list=PL-empty-items",
+      canonicalUrl: "https://www.youtube.com/playlist?list=PL-empty-items",
+      id: "PL-empty-items",
+    },
+    {
+      apiKey: "key",
+      fetcher: async (url) => jsonResponse(url.includes("/playlists?")
+        ? {
+          items: [{
+            snippet: { title: "Playlist with empty items", thumbnails: {} },
+            contentDetails: { itemCount: 0 },
+          }],
+        }
+        : { items: [] }),
+    },
+  );
+  assert.deepEqual(playlistItemsEmpty, { status: "fallback", reason: "empty_items" });
+
   const invalidJson = await fetchYouTubePreview(
     { kind: "video", originalUrl: "https://youtu.be/bad", canonicalUrl: "https://www.youtube.com/watch?v=bad", id: "bad" },
     { apiKey: "key", fetcher: async () => new Response("{", { status: 200 }) },

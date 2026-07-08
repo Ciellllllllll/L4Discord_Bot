@@ -446,10 +446,14 @@ async function fetchWithDataApi(
       fetcher,
       requestTimeoutMs,
     );
+    if (!fetchedItems.ok) return { status: "fallback", reason: fetchedItems.reason };
+    if (arrayValue(asRecord(fetchedItems.value)?.items).length === 0) {
+      return { status: "fallback", reason: "empty_items" };
+    }
     return normalizeYouTubePlaylistResponse(
       fetchedPlaylist.value,
       target.canonicalUrl,
-      fetchedItems.ok ? fetchedItems.value : undefined,
+      fetchedItems.value,
     );
   }
 
