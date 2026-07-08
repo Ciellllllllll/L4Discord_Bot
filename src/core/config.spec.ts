@@ -24,6 +24,7 @@ const productionConfig = loadConfig(
     GAME_DEAL_STEAM_VERIFY_BATCH_SIZE: "20",
     GAME_DEAL_EPIC_INTERVAL_MS: "3600000",
     GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "3600000",
+    YOUTUBE_DATA_API_KEY: "common-youtube-key",
     PRODUCTION_GAME_DEAL_CHANNEL_ID: "production-game-deal-channel",
     PRODUCTION_GAME_DEAL_NOTIFY_ROLE_ID: "production-game-deal-role",
     PRODUCTION_STEAM_WEB_API_KEY: "production-steam-key",
@@ -33,6 +34,7 @@ const productionConfig = loadConfig(
     PRODUCTION_GAME_DEAL_STEAM_VERIFY_BATCH_SIZE: "40",
     PRODUCTION_GAME_DEAL_EPIC_INTERVAL_MS: "7200000",
     PRODUCTION_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "5400000",
+    PRODUCTION_YOUTUBE_DATA_API_KEY: "production-youtube-key",
     DEBUG_GAME_DEAL_CHANNEL_ID: "debug-game-deal-channel",
     DEBUG_GAME_DEAL_NOTIFY_ROLE_ID: "debug-game-deal-role",
     DEBUG_STEAM_WEB_API_KEY: "debug-steam-key",
@@ -42,6 +44,7 @@ const productionConfig = loadConfig(
     DEBUG_GAME_DEAL_STEAM_VERIFY_BATCH_SIZE: "5",
     DEBUG_GAME_DEAL_EPIC_INTERVAL_MS: "120000",
     DEBUG_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "180000",
+    DEBUG_YOUTUBE_DATA_API_KEY: "debug-youtube-key",
   }),
 );
 
@@ -55,6 +58,7 @@ assert.equal(productionConfig.GAME_DEAL_STEAM_NOW_INTERVAL_MS, 2400000);
 assert.equal(productionConfig.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE, 40);
 assert.equal(productionConfig.GAME_DEAL_EPIC_INTERVAL_MS, 7200000);
 assert.equal(productionConfig.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS, 5400000);
+assert.equal(productionConfig.YOUTUBE_DATA_API_KEY, "production-youtube-key");
 
 const debugConfig = loadConfig(
   baseEnv({
@@ -68,6 +72,7 @@ const debugConfig = loadConfig(
     GAME_DEAL_STEAM_VERIFY_BATCH_SIZE: "20",
     GAME_DEAL_EPIC_INTERVAL_MS: "3600000",
     GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "3600000",
+    YOUTUBE_DATA_API_KEY: "common-youtube-key",
     PRODUCTION_GAME_DEAL_CHANNEL_ID: "production-game-deal-channel",
     PRODUCTION_GAME_DEAL_NOTIFY_ROLE_ID: "production-game-deal-role",
     PRODUCTION_STEAM_WEB_API_KEY: "production-steam-key",
@@ -77,6 +82,7 @@ const debugConfig = loadConfig(
     PRODUCTION_GAME_DEAL_STEAM_VERIFY_BATCH_SIZE: "40",
     PRODUCTION_GAME_DEAL_EPIC_INTERVAL_MS: "7200000",
     PRODUCTION_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "5400000",
+    PRODUCTION_YOUTUBE_DATA_API_KEY: "production-youtube-key",
     DEBUG_GAME_DEAL_CHANNEL_ID: "debug-game-deal-channel",
     DEBUG_GAME_DEAL_NOTIFY_ROLE_ID: "debug-game-deal-role",
     DEBUG_STEAM_WEB_API_KEY: "debug-steam-key",
@@ -86,6 +92,7 @@ const debugConfig = loadConfig(
     DEBUG_GAME_DEAL_STEAM_VERIFY_BATCH_SIZE: "5",
     DEBUG_GAME_DEAL_EPIC_INTERVAL_MS: "120000",
     DEBUG_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "180000",
+    DEBUG_YOUTUBE_DATA_API_KEY: "debug-youtube-key",
   }),
 );
 
@@ -99,6 +106,7 @@ assert.equal(debugConfig.GAME_DEAL_STEAM_NOW_INTERVAL_MS, 600000);
 assert.equal(debugConfig.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE, 5);
 assert.equal(debugConfig.GAME_DEAL_EPIC_INTERVAL_MS, 120000);
 assert.equal(debugConfig.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS, 180000);
+assert.equal(debugConfig.YOUTUBE_DATA_API_KEY, "debug-youtube-key");
 
 const fallbackConfig = loadConfig(
   baseEnv({
@@ -118,6 +126,55 @@ assert.equal(fallbackConfig.LOCAL_LLM_TIMEOUT_MS, 180000);
 assert.equal(fallbackConfig.LOCAL_LLM_MAX_CONCURRENT, 1);
 assert.equal(fallbackConfig.LOCAL_LLM_MAX_QUEUE, 3);
 assert.equal(fallbackConfig.LOCAL_LLM_TEMPERATURE, fallbackConfig.AI_TEMPERATURE);
+assert.equal(fallbackConfig.YOUTUBE_PREVIEW_ENABLED, true);
+assert.equal(fallbackConfig.YOUTUBE_DATA_API_KEY, "");
+assert.equal(fallbackConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 10000);
+
+for (const value of ["0", "false", "off", "no"]) {
+  const youtubeDisabledConfig = loadConfig(
+    baseEnv({
+      PROFILE: "debug",
+      YOUTUBE_PREVIEW_ENABLED: value,
+    }),
+  );
+  assert.equal(youtubeDisabledConfig.YOUTUBE_PREVIEW_ENABLED, false);
+}
+
+const youtubeEmptyConfig = loadConfig(
+  baseEnv({
+    PROFILE: "debug",
+    YOUTUBE_PREVIEW_ENABLED: "",
+    YOUTUBE_REQUEST_TIMEOUT_MS: "",
+  }),
+);
+
+assert.equal(youtubeEmptyConfig.YOUTUBE_PREVIEW_ENABLED, true);
+assert.equal(youtubeEmptyConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 10000);
+
+const youtubeNullApiKeyConfig = loadConfig({
+  ...baseEnv({ PROFILE: "debug" }),
+  YOUTUBE_DATA_API_KEY: null,
+} as unknown as NodeJS.ProcessEnv);
+
+assert.equal(youtubeNullApiKeyConfig.YOUTUBE_DATA_API_KEY, "");
+
+const youtubeTimeoutConfig = loadConfig(
+  baseEnv({
+    PROFILE: "debug",
+    YOUTUBE_REQUEST_TIMEOUT_MS: "30000",
+  }),
+);
+
+assert.equal(youtubeTimeoutConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 30000);
+
+assert.throws(
+  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_REQUEST_TIMEOUT_MS: "999" })),
+  /YOUTUBE_REQUEST_TIMEOUT_MS/,
+);
+assert.throws(
+  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_REQUEST_TIMEOUT_MS: "30001" })),
+  /YOUTUBE_REQUEST_TIMEOUT_MS/,
+);
 
 const localLlmConfig = loadConfig(
   baseEnv({
