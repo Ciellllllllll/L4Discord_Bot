@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent } from "discord.js";
+import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent, type APISectionComponent } from "discord.js";
 import {
   buildYouTubeFallbackReply,
   buildYouTubePreviewPayload,
@@ -108,6 +108,26 @@ async function run(): Promise<void> {
   assert.equal(video.preview.viewCount, 12345);
   assert.equal(video.preview.thumbnailUrl, "https://i.ytimg.com/vi/v/high.jpg");
   assert.equal(normalizeYouTubeVideoResponse({ items: [] }, "https://www.youtube.com/watch?v=v").status, "fallback");
+
+  const safeFallbackVideo = normalizeYouTubeVideoResponse({
+    items: [{
+      snippet: {
+        title: "Video with fallback thumbnail",
+        description: "Video description",
+        channelTitle: "Channel",
+        publishedAt: "2026-07-01T00:00:00Z",
+        liveBroadcastContent: "none",
+        thumbnails: {
+          maxres: { url: "http://example.com/not-safe.jpg" },
+          medium: { url: "https://i.ytimg.com/vi/v/medium.jpg" },
+        },
+      },
+      contentDetails: { duration: "PT1M2S" },
+      statistics: { viewCount: "12345" },
+    }],
+  }, "https://www.youtube.com/watch?v=v");
+  assert.equal(safeFallbackVideo.status, "ok");
+  assert.equal(safeFallbackVideo.preview.thumbnailUrl, "https://i.ytimg.com/vi/v/medium.jpg");
 
   const playlist = normalizeYouTubePlaylistResponse({
     items: [{
@@ -346,9 +366,13 @@ async function run(): Promise<void> {
   const container = payload.components[0]!;
   assert.equal(container.type, ComponentType.Container);
   assert.equal(container.components[0]?.type, ComponentType.Section);
-  const section = container.components[0]!;
+  const section = container.components[0] as APISectionComponent;
   assert.equal(section.accessory.type, ComponentType.Thumbnail);
-  assert.equal(section.accessory.media.url, "https://i.ytimg.com/vi/payload/maxresdefault.jpg");
+  const thumbnailAccessory = section.accessory;
+  if (thumbnailAccessory.type !== ComponentType.Thumbnail) {
+    throw new Error("expected thumbnail accessory");
+  }
+  assert.equal(thumbnailAccessory.media.url, "https://i.ytimg.com/vi/payload/maxresdefault.jpg");
   const body = section.components[0]!;
   assert.equal(body.type, ComponentType.TextDisplay);
   assert.match(body.content, /\*\*Payload video\*\*/);
@@ -367,6 +391,23 @@ async function run(): Promise<void> {
   assert.equal(row.components[0]?.style, ButtonStyle.Link);
   assert.equal(row.components[0]?.label, "YouTubeで開く");
   assert.equal(row.components[0]?.url, "https://www.youtube.com/watch?v=payload");
+
+  const safeFallbackPayload = buildYouTubePreviewPayload(safeFallbackVideo.preview);
+  const safeFallbackContainer = safeFallbackPayload.components[0] as APIContainerComponent;
+  const safeFallbackSection = safeFallbackContainer.components.find(
+    (component): component is APISectionComponent => component.type === ComponentType.Section,
+  );
+  assert.ok(safeFallbackSection);
+  const safeFallbackAccessory = safeFallbackSection.accessory;
+  assert.equal(safeFallbackAccessory.type, ComponentType.Thumbnail);
+  if (safeFallbackAccessory.type !== ComponentType.Thumbnail) {
+    throw new Error("expected thumbnail accessory");
+  }
+  assert.equal(safeFallbackAccessory.media.url, "https://i.ytimg.com/vi/v/medium.jpg");
+  const safeFallbackGallery = safeFallbackContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(safeFallbackGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/v/medium.jpg");
 
   const playlistPayload = buildYouTubePreviewPayload({
     kind: "playlist",
