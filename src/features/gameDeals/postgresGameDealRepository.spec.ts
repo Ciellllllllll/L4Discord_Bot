@@ -7,6 +7,11 @@ import {
 import type { CheapSharkDeal } from "./cheapSharkTypes.js";
 import type { GameDealSubscription, SteamFreeEvent } from "./gameDealTypes.js";
 
+type CapturingPool = {
+  queries: string[];
+  query: (sql: string) => Promise<{ rows: unknown[] }>;
+};
+
 const expectedTables = [
   "deal_detected_items",
   "deal_watch_items",
@@ -24,6 +29,33 @@ const expectedTables = [
 
 function tempSchemaName(): string {
   return `game_deals_spec_${process.pid}_${Date.now()}`;
+}
+
+function createCapturingPool(): CapturingPool {
+  return {
+    queries: [],
+    async query(sql: string): Promise<{ rows: unknown[] }> {
+      this.queries.push(sql);
+      return { rows: [] };
+    },
+  };
+}
+
+async function assertLegacyBooleanColumnMigrationsAreEmitted(): Promise<void> {
+  const pool = createCapturingPool();
+  await ensurePostgresGameDealSchema(pool as unknown as Parameters<typeof ensurePostgresGameDealSchema>[0], "legacy_schema");
+  const sql = pool.queries.join("\n");
+  const expected = [
+    ["game_deal_notify_channels", "enabled"],
+    ["game_deal_detected_items", "active"],
+    ["game_deal_subscriptions", "active"],
+    ["deal_watch_items", "enabled"],
+    ["deal_detected_items", "active"],
+    ["steam_free_events", "active"],
+  ] as const;
+  for (const [table, column] of expected) {
+    assert.match(sql, new RegExp(`ALTER TABLE "legacy_schema"\\.${table}[\\s\\S]+ALTER COLUMN ${column} TYPE boolean`));
+  }
 }
 
 function cheapSharkDeal(extra: Partial<CheapSharkDeal> = {}): CheapSharkDeal {
@@ -91,6 +123,8 @@ async function assertSchemaTables(pool: { query: PostgresGameDealRepository["poo
 }
 
 async function run(): Promise<boolean> {
+  await assertLegacyBooleanColumnMigrationsAreEmitted();
+
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     console.log("postgresGameDealRepository.spec.ts: DATABASE_URL is not set; skipping PostgreSQL integration assertions");

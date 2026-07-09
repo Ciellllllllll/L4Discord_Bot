@@ -28,6 +28,40 @@ export function createGameDealRepository(ctx: BotContext): PostgresGameDealRepos
   return new PostgresGameDealRepository(ctx.gameDealPgPool);
 }
 
+function pgStringLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function legacyBooleanColumnMigrationSql(schema: string, schemaName: string, table: string, column: "active" | "enabled"): string {
+  const schemaLiteral = pgStringLiteral(schemaName);
+  const tableLiteral = pgStringLiteral(table);
+  return `
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = ${schemaLiteral}
+          AND table_name = ${tableLiteral}
+          AND column_name = '${column}'
+          AND data_type <> 'boolean'
+      ) THEN
+        ALTER TABLE ${schema}.${table} ALTER COLUMN ${column} DROP DEFAULT;
+        ALTER TABLE ${schema}.${table}
+          ALTER COLUMN ${column} TYPE boolean
+          USING CASE
+            WHEN ${column} IS NULL THEN false
+            WHEN lower(${column}::text) IN ('1', 'true', 't', 'yes', 'on') THEN true
+            ELSE false
+          END;
+      END IF;
+      UPDATE ${schema}.${table} SET ${column} = false WHERE ${column} IS NULL;
+      ALTER TABLE ${schema}.${table} ALTER COLUMN ${column} SET DEFAULT true;
+      ALTER TABLE ${schema}.${table} ALTER COLUMN ${column} SET NOT NULL;
+    END $$;
+  `;
+}
+
 export async function ensurePostgresGameDealSchema(pool: Pool, schemaName: string): Promise<void> {
   const schema = quotePgIdent(schemaName);
 
@@ -238,6 +272,16 @@ export async function ensurePostgresGameDealSchema(pool: Pool, schemaName: strin
     CREATE INDEX IF NOT EXISTS steam_verify_queue_due_idx
       ON ${schema}.steam_verify_queue (next_attempt_at, updated_at);
   `);
+  await pool.query(
+    [
+      legacyBooleanColumnMigrationSql(schema, schemaName, "game_deal_notify_channels", "enabled"),
+      legacyBooleanColumnMigrationSql(schema, schemaName, "game_deal_detected_items", "active"),
+      legacyBooleanColumnMigrationSql(schema, schemaName, "game_deal_subscriptions", "active"),
+      legacyBooleanColumnMigrationSql(schema, schemaName, "deal_watch_items", "enabled"),
+      legacyBooleanColumnMigrationSql(schema, schemaName, "deal_detected_items", "active"),
+      legacyBooleanColumnMigrationSql(schema, schemaName, "steam_free_events", "active"),
+    ].join("\n"),
+  );
 }
 
 type ChannelRow = {
