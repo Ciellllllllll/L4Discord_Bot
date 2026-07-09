@@ -850,6 +850,44 @@ async function run(): Promise<void> {
   );
   assert.equal(downloadErrorGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-download-error/hqdefault.jpg");
 
+  const invalidContentTypePayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/media-invalid-type",
+      canonicalUrl: "https://www.youtube.com/watch?v=media-invalid-type",
+      id: "media-invalid-type",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/not-video.mp4") {
+        return new Response("not a video", {
+          headers: {
+            "content-type": "text/html",
+            "content-length": "11",
+          },
+        });
+      }
+      return jsonResponse({
+        items: [{
+          snippet: {
+            title: "Video with invalid content type",
+            thumbnails: { high: { url: "https://i.ytimg.com/vi/media-invalid-type/hqdefault.jpg" } },
+          },
+          contentDetails: {},
+          statistics: {},
+        }],
+      });
+    },
+    mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/not-video.mp4" }),
+  });
+  assert.equal(invalidContentTypePayloads[0]?.flags, MessageFlags.IsComponentsV2);
+  const invalidContentTypeContainer = invalidContentTypePayloads[0]?.components?.[0] as APIContainerComponent;
+  const invalidContentTypeGallery = invalidContentTypeContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(invalidContentTypeGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-invalid-type/hqdefault.jpg");
+
   let nonVideoResolverCalls = 0;
   await buildYouTubeReplyPayloads([
     {

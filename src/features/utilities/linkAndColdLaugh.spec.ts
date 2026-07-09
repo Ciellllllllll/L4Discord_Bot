@@ -143,7 +143,7 @@ async function run(): Promise<void> {
   let suppressCalls = 0;
   const message = {
     author: { bot: false, id: "user-1" },
-    guild: { id: "guild-1", attachmentSizeLimit: 12_345_678 },
+    guild: { id: "guild-1", premiumTier: 3 },
     channelId: "channel-1",
     content: "x.com/profile youtube.com/c/custom",
     suppressEmbeds: async (value: boolean) => {
@@ -204,7 +204,7 @@ async function run(): Promise<void> {
     ytdlpEnabled: false,
     ytdlpPath: "custom-ytdlp",
     ytdlpTimeoutMs: 4321,
-    attachmentSizeLimitBytes: 12_345_678,
+    attachmentSizeLimitBytes: 100_000_000,
     log: (injectedCtx as { log: unknown }).log,
   }]);
   assert.deepEqual(injectedReplies.map((payload) => (payload as { content?: string }).content), [
@@ -230,6 +230,32 @@ async function run(): Promise<void> {
     },
   }).onMessage(dmMessage as never);
   assert.equal(dmYoutubeCalls, 0);
+
+  const tier2Options: unknown[] = [];
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async (_targets, options) => {
+      tier2Options.push(options);
+      return [];
+    },
+  }).onMessage({
+    ...message,
+    guild: { id: "guild-1", premiumTier: 2 },
+    content: "youtube.com/watch?v=tier2",
+  } as never);
+  assert.equal((tier2Options[0] as { attachmentSizeLimitBytes?: number }).attachmentSizeLimitBytes, 50_000_000);
+
+  const defaultLimitOptions: unknown[] = [];
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async (_targets, options) => {
+      defaultLimitOptions.push(options);
+      return [];
+    },
+  }).onMessage({
+    ...message,
+    guild: { id: "guild-1", premiumTier: 1 },
+    content: "youtube.com/watch?v=default-limit",
+  } as never);
+  assert.equal((defaultLimitOptions[0] as { attachmentSizeLimitBytes?: number }).attachmentSizeLimitBytes, 10 * 1024 * 1024);
 }
 
 try {

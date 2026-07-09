@@ -27,6 +27,9 @@ const LINK_IN_CONTENT_PATTERN =
   /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
 const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
+const DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
+const BOOST_TIER_2_ATTACHMENT_SIZE_LIMIT_BYTES = 50 * 1000 * 1000;
+const BOOST_TIER_3_ATTACHMENT_SIZE_LIMIT_BYTES = 100 * 1000 * 1000;
 
 function stripUrlTail(urlText: string): string {
   let u = String(urlText || "").trim();
@@ -58,6 +61,13 @@ function isBareUrlBoundary(content: string, index: number): boolean {
 
 function hasUrlCandidateBoundary(content: string, index: number, urlText: string): boolean {
   return isSchemeUrl(urlText) || isBareUrlBoundary(content, index);
+}
+
+function attachmentSizeLimitForMessage(message: Message): number {
+  const premiumTier = message.guild?.premiumTier;
+  if (premiumTier === 3) return BOOST_TIER_3_ATTACHMENT_SIZE_LIMIT_BYTES;
+  if (premiumTier === 2) return BOOST_TIER_2_ATTACHMENT_SIZE_LIMIT_BYTES;
+  return DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES;
 }
 
 function hostWithoutWww(host: string): string {
@@ -281,8 +291,7 @@ export class LinkAndColdLaugh {
     const youtubeReplyPayloads = await this.deps.buildYouTubeReplyPayloads(youtubeReplyTargets, {
       apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
       requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
-      attachmentSizeLimitBytes: (message.guild as (typeof message.guild & { attachmentSizeLimit?: number }) | null)
-        ?.attachmentSizeLimit,
+      attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
       ytdlpEnabled: this.ctx.config.YOUTUBE_YTDLP_ENABLED,
       ytdlpPath: this.ctx.config.YOUTUBE_YTDLP_PATH,
       ytdlpTimeoutMs: this.ctx.config.YOUTUBE_YTDLP_TIMEOUT_MS,
