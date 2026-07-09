@@ -599,7 +599,16 @@ async function run(): Promise<void> {
     },
   ], {
     apiKey: "key",
-    fetcher: async () => jsonResponse({
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/with-media.mp4") {
+        return new Response(Buffer.from("fake mp4"), {
+          headers: {
+            "content-type": "video/mp4",
+            "content-length": "8",
+          },
+        });
+      }
+      return jsonResponse({
       items: [{
         snippet: {
           title: "Video with media",
@@ -608,7 +617,8 @@ async function run(): Promise<void> {
         contentDetails: {},
         statistics: {},
       }],
-    }),
+      });
+    },
     mediaResolver: async (url) => {
       mediaResolverCalls.push(url);
       return { status: "ok", mediaUrl: "https://media.example.com/with-media.mp4" };
@@ -619,7 +629,46 @@ async function run(): Promise<void> {
     (component) => component.type === ComponentType.MediaGallery,
   );
   assert.deepEqual(mediaResolverCalls, ["https://www.youtube.com/watch?v=with-media"]);
-  assert.equal(resolvedVideoGallery?.items[0]?.media.url, "https://media.example.com/with-media.mp4");
+  assert.equal(resolvedVideoGallery?.items[0]?.media.url, "attachment://youtube-preview.mp4");
+  assert.equal(resolvedVideoPayloads[0]?.files?.length, 1);
+
+  const oversizedResolverPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/media-oversized",
+      canonicalUrl: "https://www.youtube.com/watch?v=media-oversized",
+      id: "media-oversized",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/too-large.mp4") {
+        return new Response(null, {
+          headers: {
+            "content-type": "video/mp4",
+            "content-length": String(11 * 1024 * 1024),
+          },
+        });
+      }
+      return jsonResponse({
+        items: [{
+          snippet: {
+            title: "Video with oversized media",
+            thumbnails: { high: { url: "https://i.ytimg.com/vi/media-oversized/hqdefault.jpg" } },
+          },
+          contentDetails: {},
+          statistics: {},
+        }],
+      });
+    },
+    mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/too-large.mp4" }),
+  });
+  const oversizedResolverContainer = oversizedResolverPayloads[0]?.components?.[0] as APIContainerComponent;
+  const oversizedResolverGallery = oversizedResolverContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(oversizedResolverGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-oversized/hqdefault.jpg");
+  assert.equal(oversizedResolverPayloads[0]?.files, undefined);
 
   const fallbackResolverPayloads = await buildYouTubeReplyPayloads([
     {
@@ -725,11 +774,21 @@ async function run(): Promise<void> {
       id: "oembed-only",
     },
   ], {
-    fetcher: async () => jsonResponse({
-      title: "OEmbed only",
-      author_name: "Author",
-      thumbnail_url: "https://i.ytimg.com/vi/oembed-only/hqdefault.jpg",
-    }),
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/oembed-only.mp4") {
+        return new Response(Buffer.from("fake mp4"), {
+          headers: {
+            "content-type": "video/mp4",
+            "content-length": "8",
+          },
+        });
+      }
+      return jsonResponse({
+        title: "OEmbed only",
+        author_name: "Author",
+        thumbnail_url: "https://i.ytimg.com/vi/oembed-only/hqdefault.jpg",
+      });
+    },
     mediaResolver: async () => {
       nonVideoResolverCalls += 1;
       return { status: "ok", mediaUrl: "https://media.example.com/oembed-only.mp4" };
@@ -740,7 +799,8 @@ async function run(): Promise<void> {
     (component) => component.type === ComponentType.MediaGallery,
   );
   assert.equal(nonVideoResolverCalls, 1);
-  assert.equal(oembedMediaGallery?.items[0]?.media.url, "https://media.example.com/oembed-only.mp4");
+  assert.equal(oembedMediaGallery?.items[0]?.media.url, "attachment://youtube-preview.mp4");
+  assert.equal(oembedMediaPayloads[0]?.files?.length, 1);
 }
 
 run()

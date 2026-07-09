@@ -1,6 +1,7 @@
 import { URL } from "node:url";
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   ComponentType,
@@ -20,6 +21,8 @@ import { resolveYouTubeVideoMedia } from "./youtubeVideoMedia.js";
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const REQUEST_TIMEOUT_MS = 10_000;
 const CACHE_TTL_MS = 30 * 60 * 1000;
+const MEDIA_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const MEDIA_ATTACHMENT_FILENAME = "youtube-preview.mp4";
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"]);
 const YOUTU_BE_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
 
@@ -64,6 +67,7 @@ export type YouTubePreviewPayload = {
   flags: MessageFlags.IsComponentsV2;
   components: APIMessageTopLevelComponent[];
   allowedMentions: { parse: []; repliedUser: false };
+  files?: AttachmentBuilder[];
 };
 
 export type YouTubePreviewBuildOptions = {
@@ -80,11 +84,17 @@ export type YouTubePreviewBuildOptions = {
 
 export type YouTubePreviewPayloadOptions = {
   mediaUrl?: string;
+  files?: AttachmentBuilder[];
 };
 
 type CacheEntry = {
   expiresAt: number;
   result: YouTubePreviewResult;
+};
+
+type ResolvedPreviewMedia = {
+  mediaUrl: string;
+  files?: AttachmentBuilder[];
 };
 
 const previewCache = new Map<string, CacheEntry>();
@@ -137,6 +147,13 @@ function safeHttpsUrl(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function safeMediaGalleryUrl(value: unknown): string | undefined {
+  const raw = stringValue(value);
+  if (!raw) return undefined;
+  if (raw === `attachment://${MEDIA_ATTACHMENT_FILENAME}`) return raw;
+  return safeHttpsUrl(raw);
 }
 
 function canonicalUrl(pathname: string, search?: Record<string, string>): string {
@@ -705,7 +722,7 @@ export function buildYouTubePreviewPayload(
   preview: YouTubePreview,
   options: YouTubePreviewPayloadOptions = {},
 ): YouTubePreviewPayload {
-  const mediaUrl = safeHttpsUrl(options.mediaUrl) ?? safeHttpsUrl(preview.thumbnailUrl);
+  const mediaUrl = safeMediaGalleryUrl(options.mediaUrl) ?? safeHttpsUrl(preview.thumbnailUrl);
   const channelIcon = safeHttpsUrl(preview.channelIconUrl);
   const gallery = buildMediaGallery(mediaUrl, preview.title);
   const components: APIComponentInContainer[] = [
@@ -722,6 +739,7 @@ export function buildYouTubePreviewPayload(
     flags: MessageFlags.IsComponentsV2,
     components: [container],
     allowedMentions: { parse: [], repliedUser: false },
+    ...(options.files?.length ? { files: options.files } : {}),
   };
 }
 
@@ -745,7 +763,7 @@ async function resolvePreviewMediaUrl(
   target: YouTubeReplyTarget,
   preview: YouTubePreview,
   options: YouTubePreviewBuildOptions,
-): Promise<string | undefined> {
+): Promise<ResolvedPreviewMedia | undefined> {
   const resolverTargetUrl = mediaResolverTargetUrl(target, preview);
   if (!resolverTargetUrl) return undefined;
 
@@ -756,7 +774,20 @@ async function resolvePreviewMediaUrl(
       ytdlpPath: options.ytdlpPath,
       timeoutMs: options.ytdlpTimeoutMs,
     });
-    if (mediaResult.status === "ok") return mediaResult.mediaUrl;
+    if (mediaResult.status === "ok") {
+      const attachment = await downloadPreviewMediaAttachment(mediaResult.mediaUrl, options);
+      if (attachment.status === "ok") {
+        return {
+          mediaUrl: `attachment://${MEDIA_ATTACHMENT_FILENAME}`,
+          files: [attachment.file],
+        };
+      }
+      options.log?.warn?.(
+        { url: resolverTargetUrl, mediaUrl: mediaResult.mediaUrl, reason: attachment.reason },
+        "youtube preview media attachment fallback",
+      );
+      return undefined;
+    }
     if (mediaResult.reason !== "disabled") {
       options.log?.warn?.(
         { url: resolverTargetUrl, reason: mediaResult.reason },
@@ -772,6 +803,63 @@ async function resolvePreviewMediaUrl(
   return undefined;
 }
 
+async function downloadPreviewMediaAttachment(
+  mediaUrl: string,
+  options: YouTubePreviewBuildOptions,
+): Promise<{ status: "ok"; file: AttachmentBuilder } | { status: "fallback"; reason: string }> {
+  const url = safeHttpsUrl(mediaUrl);
+  if (!url) return { status: "fallback", reason: "invalid_media_url" };
+
+  const fetcher = options.fetcher ?? fetch;
+  const requestTimeoutMs = options.ytdlpTimeoutMs ?? options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    const response = await fetcher(url, {
+      signal: controller.signal,
+      headers: { Accept: "video/mp4,video/*;q=0.9,*/*;q=0.1" },
+    });
+    if (!response.ok) return { status: "fallback", reason: `http_${response.status}` };
+
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (contentType && !contentType.startsWith("video/")) {
+      return { status: "fallback", reason: "invalid_content_type" };
+    }
+
+    const contentLength = Number(response.headers.get("content-length") ?? "");
+    if (Number.isFinite(contentLength) && contentLength > MEDIA_ATTACHMENT_MAX_BYTES) {
+      return { status: "fallback", reason: "media_too_large" };
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > MEDIA_ATTACHMENT_MAX_BYTES) return { status: "fallback", reason: "media_too_large" };
+      return { status: "ok", file: new AttachmentBuilder(buffer, { name: MEDIA_ATTACHMENT_FILENAME }) };
+    }
+
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MEDIA_ATTACHMENT_MAX_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return { status: "fallback", reason: "media_too_large" };
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return { status: "ok", file: new AttachmentBuilder(Buffer.concat(chunks), { name: MEDIA_ATTACHMENT_FILENAME }) };
+  } catch (err) {
+    const reason = err instanceof Error && err.name === "AbortError" ? "timeout" : "download_error";
+    return { status: "fallback", reason };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function buildYouTubeReplyPayloads(
   targets: readonly YouTubeReplyTarget[],
   options: YouTubePreviewBuildOptions = {},
@@ -782,10 +870,10 @@ export async function buildYouTubeReplyPayloads(
     }
     const result = await fetchYouTubePreview(target, options);
     if (result.status === "ok") {
-      const mediaUrl = await resolvePreviewMediaUrl(target, result.preview, options);
+      const media = await resolvePreviewMediaUrl(target, result.preview, options);
       return buildYouTubePreviewPayload(
         result.preview,
-        mediaUrl ? { mediaUrl } : {},
+        media ? { mediaUrl: media.mediaUrl, files: media.files } : {},
       );
     }
     return buildYouTubeFallbackReply([target.canonicalUrl]);
