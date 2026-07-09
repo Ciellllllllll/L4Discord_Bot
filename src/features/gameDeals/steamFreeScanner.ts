@@ -4,7 +4,7 @@ import { SteamStoreClient } from "../steam/steamStoreClient.js";
 import type { SteamAppDetails, SteamSearchItem } from "../steam/steamFreeTypes.js";
 import { CheapSharkClient } from "./cheapSharkClient.js";
 import { buildSteamFreeEventEmbed } from "./gameDealEmbeds.js";
-import { GameDealRepository } from "./gameDealRepository.js";
+import { createGameDealRepository, type PostgresGameDealRepository } from "./postgresGameDealRepository.js";
 import type { GameDealFreeItem, SteamAppCatalogChange, SteamFreeEvent } from "./gameDealTypes.js";
 import { detectSteamFreeEvent } from "./steamFreeDetector.js";
 
@@ -48,10 +48,16 @@ function centsDisplay(cents: number | null | undefined): string | null {
   return `${Math.round(cents / 100).toLocaleString("ja-JP")}円`;
 }
 
-function upsertPaidEvidence(repo: GameDealRepository, appid: string, title: string, details: SteamAppDetails | null, searchItem: SteamSearchItem | null): void {
+async function upsertPaidEvidence(
+  repo: PostgresGameDealRepository,
+  appid: string,
+  title: string,
+  details: SteamAppDetails | null,
+  searchItem: SteamSearchItem | null,
+): Promise<void> {
   const po = details?.priceOverview;
   if (po && typeof po.initial === "number" && po.initial > 0) {
-    repo.upsertSteamPaidPriceHistory({
+    await repo.upsertSteamPaidPriceHistory({
       appid,
       title: details?.name ?? title,
       normalPriceCents: po.initial,
@@ -62,7 +68,7 @@ function upsertPaidEvidence(repo: GameDealRepository, appid: string, title: stri
   }
   if (searchItem && typeof searchItem.originalPrice === "number" && searchItem.originalPrice > 0) {
     const cents = Math.round(searchItem.originalPrice * 100);
-    repo.upsertSteamPaidPriceHistory({
+    await repo.upsertSteamPaidPriceHistory({
       appid,
       title: searchItem.name || title,
       normalPriceCents: cents,
@@ -139,8 +145,12 @@ async function fetchCheapSharkAuxiliaryDeals(ctx: BotContext, appid: string) {
   }
 }
 
-async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], searchByAppid: Map<string, SteamSearchItem>): Promise<{ items: GameDealFreeItem[]; summary: Pick<SteamScanSummary, "verifiedCount" | "excludedCount" | "notifiedCandidates" | "excludedReasons"> }> {
-  const repo = new GameDealRepository(ctx.sqlite);
+async function verifyChanges(
+  ctx: BotContext,
+  repo: PostgresGameDealRepository,
+  changes: SteamAppCatalogChange[],
+  searchByAppid: Map<string, SteamSearchItem>,
+): Promise<{ items: GameDealFreeItem[]; summary: Pick<SteamScanSummary, "verifiedCount" | "excludedCount" | "notifiedCandidates" | "excludedReasons"> }> {
   const store = new SteamStoreClient(ctx.log);
   const detailsMap = await store.fetchAppDetails(changes.map((change) => change.appid));
   const items: GameDealFreeItem[] = [];
@@ -152,15 +162,15 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
     const details = detailsMap.get(change.appid) ?? null;
     const searchItem = searchByAppid.get(change.appid) ?? null;
     if (!details) {
-      repo.markSteamVerifyRetry(change.appid, "appdetails_failed", "appdetails unavailable");
+      await repo.markSteamVerifyRetry(change.appid, "appdetails_failed", "appdetails unavailable");
       continue;
     }
     const title = details.name || searchItem?.name || change.name || `Steam ${change.appid}`;
-    upsertPaidEvidence(repo, change.appid, title, details, searchItem);
+    await upsertPaidEvidence(repo, change.appid, title, details, searchItem);
     const cheapSharkDeals = await fetchCheapSharkAuxiliaryDeals(ctx, change.appid);
     const cheapSharkPaid = cheapSharkDeals.find((deal) => deal.normalPrice > 0 && deal.salePrice === 0 && deal.savings >= 99.9);
     if (cheapSharkPaid) {
-      repo.upsertSteamPaidPriceHistory({
+      await repo.upsertSteamPaidPriceHistory({
         appid: change.appid,
         title: cheapSharkPaid.title,
         normalPriceCents: Math.round(cheapSharkPaid.normalPrice * 100),
@@ -168,7 +178,7 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
         source: "cheapshark",
       });
     }
-    const paidHistory = repo.getSteamPaidPriceHistory(change.appid);
+    const paidHistory = await repo.getSteamPaidPriceHistory(change.appid);
     const detected = detectSteamFreeEvent({ change, appdetails: details, searchItem, cheapSharkDeals, paidHistory });
     if (!detected.shouldNotify) {
       excludedCount += 1;
@@ -182,7 +192,7 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
         },
         "steam free candidate excluded",
       );
-      repo.removeSteamVerifyQueue(change.appid);
+      await repo.removeSteamVerifyQueue(change.appid);
       continue;
     }
     const event: SteamFreeEvent = {
@@ -200,8 +210,8 @@ async function verifyChanges(ctx: BotContext, changes: SteamAppCatalogChange[], 
       freeUntilUnix: detected.freeUntilUnix,
     };
     verifiedCount += 1;
-    repo.removeSteamVerifyQueue(change.appid);
-    if (repo.upsertSteamFreeEvent(event).shouldNotify) {
+    await repo.removeSteamVerifyQueue(change.appid);
+    if ((await repo.upsertSteamFreeEvent(event)).shouldNotify) {
       items.push(toFreeItem(event));
     }
   }
@@ -220,21 +230,33 @@ async function fetchSearchByAppid(ctx: BotContext): Promise<Map<string, SteamSea
 }
 
 export async function initializeSteamAppBaseline(ctx: BotContext): Promise<{ created: boolean; appCount: number }> {
-  const repo = new GameDealRepository(ctx.sqlite);
-  if (repo.hasSteamAppCatalog()) return { created: false, appCount: 0 };
+  const repo = createGameDealRepository(ctx);
+  if (!repo) return { created: false, appCount: 0 };
+  if (await repo.hasSteamAppCatalog()) return { created: false, appCount: 0 };
   const apps = await new SteamAppListClient(ctx.log, steamApiKey(ctx)).fetchAllApps();
-  const result = repo.upsertSteamAppCatalog(apps);
+  const result = await repo.upsertSteamAppCatalog(apps);
   ctx.log.info({ appCount: apps.length, baselineCreated: result.baselineCreated }, "steam app baseline initialized");
   return { created: result.baselineCreated, appCount: apps.length };
 }
 
 export async function scanSteamAppListChanges(ctx: BotContext): Promise<SteamScanSummary> {
-  const repo = new GameDealRepository(ctx.sqlite);
+  const repo = createGameDealRepository(ctx);
+  if (!repo) {
+    return {
+      appListCount: 0,
+      diffCount: 0,
+      queuedCount: 0,
+      verifiedCount: 0,
+      excludedCount: 0,
+      notifiedCandidates: 0,
+      excludedReasons: {},
+    };
+  }
   try {
     const apps = await new SteamAppListClient(ctx.log, steamApiKey(ctx)).fetchAllApps();
-    const result = repo.upsertSteamAppCatalog(apps);
+    const result = await repo.upsertSteamAppCatalog(apps);
     for (const change of result.changes) {
-      repo.enqueueSteamVerify({
+      await repo.enqueueSteamVerify({
         appid: change.appid,
         reason: "price_change_detected",
         priceChangeNumber: change.priceChangeNumber,
@@ -268,11 +290,12 @@ export async function scanSteamAppListChanges(ctx: BotContext): Promise<SteamSca
 }
 
 export async function processSteamVerifyQueue(ctx: BotContext, batchSize = DEFAULT_STEAM_VERIFY_BATCH_SIZE): Promise<GameDealFreeItem[]> {
-  const repo = new GameDealRepository(ctx.sqlite);
-  const changes = repo.listDueSteamVerifyQueue(batchSize);
+  const repo = createGameDealRepository(ctx);
+  if (!repo) return [];
+  const changes = await repo.listDueSteamVerifyQueue(batchSize);
   if (changes.length === 0) return [];
   const searchByAppid = await fetchSearchByAppid(ctx);
-  const { items, summary } = await verifyChanges(ctx, changes, searchByAppid);
+  const { items, summary } = await verifyChanges(ctx, repo, changes, searchByAppid);
   ctx.log.info({ queuedBatch: changes.length, ...summary }, "steam verify queue processed");
   return items;
 }
@@ -282,7 +305,8 @@ export async function scanSteamNowFullDiscountItems(
   limit = DEFAULT_STEAM_NOW_LIMIT,
   options: SteamNowScanOptions = {},
 ): Promise<GameDealFreeItem[]> {
-  const repo = new GameDealRepository(ctx.sqlite);
+  const repo = createGameDealRepository(ctx);
+  if (!repo) return [];
   const store = new SteamStoreClient(ctx.log);
   const searchItems = (await store.fetchSearchItems()).filter(searchItemIsFullDiscount);
   if (searchItems.length === 0) return [];
@@ -305,7 +329,7 @@ export async function scanSteamNowFullDiscountItems(
         continue;
       }
       const event = steamNowEvent(searchItem, details!);
-      const result = repo.upsertSteamFreeEvent(event);
+      const result = await repo.upsertSteamFreeEvent(event);
       if (!options.onlyUnnotified || result.shouldNotify) {
         items.push(toFreeItem(event));
       }
@@ -320,6 +344,8 @@ export async function scanSteamNowFullDiscountItems(
   return items;
 }
 
-export function listActiveSteamFreeItems(ctx: BotContext, limit = 20): GameDealFreeItem[] {
-  return new GameDealRepository(ctx.sqlite).listActiveSteamFreeEvents(limit).map(toFreeItem);
+export async function listActiveSteamFreeItems(ctx: BotContext, limit = 20): Promise<GameDealFreeItem[]> {
+  const repo = createGameDealRepository(ctx);
+  if (!repo) return [];
+  return (await repo.listActiveSteamFreeEvents(limit)).map(toFreeItem);
 }

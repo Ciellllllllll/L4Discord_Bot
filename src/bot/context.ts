@@ -2,6 +2,7 @@ import type { Client } from "discord.js";
 import type DatabaseLib from "better-sqlite3";
 import type { Kysely } from "kysely";
 import type pino from "pino";
+import type { Pool } from "pg";
 import type { AppConfig } from "../core/config.js";
 import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabase } from "../core/db/types.js";
 import type { IVcRankingRepository } from "../adapters/legacyDb/vcRankingRepository.js";
@@ -36,6 +37,7 @@ export type BotContext = {
   automodSqlite: RuntimeSqlDatabase;
   log: pino.Logger;
   client: Client;
+  gameDealPgPool?: Pool;
   vcRanking: IVcRankingRepository;
   vcTemp: VcTemporaryChannelManager;
 };
