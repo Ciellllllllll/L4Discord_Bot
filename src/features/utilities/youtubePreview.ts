@@ -10,6 +10,7 @@ import {
   type APIButtonComponent,
   type APIComponentInContainer,
   type APIContainerComponent,
+  type APIEmbed,
   type APIMediaGalleryComponent,
   type APIMessageTopLevelComponent,
   type APISectionComponent,
@@ -74,6 +75,7 @@ export type YouTubePreviewBuildOptions = {
   fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
   apiKey?: string;
   requestTimeoutMs?: number;
+  attachmentSizeLimitBytes?: number;
   nowMs?: () => number;
   ytdlpEnabled?: boolean;
   ytdlpPath?: string;
@@ -93,6 +95,7 @@ type CacheEntry = {
 };
 
 type ResolvedPreviewMedia = {
+  kind: "attachment";
   mediaUrl: string;
   files?: AttachmentBuilder[];
 };
@@ -743,6 +746,22 @@ export function buildYouTubePreviewPayload(
   };
 }
 
+function buildYouTubeOversizedMediaEmbedPayload(preview: YouTubePreview): MessageCreateOptions {
+  const thumbnailUrl = safeHttpsUrl(preview.thumbnailUrl);
+  const embed: APIEmbed = {
+    title: compactText(preview.title, 256),
+    url: preview.url,
+    ...(preview.description ? { description: compactText(preview.description, 4096) } : {}),
+    ...(preview.channelTitle ? { author: { name: compactText(preview.channelTitle, 256) } } : {}),
+    ...(thumbnailUrl ? { thumbnail: { url: thumbnailUrl } } : {}),
+  };
+  return {
+    embeds: [embed],
+    components: [buildLinkRow(preview)],
+    allowedMentions: { parse: [], repliedUser: false },
+  };
+}
+
 export function buildYouTubeFallbackReply(urls: readonly string[]): MessageCreateOptions {
   return {
     content: urls.join("\n"),
@@ -763,7 +782,7 @@ async function resolvePreviewMediaUrl(
   target: YouTubeReplyTarget,
   preview: YouTubePreview,
   options: YouTubePreviewBuildOptions,
-): Promise<ResolvedPreviewMedia | undefined> {
+): Promise<ResolvedPreviewMedia | "embed_fallback" | undefined> {
   const resolverTargetUrl = mediaResolverTargetUrl(target, preview);
   if (!resolverTargetUrl) return undefined;
 
@@ -778,9 +797,13 @@ async function resolvePreviewMediaUrl(
       const attachment = await downloadPreviewMediaAttachment(mediaResult.mediaUrl, options);
       if (attachment.status === "ok") {
         return {
+          kind: "attachment",
           mediaUrl: `attachment://${MEDIA_ATTACHMENT_FILENAME}`,
           files: [attachment.file],
         };
+      }
+      if (attachment.reason === "media_too_large") {
+        return "embed_fallback";
       }
       options.log?.warn?.(
         { url: resolverTargetUrl, mediaUrl: mediaResult.mediaUrl, reason: attachment.reason },
@@ -812,6 +835,7 @@ async function downloadPreviewMediaAttachment(
 
   const fetcher = options.fetcher ?? fetch;
   const requestTimeoutMs = options.ytdlpTimeoutMs ?? options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const attachmentSizeLimitBytes = options.attachmentSizeLimitBytes ?? MEDIA_ATTACHMENT_MAX_BYTES;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
   try {
@@ -827,14 +851,14 @@ async function downloadPreviewMediaAttachment(
     }
 
     const contentLength = Number(response.headers.get("content-length") ?? "");
-    if (Number.isFinite(contentLength) && contentLength > MEDIA_ATTACHMENT_MAX_BYTES) {
+    if (Number.isFinite(contentLength) && contentLength > attachmentSizeLimitBytes) {
       return { status: "fallback", reason: "media_too_large" };
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > MEDIA_ATTACHMENT_MAX_BYTES) return { status: "fallback", reason: "media_too_large" };
+      if (buffer.byteLength > attachmentSizeLimitBytes) return { status: "fallback", reason: "media_too_large" };
       return { status: "ok", file: new AttachmentBuilder(buffer, { name: MEDIA_ATTACHMENT_FILENAME }) };
     }
 
@@ -845,7 +869,7 @@ async function downloadPreviewMediaAttachment(
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > MEDIA_ATTACHMENT_MAX_BYTES) {
+      if (total > attachmentSizeLimitBytes) {
         await reader.cancel().catch(() => undefined);
         return { status: "fallback", reason: "media_too_large" };
       }
@@ -871,6 +895,9 @@ export async function buildYouTubeReplyPayloads(
     const result = await fetchYouTubePreview(target, options);
     if (result.status === "ok") {
       const media = await resolvePreviewMediaUrl(target, result.preview, options);
+      if (media === "embed_fallback") {
+        return buildYouTubeOversizedMediaEmbedPayload(result.preview);
+      }
       return buildYouTubePreviewPayload(
         result.preview,
         media ? { mediaUrl: media.mediaUrl, files: media.files } : {},

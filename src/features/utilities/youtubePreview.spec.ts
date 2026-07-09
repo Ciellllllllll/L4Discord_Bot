@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent, type APISectionComponent } from "discord.js";
+import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent, type APIEmbed, type APISectionComponent } from "discord.js";
 import {
   buildYouTubeFallbackReply,
   buildYouTubePreviewPayload,
@@ -641,12 +641,13 @@ async function run(): Promise<void> {
     },
   ], {
     apiKey: "key",
+    attachmentSizeLimitBytes: 1024,
     fetcher: async (url) => {
       if (url === "https://media.example.com/too-large.mp4") {
         return new Response(null, {
           headers: {
             "content-type": "video/mp4",
-            "content-length": String(11 * 1024 * 1024),
+            "content-length": "2048",
           },
         });
       }
@@ -663,12 +664,102 @@ async function run(): Promise<void> {
     },
     mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/too-large.mp4" }),
   });
-  const oversizedResolverContainer = oversizedResolverPayloads[0]?.components?.[0] as APIContainerComponent;
-  const oversizedResolverGallery = oversizedResolverContainer.components.find(
-    (component) => component.type === ComponentType.MediaGallery,
+  const oversizedResolverEmbed = oversizedResolverPayloads[0]?.embeds?.[0] as APIEmbed | undefined;
+  assert.equal(oversizedResolverPayloads[0]?.flags, undefined);
+  assert.equal((oversizedResolverPayloads[0]?.components?.[0] as { type?: number } | undefined)?.type, ComponentType.ActionRow);
+  assert.equal(oversizedResolverPayloads[0]?.embeds?.length, 1);
+  assert.equal(oversizedResolverEmbed?.title, "Video with oversized media");
+  assert.equal(oversizedResolverEmbed?.url, "https://www.youtube.com/watch?v=media-oversized");
+  assert.equal(oversizedResolverEmbed?.author?.name, undefined);
+  assert.equal(
+    oversizedResolverEmbed?.thumbnail?.url,
+    "https://i.ytimg.com/vi/media-oversized/hqdefault.jpg",
   );
-  assert.equal(oversizedResolverGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-oversized/hqdefault.jpg");
+  assert.deepEqual(oversizedResolverPayloads[0]?.allowedMentions, { parse: [], repliedUser: false });
   assert.equal(oversizedResolverPayloads[0]?.files, undefined);
+
+  const streamOversizedResolverPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/media-stream-oversized",
+      canonicalUrl: "https://www.youtube.com/watch?v=media-stream-oversized",
+      id: "media-stream-oversized",
+    },
+  ], {
+    apiKey: "key",
+    attachmentSizeLimitBytes: 8,
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/stream-too-large.mp4") {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+            controller.enqueue(new Uint8Array([5, 6, 7, 8]));
+            controller.enqueue(new Uint8Array([9]));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            "content-type": "video/mp4",
+          },
+        });
+      }
+      return jsonResponse({
+        items: [{
+          snippet: {
+            title: "Video with stream oversized media",
+            description: "stream overflow",
+            channelTitle: "Stream creator",
+            thumbnails: { high: { url: "https://i.ytimg.com/vi/media-stream-oversized/hqdefault.jpg" } },
+          },
+          contentDetails: {},
+          statistics: {},
+        }],
+      });
+    },
+    mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/stream-too-large.mp4" }),
+  });
+  const streamOversizedResolverEmbed = streamOversizedResolverPayloads[0]?.embeds?.[0] as APIEmbed | undefined;
+  assert.equal(streamOversizedResolverPayloads[0]?.flags, undefined);
+  assert.equal(streamOversizedResolverEmbed?.title, "Video with stream oversized media");
+  assert.equal(streamOversizedResolverEmbed?.description, "stream overflow");
+  assert.equal(streamOversizedResolverEmbed?.author?.name, "Stream creator");
+  assert.equal((streamOversizedResolverPayloads[0]?.components?.[0] as { type?: number } | undefined)?.type, ComponentType.ActionRow);
+
+  const defaultLimitPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/default-limit",
+      canonicalUrl: "https://www.youtube.com/watch?v=default-limit",
+      id: "default-limit",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/default-limit.mp4") {
+        return new Response(null, {
+          headers: {
+            "content-type": "video/mp4",
+            "content-length": String(10 * 1024 * 1024 + 1),
+          },
+        });
+      }
+      return jsonResponse({
+        items: [{
+          snippet: {
+            title: "Video with default limit overflow",
+            thumbnails: { high: { url: "https://i.ytimg.com/vi/default-limit/hqdefault.jpg" } },
+          },
+          contentDetails: {},
+          statistics: {},
+        }],
+      });
+    },
+    mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/default-limit.mp4" }),
+  });
+  const defaultLimitEmbed = defaultLimitPayloads[0]?.embeds?.[0] as APIEmbed | undefined;
+  assert.equal(defaultLimitPayloads[0]?.flags, undefined);
+  assert.equal(defaultLimitEmbed?.title, "Video with default limit overflow");
 
   const fallbackResolverPayloads = await buildYouTubeReplyPayloads([
     {
@@ -725,6 +816,39 @@ async function run(): Promise<void> {
     (component) => component.type === ComponentType.MediaGallery,
   );
   assert.equal(throwingResolverGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-throw/hqdefault.jpg");
+
+  const downloadErrorPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/media-download-error",
+      canonicalUrl: "https://www.youtube.com/watch?v=media-download-error",
+      id: "media-download-error",
+    },
+  ], {
+    apiKey: "key",
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/download-error.mp4") {
+        throw new Error("network down");
+      }
+      return jsonResponse({
+        items: [{
+          snippet: {
+            title: "Video with download error",
+            thumbnails: { high: { url: "https://i.ytimg.com/vi/media-download-error/hqdefault.jpg" } },
+          },
+          contentDetails: {},
+          statistics: {},
+        }],
+      });
+    },
+    mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/download-error.mp4" }),
+  });
+  assert.equal(downloadErrorPayloads[0]?.flags, MessageFlags.IsComponentsV2);
+  const downloadErrorContainer = downloadErrorPayloads[0]?.components?.[0] as APIContainerComponent;
+  const downloadErrorGallery = downloadErrorContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(downloadErrorGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-download-error/hqdefault.jpg");
 
   let nonVideoResolverCalls = 0;
   await buildYouTubeReplyPayloads([

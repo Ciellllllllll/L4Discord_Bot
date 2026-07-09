@@ -281,6 +281,8 @@ export class LinkAndColdLaugh {
     const youtubeReplyPayloads = await this.deps.buildYouTubeReplyPayloads(youtubeReplyTargets, {
       apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
       requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+      attachmentSizeLimitBytes: (message.guild as (typeof message.guild & { attachmentSizeLimit?: number }) | null)
+        ?.attachmentSizeLimit,
       ytdlpEnabled: this.ctx.config.YOUTUBE_YTDLP_ENABLED,
       ytdlpPath: this.ctx.config.YOUTUBE_YTDLP_PATH,
       ytdlpTimeoutMs: this.ctx.config.YOUTUBE_YTDLP_TIMEOUT_MS,

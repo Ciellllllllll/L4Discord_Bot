@@ -143,7 +143,7 @@ async function run(): Promise<void> {
   let suppressCalls = 0;
   const message = {
     author: { bot: false, id: "user-1" },
-    guild: { id: "guild-1" },
+    guild: { id: "guild-1", attachmentSizeLimit: 12_345_678 },
     channelId: "channel-1",
     content: "x.com/profile youtube.com/c/custom",
     suppressEmbeds: async (value: boolean) => {
@@ -204,11 +204,32 @@ async function run(): Promise<void> {
     ytdlpEnabled: false,
     ytdlpPath: "custom-ytdlp",
     ytdlpTimeoutMs: 4321,
+    attachmentSizeLimitBytes: 12_345_678,
     log: (injectedCtx as { log: unknown }).log,
   }]);
   assert.deepEqual(injectedReplies.map((payload) => (payload as { content?: string }).content), [
     "youtube injected reply",
   ]);
+
+  let dmYoutubeCalls = 0;
+  const dmMessage = {
+    ...message,
+    guild: null,
+    content: "youtube.com/watch?v=dm-test",
+    suppressEmbeds: async () => {
+      throw new Error("suppress should not be called in dm");
+    },
+    reply: async () => {
+      throw new Error("reply should not be called in dm");
+    },
+  };
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async () => {
+      dmYoutubeCalls += 1;
+      return [];
+    },
+  }).onMessage(dmMessage as never);
+  assert.equal(dmYoutubeCalls, 0);
 }
 
 try {
