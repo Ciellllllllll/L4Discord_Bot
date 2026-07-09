@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent, type APIEmbed, type APISectionComponent } from "discord.js";
+import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent, type APISectionComponent } from "discord.js";
 import {
   buildYouTubeFallbackReply,
   buildYouTubePreviewPayload,
@@ -664,17 +664,11 @@ async function run(): Promise<void> {
     },
     mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/too-large.mp4" }),
   });
-  const oversizedResolverEmbed = oversizedResolverPayloads[0]?.embeds?.[0] as APIEmbed | undefined;
+  const oversizedResolverPayload = oversizedResolverPayloads[0]!;
   assert.equal(oversizedResolverPayloads[0]?.flags, undefined);
-  assert.equal((oversizedResolverPayloads[0]?.components?.[0] as { type?: number } | undefined)?.type, ComponentType.ActionRow);
-  assert.equal(oversizedResolverPayloads[0]?.embeds?.length, 1);
-  assert.equal(oversizedResolverEmbed?.title, "Video with oversized media");
-  assert.equal(oversizedResolverEmbed?.url, "https://www.youtube.com/watch?v=media-oversized");
-  assert.equal(oversizedResolverEmbed?.author?.name, undefined);
-  assert.equal(
-    oversizedResolverEmbed?.thumbnail?.url,
-    "https://i.ytimg.com/vi/media-oversized/hqdefault.jpg",
-  );
+  assert.equal(oversizedResolverPayload.content, "https://www.youtube.com/watch?v=media-oversized");
+  assert.equal(oversizedResolverPayload.embeds, undefined);
+  assert.equal(oversizedResolverPayload.components, undefined);
   assert.deepEqual(oversizedResolverPayloads[0]?.allowedMentions, { parse: [], repliedUser: false });
   assert.equal(oversizedResolverPayloads[0]?.files, undefined);
 
@@ -719,12 +713,11 @@ async function run(): Promise<void> {
     },
     mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/stream-too-large.mp4" }),
   });
-  const streamOversizedResolverEmbed = streamOversizedResolverPayloads[0]?.embeds?.[0] as APIEmbed | undefined;
+  const streamOversizedResolverPayload = streamOversizedResolverPayloads[0]!;
   assert.equal(streamOversizedResolverPayloads[0]?.flags, undefined);
-  assert.equal(streamOversizedResolverEmbed?.title, "Video with stream oversized media");
-  assert.equal(streamOversizedResolverEmbed?.description, "stream overflow");
-  assert.equal(streamOversizedResolverEmbed?.author?.name, "Stream creator");
-  assert.equal((streamOversizedResolverPayloads[0]?.components?.[0] as { type?: number } | undefined)?.type, ComponentType.ActionRow);
+  assert.equal(streamOversizedResolverPayload.content, "https://www.youtube.com/watch?v=media-stream-oversized");
+  assert.equal(streamOversizedResolverPayload.embeds, undefined);
+  assert.equal(streamOversizedResolverPayload.components, undefined);
 
   const defaultLimitPayloads = await buildYouTubeReplyPayloads([
     {
@@ -757,9 +750,11 @@ async function run(): Promise<void> {
     },
     mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/default-limit.mp4" }),
   });
-  const defaultLimitEmbed = defaultLimitPayloads[0]?.embeds?.[0] as APIEmbed | undefined;
+  const defaultLimitPayload = defaultLimitPayloads[0]!;
   assert.equal(defaultLimitPayloads[0]?.flags, undefined);
-  assert.equal(defaultLimitEmbed?.title, "Video with default limit overflow");
+  assert.equal(defaultLimitPayload.content, "https://www.youtube.com/watch?v=default-limit");
+  assert.equal(defaultLimitPayload.embeds, undefined);
+  assert.equal(defaultLimitPayload.components, undefined);
 
   const fallbackResolverPayloads = await buildYouTubeReplyPayloads([
     {

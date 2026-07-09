@@ -10,7 +10,6 @@ import {
   type APIButtonComponent,
   type APIComponentInContainer,
   type APIContainerComponent,
-  type APIEmbed,
   type APIMediaGalleryComponent,
   type APIMessageTopLevelComponent,
   type APISectionComponent,
@@ -746,18 +745,9 @@ export function buildYouTubePreviewPayload(
   };
 }
 
-function buildYouTubeOversizedMediaEmbedPayload(preview: YouTubePreview): MessageCreateOptions {
-  const thumbnailUrl = safeHttpsUrl(preview.thumbnailUrl);
-  const embed: APIEmbed = {
-    title: compactText(preview.title, 256),
-    url: preview.url,
-    ...(preview.description ? { description: compactText(preview.description, 4096) } : {}),
-    ...(preview.channelTitle ? { author: { name: compactText(preview.channelTitle, 256) } } : {}),
-    ...(thumbnailUrl ? { thumbnail: { url: thumbnailUrl } } : {}),
-  };
+function buildYouTubeNativeEmbedReply(preview: YouTubePreview): MessageCreateOptions {
   return {
-    embeds: [embed],
-    components: [buildLinkRow(preview)],
+    content: preview.url,
     allowedMentions: { parse: [], repliedUser: false },
   };
 }
@@ -897,7 +887,7 @@ export async function buildYouTubeReplyPayloads(
     if (result.status === "ok") {
       const media = await resolvePreviewMediaUrl(target, result.preview, options);
       if (media === "embed_fallback") {
-        return buildYouTubeOversizedMediaEmbedPayload(result.preview);
+        return buildYouTubeNativeEmbedReply(result.preview);
       }
       return buildYouTubePreviewPayload(
         result.preview,
