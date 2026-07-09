@@ -852,6 +852,7 @@ async function downloadPreviewMediaAttachment(
 
     const contentLength = Number(response.headers.get("content-length") ?? "");
     if (Number.isFinite(contentLength) && contentLength > attachmentSizeLimitBytes) {
+      await response.body?.cancel().catch(() => undefined);
       return { status: "fallback", reason: "media_too_large" };
     }
 
