@@ -7,6 +7,7 @@ import type { AppConfig } from "../core/config.js";
 import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabase } from "../core/db/types.js";
 import type { IVcRankingRepository } from "../adapters/legacyDb/vcRankingRepository.js";
 import type { VcTemporaryChannelManager } from "../features/vc/vcTemporaryChannelManager.js";
+import type { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
 
 export type RuntimeSqlDatabase = DatabaseLib.Database;
 
@@ -37,6 +38,7 @@ export type BotContext = {
   automodSqlite: RuntimeSqlDatabase;
   log: pino.Logger;
   client: Client;
+  aiRouter: AiProviderRouter;
   gameDealPgPool?: Pool;
   vcRanking: IVcRankingRepository;
   vcTemp: VcTemporaryChannelManager;

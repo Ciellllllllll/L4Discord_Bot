@@ -15,7 +15,6 @@ import { getGuildSettingsData, upsertGuildSettingsData } from "../core/guildSett
 import { isAdmin } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { SLASH_META } from "./slashMeta.js";
-import { deepseekChat } from "../features/ai/deepseek.js";
 import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { showCreatePromptModal } from "../features/ai/createPrompt.js";
@@ -107,6 +106,8 @@ export async function handleSlashCommand(
       return handleR18(interaction, ctx);
     case "ping":
       return handlePing(interaction, ctx);
+    case "switch":
+      return handleSwitch(interaction, ctx, member);
     case "pacchi_help":
       return handlePacchiHelp(interaction, ctx);
     case "member_count_setup":
@@ -203,7 +204,7 @@ async function handleThinking(
   await setAiThinkingEnabled(ctx, interaction.guildId!, target.id, enabled);
   const targetLabel = target.id === interaction.user.id ? "あなた" : `<@${target.id}>`;
   await interaction.reply({
-    content: `${targetLabel} の DeepSeek V4 Flash Thinking を ${enabled ? "ON" : "OFF"} にしました。`,
+    content: `${targetLabel} のAI Thinkingを ${enabled ? "ON" : "OFF"} にしました。`,
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
@@ -273,7 +274,7 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
     await svc.routeSlashInteraction(interaction, { r18 });
     markAiUse(interaction.user.id);
   } catch (e) {
-    ctx.log.error({ err: e }, "deepseek q failed");
+    ctx.log.error({ err: e }, "AI question failed");
     await interaction.editReply({
       content: Q_FAILED_MESSAGE,
       embeds: [],
@@ -300,8 +301,9 @@ async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotCont
   try {
     const { resolved } = readAiBasePromptFiles(ctx.config);
     const thinking = await getAiThinkingEnabled(ctx, interaction.guildId!, interaction.user.id);
-    const { ms } = await deepseekChat(
-      ctx.config,
+    const result = await ctx.aiRouter.chat(
+      interaction.guildId!,
+      "ping",
       [
         { role: "system", content: resolved },
         { role: "user", content: "ping" },
@@ -309,16 +311,54 @@ async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotCont
       { thinking },
     );
     await interaction.editReply([
-      `DeepSeek 応答時間: **${ms}** ms / Thinking: **${thinking ? "ON" : "OFF"}**`,
+      `AI応答時間: **${result.ms}** ms / Provider: **${result.provider === "openai" ? "GPT-5.6 Terra" : "DeepSeek"}** / Thinking: **${thinking ? "ON" : "OFF"}**`,
       workerLine,
     ].join("\n"));
   } catch (e) {
-    ctx.log.error({ err: e }, "deepseek ping failed");
+    ctx.log.error({ err: e }, "AI ping failed");
     await interaction.editReply([
-      "DeepSeek 応答時間: **計測失敗**",
+      "AI応答時間: **計測失敗**",
       workerLine,
     ].join("\n"));
   }
+}
+
+function fallbackReasonLabel(reason: string | undefined): string {
+  switch (reason) {
+    case "manual_deepseek": return "手動でDeepSeekを選択中";
+    case "budget_threshold": return "本日の安全しきい値に到達";
+    case "usage_unavailable": return "OpenAI Usage APIを確認できないため安全退避";
+    case "openai_unconfigured": return "OpenAI設定が未完了";
+    default: return reason ? "OpenAI障害による一時退避" : "なし";
+  }
+}
+
+export async function handleSwitch(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!member || !isAdmin(member, ctx.config)) {
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const provider = interaction.options.getString("provider", true);
+  if (provider !== "openai" && provider !== "deepseek") {
+    await interaction.reply({ content: "プロバイダー指定が不正です。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  await ctx.aiRouter.setPreferredProvider(interaction.guildId!, provider);
+  const status = await ctx.aiRouter.getStatus(interaction.guildId!);
+  const preferred = status.preferredProvider === "openai" ? "GPT-5.6 Terra" : "DeepSeek";
+  const effective = status.effectiveProvider === "openai" ? "GPT-5.6 Terra" : "DeepSeek";
+  await interaction.reply({
+    content: [
+      `希望: **${preferred}** / 次回実効: **${effective}**`,
+      `退避理由: ${fallbackReasonLabel(status.fallbackReason)}`,
+      `予算退避のUTC復帰時刻: ${status.resetAtUtc}`,
+    ].join("\n"),
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleMemberCountSetup(

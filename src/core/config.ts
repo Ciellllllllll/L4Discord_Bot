@@ -108,6 +108,16 @@ const profileOverridableKeys = [
   "DEEPSEEK_MODEL",
   "DEEPSEEK_THINKING_ENABLED",
   "DEEPSEEK_THINKING_EFFORT",
+  "OPENAI_API_KEY",
+  "OPENAI_ADMIN_KEY",
+  "OPENAI_PROJECT_ID",
+  "OPENAI_API_BASE",
+  "OPENAI_MODEL",
+  "OPENAI_REASONING_EFFORT",
+  "OPENAI_DAILY_TOKEN_LIMIT",
+  "OPENAI_FALLBACK_THRESHOLD",
+  "OPENAI_USAGE_CACHE_MS",
+  "OPENAI_MAX_COMPLETION_TOKENS",
   "DATABASE_PATH",
   "MESSAGE_LOG_DB_PATH",
   "LOG_DB_PATH",
@@ -296,6 +306,25 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined ? "high" : v),
     z.enum(["high", "max"]).default("high"),
   ),
+  OPENAI_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  OPENAI_ADMIN_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  OPENAI_PROJECT_ID: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  OPENAI_API_BASE: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().url().default("https://api.openai.com/v1"),
+  ),
+  OPENAI_MODEL: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().min(1).default("gpt-5.6-terra"),
+  ),
+  OPENAI_REASONING_EFFORT: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.enum(["none", "low", "medium", "high", "xhigh"]).default("high"),
+  ),
+  OPENAI_DAILY_TOKEN_LIMIT: z.coerce.number().int().positive().default(2_500_000),
+  OPENAI_FALLBACK_THRESHOLD: z.coerce.number().int().positive().default(2_400_000),
+  OPENAI_USAGE_CACHE_MS: z.coerce.number().int().min(0).default(30_000),
+  OPENAI_MAX_COMPLETION_TOKENS: z.coerce.number().int().positive().default(8_192),
   AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(45_000),
     // DeepSeek 応答 body の最大バイト（fetchWithLimits）
 
@@ -542,6 +571,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
   const data = parsed.data;
+  if (data.OPENAI_FALLBACK_THRESHOLD > data.OPENAI_DAILY_TOKEN_LIMIT) {
+    throw new Error("OPENAI_FALLBACK_THRESHOLD must be less than or equal to OPENAI_DAILY_TOKEN_LIMIT.");
+  }
   if (data.DB_DRIVER === "postgres" && !data.DATABASE_URL) {
     throw new Error("DB_DRIVER=postgres requires DATABASE_URL.");
   }

@@ -291,4 +291,87 @@ const suffixedDebugConfig = loadConfig(
 
 assert.equal(suffixedDebugConfig.GAME_DEAL_CHANNEL_ID, "suffixed-debug-game-deal-channel");
 
+const openAiDefaultsConfig = loadConfig(baseEnv({ PROFILE: "production" }));
+
+assert.equal(openAiDefaultsConfig.OPENAI_API_KEY, "");
+assert.equal(openAiDefaultsConfig.OPENAI_ADMIN_KEY, "");
+assert.equal(openAiDefaultsConfig.OPENAI_PROJECT_ID, "");
+assert.equal(openAiDefaultsConfig.OPENAI_API_BASE, "https://api.openai.com/v1");
+assert.equal(openAiDefaultsConfig.OPENAI_MODEL, "gpt-5.6-terra");
+assert.equal(openAiDefaultsConfig.OPENAI_REASONING_EFFORT, "high");
+assert.equal(openAiDefaultsConfig.OPENAI_DAILY_TOKEN_LIMIT, 2_500_000);
+assert.equal(openAiDefaultsConfig.OPENAI_FALLBACK_THRESHOLD, 2_400_000);
+assert.equal(openAiDefaultsConfig.OPENAI_USAGE_CACHE_MS, 30_000);
+assert.equal(openAiDefaultsConfig.OPENAI_MAX_COMPLETION_TOKENS, 8_192);
+
+const openAiNullKeysConfig = loadConfig({
+  ...baseEnv({ PROFILE: "production" }),
+  OPENAI_API_KEY: null,
+  OPENAI_ADMIN_KEY: null,
+  OPENAI_PROJECT_ID: null,
+} as unknown as NodeJS.ProcessEnv);
+
+assert.equal(openAiNullKeysConfig.OPENAI_API_KEY, "");
+assert.equal(openAiNullKeysConfig.OPENAI_ADMIN_KEY, "");
+assert.equal(openAiNullKeysConfig.OPENAI_PROJECT_ID, "");
+
+const openAiProfileConfig = loadConfig(
+  baseEnv({
+    PROFILE: "debug",
+    OPENAI_API_KEY: "common-api-key",
+    OPENAI_ADMIN_KEY: "common-admin-key",
+    OPENAI_PROJECT_ID: "common-project",
+    OPENAI_API_BASE: "https://common.openai.example/v1",
+    OPENAI_MODEL: "common-model",
+    OPENAI_REASONING_EFFORT: "low",
+    OPENAI_DAILY_TOKEN_LIMIT: "1000000",
+    OPENAI_FALLBACK_THRESHOLD: "900000",
+    OPENAI_USAGE_CACHE_MS: "1000",
+    OPENAI_MAX_COMPLETION_TOKENS: "1024",
+    DEBUG_OPENAI_API_KEY: "debug-api-key",
+    DEBUG_OPENAI_ADMIN_KEY: "debug-admin-key",
+    DEBUG_OPENAI_PROJECT_ID: "debug-project",
+    DEBUG_OPENAI_API_BASE: "https://debug.openai.example/v1",
+    DEBUG_OPENAI_MODEL: "debug-model",
+    DEBUG_OPENAI_REASONING_EFFORT: "xhigh",
+    DEBUG_OPENAI_DAILY_TOKEN_LIMIT: "3000000",
+    DEBUG_OPENAI_FALLBACK_THRESHOLD: "2900000",
+    DEBUG_OPENAI_USAGE_CACHE_MS: "0",
+    DEBUG_OPENAI_MAX_COMPLETION_TOKENS: "4096",
+  }),
+);
+
+assert.equal(openAiProfileConfig.OPENAI_API_KEY, "debug-api-key");
+assert.equal(openAiProfileConfig.OPENAI_ADMIN_KEY, "debug-admin-key");
+assert.equal(openAiProfileConfig.OPENAI_PROJECT_ID, "debug-project");
+assert.equal(openAiProfileConfig.OPENAI_API_BASE, "https://debug.openai.example/v1");
+assert.equal(openAiProfileConfig.OPENAI_MODEL, "debug-model");
+assert.equal(openAiProfileConfig.OPENAI_REASONING_EFFORT, "xhigh");
+assert.equal(openAiProfileConfig.OPENAI_DAILY_TOKEN_LIMIT, 3_000_000);
+assert.equal(openAiProfileConfig.OPENAI_FALLBACK_THRESHOLD, 2_900_000);
+assert.equal(openAiProfileConfig.OPENAI_USAGE_CACHE_MS, 0);
+assert.equal(openAiProfileConfig.OPENAI_MAX_COMPLETION_TOKENS, 4_096);
+
+assert.throws(
+  () =>
+    loadConfig(
+      baseEnv({
+        OPENAI_DAILY_TOKEN_LIMIT: "1000",
+        OPENAI_FALLBACK_THRESHOLD: "1001",
+      }),
+    ),
+  /OPENAI_FALLBACK_THRESHOLD must be less than or equal to OPENAI_DAILY_TOKEN_LIMIT/,
+);
+
+for (const [key, value] of [
+  ["OPENAI_DAILY_TOKEN_LIMIT", "0"],
+  ["OPENAI_FALLBACK_THRESHOLD", "0"],
+  ["OPENAI_MAX_COMPLETION_TOKENS", "0"],
+] as const) {
+  assert.throws(() => loadConfig(baseEnv({ [key]: value })), new RegExp(key));
+}
+
+assert.throws(() => loadConfig(baseEnv({ OPENAI_USAGE_CACHE_MS: "-1" })), /OPENAI_USAGE_CACHE_MS/);
+assert.throws(() => loadConfig(baseEnv({ OPENAI_REASONING_EFFORT: "max" })), /OPENAI_REASONING_EFFORT/);
+
 console.log("config.spec.ts: all assertions passed");

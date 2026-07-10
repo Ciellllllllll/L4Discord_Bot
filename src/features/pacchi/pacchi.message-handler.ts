@@ -143,7 +143,7 @@ async function maybeAiCheckedPacchiReply(
   reply: string,
 ): Promise<string> {
   if (!ctx.config.PACCHI_AI_FINAL_CHECK_ENABLED) return reply;
-  const accepted = await pacchiAiFinalCheck(ctx.config, ctx.log, reply);
+  const accepted = await pacchiAiFinalCheck(ctx.aiRouter, guildId, ctx.log, reply);
   if (accepted) return reply;
   return buildPacchiReply(repo.pickWord(guildId));
 }

@@ -24,11 +24,11 @@ async function run(): Promise<void> {
       log: { warn() {} },
       chat: async () => {
         called += 1;
-        return { content: "", ms: 0 };
+        return { content: "", ms: 0, model: "deepseek-test" };
       },
     },
   );
-  assert.equal(called, 0);
+  assert.equal(called, 1, "DeepSeekキーだけでAI翻訳を早期終了しない");
   assert.equal(skipped.main, undefined);
   assert.equal(skipped.quote, undefined);
 
@@ -56,6 +56,7 @@ async function run(): Promise<void> {
           },
         }),
         ms: 12,
+        model: "deepseek-test",
       }),
     },
   );
@@ -73,6 +74,7 @@ async function run(): Promise<void> {
       chat: async () => ({
         content: "{invalid json",
         ms: 3,
+        model: "deepseek-test",
       }),
     },
   );
@@ -174,6 +176,7 @@ async function run(): Promise<void> {
         chat: async () => ({
           content: JSON.stringify(testCase.response),
           ms: 1,
+          model: "deepseek-test",
         }),
       },
     );

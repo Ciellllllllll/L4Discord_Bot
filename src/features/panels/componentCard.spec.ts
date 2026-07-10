@@ -62,6 +62,18 @@ function run(): void {
   assert.equal(payload.components[0]?.type, ComponentType.Container);
   const payloadContainer = payload.components[0];
   assert.equal(payloadContainer.components.at(-1)?.type, ComponentType.ActionRow);
+
+  const bottomMetadata = new ComponentCardBuilder()
+    .addTextDisplays("本文")
+    .addBottomActionRows(row)
+    .addBottomTextDisplays("-# 使用モデル: OpenAI / `gpt-5.6-terra`")
+    .toContainer();
+  assert.equal(bottomMetadata.components.at(-2)?.type, ComponentType.ActionRow);
+  const lastComponent = bottomMetadata.components.at(-1);
+  assert.equal(lastComponent?.type, ComponentType.TextDisplay);
+  if (lastComponent?.type === ComponentType.TextDisplay) {
+    assert.equal(lastComponent.content, "-# 使用モデル: OpenAI / `gpt-5.6-terra`");
+  }
 }
 
 run();

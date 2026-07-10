@@ -18,6 +18,19 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
       .toJSON(),
     new SlashCommandBuilder().setName("ping").setDescription("応答時間計測用コマンド(DEBUG用です)").toJSON(),
     new SlashCommandBuilder()
+      .setName("switch")
+      .setDescription("サーバー全体のAIプロバイダーを切り替えます")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((o) => o
+        .setName("provider")
+        .setDescription("優先するAIプロバイダー")
+        .setRequired(true)
+        .addChoices(
+          { name: "GPT-5.6 Terra", value: "openai" },
+          { name: "DeepSeek", value: "deepseek" },
+        ))
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName("pacchi_help")
       .setDescription("ぱっちぃ機能の使い方を表示します")
       .toJSON(),
