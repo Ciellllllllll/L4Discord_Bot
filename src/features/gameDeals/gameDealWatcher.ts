@@ -3,8 +3,8 @@ import { MessageFlags } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { componentCardsPayload } from "../panels/componentCard.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
-import { GameDealRepository } from "./gameDealRepository.js";
 import { checkSubscription, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
+import { createGameDealRepository, GAME_DEALS_POSTGRES_DISABLED_MESSAGE } from "./postgresGameDealRepository.js";
 import { processSteamVerifyQueue, scanSteamAppListChanges, scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealSubscriptionHit } from "./gameDealTypes.js";
 
@@ -59,6 +59,10 @@ function subscriptionNotifyKey(hit: GameDealSubscriptionHit): string {
 }
 
 export async function scanAndNotifyGameDeals(ctx: BotContext): Promise<void> {
+  if (!createGameDealRepository(ctx)) {
+    ctx.log.warn("game deal manual scan skipped because PostgreSQL repository is not available");
+    return;
+  }
   const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE);
   const steamNowItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
   const scan = await scanCurrentFreeGamesDetailed(ctx);
@@ -66,8 +70,12 @@ export async function scanAndNotifyGameDeals(ctx: BotContext): Promise<void> {
 }
 
 async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeItem[]): Promise<number> {
-  const repo = new GameDealRepository(ctx.sqlite);
+  const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
+  if (!repo) {
+    ctx.log.warn({ itemCount: freeItems.length }, "game deal free notification skipped because PostgreSQL repository is not available");
+    return 0;
+  }
   if (freeItems.length === 0) return 0;
   if (!configuredChannelId) {
     ctx.log.warn(
@@ -76,14 +84,21 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
     );
     return 0;
   }
-  const channels = repo.listEnabledNotifyChannels();
+  const channels = await repo.listEnabledNotifyChannels();
   if (channels.length === 0) {
     ctx.log.warn({ itemCount: freeItems.length }, "game deal free notification skipped because no guild has enabled notify channel");
     return 0;
   }
-  const notifyItems = freeItems.filter((item) =>
-    item.platform === "steam" ? true : repo.upsertFreeSeen(item, true).shouldNotify,
-  );
+  const notifyItems: GameDealFreeItem[] = [];
+  for (const item of freeItems) {
+    if (item.platform === "steam") {
+      notifyItems.push(item);
+      continue;
+    }
+    if ((await repo.upsertFreeSeen(item, true)).shouldNotify) {
+      notifyItems.push(item);
+    }
+  }
   if (notifyItems.length === 0) return 0;
   let sentCount = 0;
   const channel = await fetchTextChannel(ctx.client, configuredChannelId);
@@ -108,11 +123,11 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
           .catch((err) => {
             ctx.log.warn({ err }, "game deal free notification send failed");
             return null;
-          });
+        });
         if (sent) {
           sentCount += 1;
-          if (item.platform === "steam") repo.markSteamFreeEventNotified(item.dedupeKey);
-          else repo.markFreeNotified(item.dedupeKey);
+          if (item.platform === "steam") await repo.markSteamFreeEventNotified(item.dedupeKey);
+          else await repo.markFreeNotified(item.dedupeKey);
         }
       }
     } else {
@@ -128,8 +143,8 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
       if (sent) {
         sentCount += chunk.length;
         for (const item of chunk) {
-          if (item.platform === "steam") repo.markSteamFreeEventNotified(item.dedupeKey);
-          else repo.markFreeNotified(item.dedupeKey);
+          if (item.platform === "steam") await repo.markSteamFreeEventNotified(item.dedupeKey);
+          else await repo.markFreeNotified(item.dedupeKey);
         }
       }
     }
@@ -138,75 +153,83 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
 }
 
 async function scanAndNotifySubscriptions(ctx: BotContext): Promise<number> {
-  const repo = new GameDealRepository(ctx.sqlite);
+  const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
   let detectedCount = 0;
+  if (!repo) {
+    ctx.log.warn("game deal subscription scan skipped because PostgreSQL repository is not available");
+    return 0;
+  }
 
-    const subNotifyGroups = new Map<string, SubscriptionNotifyGroup>();
-    for (const sub of repo.listActiveSubscriptions()) {
-      const hit = await checkSubscription(ctx, sub).catch((err) => {
-        ctx.log.warn({ err, subscriptionId: sub.id }, "game deal subscription check failed");
+  const subNotifyGroups = new Map<string, SubscriptionNotifyGroup>();
+  for (const sub of await repo.listActiveSubscriptions()) {
+    const hit = await checkSubscription(ctx, sub).catch((err) => {
+      ctx.log.warn({ err, subscriptionId: sub.id }, "game deal subscription check failed");
+      return null;
+    });
+    if (!hit) continue;
+    detectedCount += 1;
+    if (!(await repo.updateSubscriptionSeen(hit)).shouldNotify) continue;
+    const key = subscriptionNotifyKey(hit);
+    const group = subNotifyGroups.get(key);
+    if (group) {
+      group.userIds.add(sub.userId);
+      group.subscriptionIds.push(sub.id);
+    } else {
+      subNotifyGroups.set(key, {
+        hit,
+        userIds: new Set([sub.userId]),
+        subscriptionIds: [sub.id],
+      });
+    }
+  }
+
+  for (const group of subNotifyGroups.values()) {
+    const { hit } = group;
+    if (!configuredChannelId) {
+      ctx.log.warn(
+        { botProfile: ctx.config.BOT_PROFILE, subscriptionIds: group.subscriptionIds },
+        "game deal subscription notification skipped because profile GAME_DEAL_CHANNEL_ID is not configured",
+      );
+      continue;
+    }
+    const channel = await fetchTextChannel(ctx.client, configuredChannelId);
+    if (!channel) continue;
+    const users = [...group.userIds];
+    const notificationId = await repo.createTargetNotification({
+      guildId: hit.subscription.guildId,
+      platform: hit.subscription.platform,
+      targetId: hit.subscription.targetId,
+      subscriptionId: group.subscriptionIds[0]!,
+      userId: users[0]!,
+    });
+    await channel
+      .send({
+        content: `${users.map((userId) => `<@${userId}>`).join(" ")} 登録したゲームが割引されています!`,
+        allowedMentions: { users },
+      })
+      .catch((err) => {
+        ctx.log.warn({ err, subscriptionIds: group.subscriptionIds }, "game deal subscription mention send failed");
+      });
+    const sent = await channel
+      .send({
+        ...componentCardsPayload([buildSubscriptionDealEmbed(hit)], [buildSubscriptionButtons(notificationId)]),
+        allowedMentions: { parse: [] },
+      })
+      .catch((err) => {
+        ctx.log.warn({ err, subscriptionIds: group.subscriptionIds }, "game deal subscription notification send failed");
         return null;
       });
-      if (!hit) continue;
-      detectedCount += 1;
-      if (!repo.updateSubscriptionSeen(hit).shouldNotify) continue;
-      const key = subscriptionNotifyKey(hit);
-      const group = subNotifyGroups.get(key);
-      if (group) {
-        group.userIds.add(sub.userId);
-        group.subscriptionIds.push(sub.id);
-      } else {
-        subNotifyGroups.set(key, {
-          hit,
-          userIds: new Set([sub.userId]),
-          subscriptionIds: [sub.id],
-        });
-      }
-    }
-
-    for (const group of subNotifyGroups.values()) {
-      const { hit } = group;
-      if (!configuredChannelId) {
-        ctx.log.warn(
-          { botProfile: ctx.config.BOT_PROFILE, subscriptionIds: group.subscriptionIds },
-          "game deal subscription notification skipped because profile GAME_DEAL_CHANNEL_ID is not configured",
-        );
-        continue;
-      }
-      const channel = await fetchTextChannel(ctx.client, configuredChannelId);
-      if (!channel) continue;
-      const users = [...group.userIds];
-      const notificationId = repo.createTargetNotification({
-        guildId: hit.subscription.guildId,
-        platform: hit.subscription.platform,
-        targetId: hit.subscription.targetId,
-        subscriptionId: group.subscriptionIds[0]!,
-        userId: users[0]!,
-      });
-      await channel
-        .send({
-          content: `${users.map((userId) => `<@${userId}>`).join(" ")} 登録したゲームが割引されています!`,
-          allowedMentions: { users },
-        })
-        .catch((err) => {
-          ctx.log.warn({ err, subscriptionIds: group.subscriptionIds }, "game deal subscription mention send failed");
-        });
-      const sent = await channel
-        .send({
-          ...componentCardsPayload([buildSubscriptionDealEmbed(hit)], [buildSubscriptionButtons(notificationId)]),
-          allowedMentions: { parse: [] },
-        })
-        .catch((err) => {
-          ctx.log.warn({ err, subscriptionIds: group.subscriptionIds }, "game deal subscription notification send failed");
-          return null;
-        });
-      if (sent) repo.setNotificationMessage(notificationId, sent.id);
-    }
+    if (sent) await repo.setNotificationMessage(notificationId, sent.id);
+  }
   return detectedCount;
 }
 
 export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_INTERVAL_MS): NodeJS.Timeout {
+  if (!createGameDealRepository(ctx)) {
+    ctx.log.warn("game deal watcher disabled because PostgreSQL repository is not available");
+    return setInterval(() => undefined, intervalMs);
+  }
   let running = false;
   let lastSteamAppListAt = 0;
   let lastSteamVerifyAt = 0;
@@ -219,9 +242,14 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
       return;
     }
     running = true;
-    const repo = new GameDealRepository(ctx.sqlite);
-    repo.markScanStarted();
-    repo.updateDealStatus({ lastScanAt: new Date().toISOString() });
+    const repo = createGameDealRepository(ctx);
+    if (!repo) {
+      ctx.log.warn("game deal watcher tick skipped because PostgreSQL repository is not available");
+      running = false;
+      return;
+    }
+    await repo.markScanStarted();
+    await repo.updateDealStatus({ lastScanAt: new Date().toISOString() });
     let detectedCount = 0;
     let notifiedCount = 0;
     try {
@@ -263,12 +291,12 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
         detectedCount += await scanAndNotifySubscriptions(ctx);
       }
       const successAt = new Date().toISOString();
-      repo.markScanSuccess(detectedCount, successAt);
-      repo.updateDealStatus({ lastScanAt: successAt, lastSuccessAt: successAt, lastError: null, lastDetectedCount: detectedCount });
+      await repo.markScanSuccess(detectedCount, successAt);
+      await repo.updateDealStatus({ lastScanAt: successAt, lastSuccessAt: successAt, lastError: null, lastDetectedCount: detectedCount });
       ctx.log.info({ detectedCount, notifiedCount }, "game deal watcher tick completed");
     } catch (err) {
-      repo.markScanError(err instanceof Error ? err.message : String(err));
-      repo.updateDealStatus({ lastError: err instanceof Error ? err.message : String(err) });
+      await repo.markScanError(err instanceof Error ? err.message : String(err));
+      await repo.updateDealStatus({ lastError: err instanceof Error ? err.message : String(err) });
       ctx.log.warn({ err }, "game deal watcher tick failed");
     } finally {
       running = false;
@@ -290,14 +318,18 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
 export async function handleGameDealButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
   const [domain, action, notificationId] = interaction.customId.split(":");
   if (domain !== "gameDeals" || !action || !notificationId) return false;
-  const repo = new GameDealRepository(ctx.sqlite);
-  const row = repo.getNotification(notificationId);
+  const repo = createGameDealRepository(ctx);
+  if (!repo) {
+    await interaction.reply({ content: GAME_DEALS_POSTGRES_DISABLED_MESSAGE, flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  const row = await repo.getNotification(notificationId);
   if (!row) {
     await interaction.reply({ content: "この通知は処理できません。", flags: MessageFlags.Ephemeral });
     return true;
   }
   if (action === "purchase" && row.guildId && row.targetPlatform && row.targetId) {
-    const changes = repo.deactivateSubscriptionForTargetUser({
+    const changes = await repo.deactivateSubscriptionForTargetUser({
       guildId: row.guildId,
       userId: interaction.user.id,
       platform: row.targetPlatform,
@@ -317,9 +349,9 @@ export async function handleGameDealButton(interaction: ButtonInteraction, ctx: 
     await interaction.reply({ content: "この通知は既に処理済みです。", flags: MessageFlags.Ephemeral });
     return true;
   }
-  repo.markNotificationPressed(notificationId, action);
+  await repo.markNotificationPressed(notificationId, action);
   if (action === "stop") {
-    repo.deactivateSubscription(row.subscriptionId);
+    await repo.deactivateSubscription(row.subscriptionId);
   }
   await interaction.update({ components: [] });
   return true;

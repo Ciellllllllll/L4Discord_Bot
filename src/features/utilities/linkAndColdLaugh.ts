@@ -7,14 +7,29 @@ import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 import { COLD_LAUGH_KEYWORD } from "./coldLaughConstants.js";
 import { buildVxTwitterReplyPayloads, collectVxTwitterReplyTargets } from "./vxtwitterPreview.js";
+import { buildYouTubeReplyPayloads, collectYouTubeReplyTargets } from "./youtubePreview.js";
 
 const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
+const YOUTUBE_DOMAINS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtu.be",
+  "www.youtu.be",
+]);
 
-const URL_CANDIDATE_PATTERN =
+const X_URL_CANDIDATE_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
+const YOUTUBE_URL_CANDIDATE_PATTERN =
+  /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
 const LINK_IN_CONTENT_PATTERN =
-  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+/gi;
+  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
+const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
+const DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
+const BOOST_TIER_2_ATTACHMENT_SIZE_LIMIT_BYTES = 50 * 1000 * 1000;
+const BOOST_TIER_3_ATTACHMENT_SIZE_LIMIT_BYTES = 100 * 1000 * 1000;
 
 function stripUrlTail(urlText: string): string {
   let u = String(urlText || "").trim();
@@ -32,6 +47,29 @@ function ensureScheme(urlText: string): string {
   return `https://${u}`;
 }
 
+function isSchemeUrl(urlText: string): boolean {
+  return /^https?:\/\//i.test(urlText);
+}
+
+function isBareUrlBoundary(content: string, index: number): boolean {
+  if (index <= 0) {
+    return true;
+  }
+  const previous = content[index - 1] ?? "";
+  return /\s/u.test(previous) || previous === "\u3000" || BARE_URL_BOUNDARY_CHARS.has(previous);
+}
+
+function hasUrlCandidateBoundary(content: string, index: number, urlText: string): boolean {
+  return isSchemeUrl(urlText) || isBareUrlBoundary(content, index);
+}
+
+function attachmentSizeLimitForMessage(message: Message): number {
+  const premiumTier = message.guild?.premiumTier;
+  if (premiumTier === 3) return BOOST_TIER_3_ATTACHMENT_SIZE_LIMIT_BYTES;
+  if (premiumTier === 2) return BOOST_TIER_2_ATTACHMENT_SIZE_LIMIT_BYTES;
+  return DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES;
+}
+
 function hostWithoutWww(host: string): string {
   const h = String(host || "").trim().toLowerCase();
   return h.startsWith("www.") ? h.slice(4) : h;
@@ -42,6 +80,15 @@ function isXLikeUrl(urlText: string): boolean {
     const parsed = new URL(ensureScheme(urlText));
     const host = hostWithoutWww(parsed.host);
     return X_DOMAINS.has(host);
+  } catch {
+    return false;
+  }
+}
+
+function isYouTubeLikeUrl(urlText: string): boolean {
+  try {
+    const parsed = new URL(ensureScheme(urlText));
+    return YOUTUBE_DOMAINS.has(parsed.host.toLowerCase());
   } catch {
     return false;
   }
@@ -68,16 +115,19 @@ export function totalColdLaughHits(content: string): number {
 }
 
 export function stripLinksForColdLaughContent(content: string): string {
-  return String(content || "").replace(LINK_IN_CONTENT_PATTERN, " ");
+  const text = String(content || "");
+  return text.replace(LINK_IN_CONTENT_PATTERN, (match, offset: number) => (
+    hasUrlCandidateBoundary(text, offset, match) ? " " : match
+  ));
 }
 
 export function coldLaughHitsForMessageContent(content: string): number {
   return totalColdLaughHits(stripLinksForColdLaughContent(content));
 }
 
-function extractXLinks(content: string): string[] {
+export function extractXLinks(content: string): string[] {
   const found: string[] = [];
-  for (const match of String(content || "").matchAll(URL_CANDIDATE_PATTERN)) {
+  for (const match of String(content || "").matchAll(X_URL_CANDIDATE_PATTERN)) {
     const raw = match.groups?.url ?? "";
     const trimmed = stripUrlTail(raw);
     if (trimmed && isXLikeUrl(trimmed)) {
@@ -87,7 +137,28 @@ function extractXLinks(content: string): string[] {
   return found;
 }
 
+export function extractYouTubeLinks(content: string): string[] {
+  const text = String(content || "");
+  const found: string[] = [];
+  for (const match of text.matchAll(YOUTUBE_URL_CANDIDATE_PATTERN)) {
+    const raw = match.groups?.url ?? "";
+    if (!hasUrlCandidateBoundary(text, match.index ?? 0, raw)) {
+      continue;
+    }
+    const trimmed = stripUrlTail(raw);
+    if (trimmed && isYouTubeLikeUrl(trimmed)) {
+      found.push(trimmed);
+    }
+  }
+  return found;
+}
+
 let lock = Promise.resolve();
+
+type LinkAndColdLaughDeps = {
+  buildVxTwitterReplyPayloads?: typeof buildVxTwitterReplyPayloads;
+  buildYouTubeReplyPayloads?: typeof buildYouTubeReplyPayloads;
+};
 
 async function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const prev = lock;
@@ -106,9 +177,14 @@ async function withLock<T>(fn: () => Promise<T>): Promise<T> {
 export class LinkAndColdLaugh {
   private readonly storePath: string;
   private coldLaughCounts: Record<string, number> = {};
+  private readonly deps: Required<LinkAndColdLaughDeps>;
 
-  constructor(private readonly ctx: BotContext) {
+  constructor(private readonly ctx: BotContext, deps: LinkAndColdLaughDeps = {}) {
     this.storePath = path.resolve(this.ctx.config.COLD_LAUGH_STORE_PATH);
+    this.deps = {
+      buildVxTwitterReplyPayloads: deps.buildVxTwitterReplyPayloads ?? buildVxTwitterReplyPayloads,
+      buildYouTubeReplyPayloads: deps.buildYouTubeReplyPayloads ?? buildYouTubeReplyPayloads,
+    };
     void this.loadCounts();
   }
 
@@ -188,27 +264,46 @@ export class LinkAndColdLaugh {
       }
     }
 
-    const xLinks = extractXLinks(content);
-    if (xLinks.length === 0) {
+    const xReplyTargets = collectVxTwitterReplyTargets(extractXLinks(content));
+    const youtubeReplyTargets = this.ctx.config.YOUTUBE_PREVIEW_ENABLED
+      ? collectYouTubeReplyTargets(extractYouTubeLinks(content))
+      : [];
+    if (xReplyTargets.length === 0 && youtubeReplyTargets.length === 0) {
       return;
     }
-
-    const replyTargets = collectVxTwitterReplyTargets(xLinks);
-    if (replyTargets.length === 0) return;
 
     try {
       await message.suppressEmbeds(true);
     } catch {}
 
-    const replyPayloads = await buildVxTwitterReplyPayloads(replyTargets, {
+    const replyPayloads = await this.deps.buildVxTwitterReplyPayloads(xReplyTargets, {
       config: this.ctx.config,
       log: this.ctx.log,
+      aiRouter: this.ctx.aiRouter,
+      guildId: message.guildId ?? this.ctx.config.GUILD_ID,
     });
     for (const payload of replyPayloads) {
       try {
         await message.reply(payload);
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "vxtwitter reply error");
+      }
+    }
+
+    const youtubeReplyPayloads = await this.deps.buildYouTubeReplyPayloads(youtubeReplyTargets, {
+      apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
+      requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+      attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
+      ytdlpEnabled: this.ctx.config.YOUTUBE_YTDLP_ENABLED,
+      ytdlpPath: this.ctx.config.YOUTUBE_YTDLP_PATH,
+      ytdlpTimeoutMs: this.ctx.config.YOUTUBE_YTDLP_TIMEOUT_MS,
+      log: this.ctx.log,
+    });
+    for (const payload of youtubeReplyPayloads) {
+      try {
+        await message.reply(payload);
+      } catch (err) {
+        this.ctx.log.warn({ err: String(err) }, "youtube preview reply error");
       }
     }
   }

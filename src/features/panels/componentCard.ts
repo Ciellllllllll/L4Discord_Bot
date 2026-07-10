@@ -55,6 +55,7 @@ export class ComponentCardBuilder {
     actionRows?: ActionRowLike[];
     bottomActionRows?: ActionRowLike[];
     textDisplays?: string[];
+    bottomTextDisplays?: string[];
   } = {};
 
   setTitle(title: string): this {
@@ -123,6 +124,12 @@ export class ComponentCardBuilder {
     return this;
   }
 
+  addBottomTextDisplays(...contents: string[]): this {
+    const filtered = contents.map((content) => content.slice(0, 4000)).filter((content) => content.length > 0);
+    this.data.bottomTextDisplays = [...(this.data.bottomTextDisplays ?? []), ...filtered];
+    return this;
+  }
+
   private toTextParts(): { body: string; footer: string } {
     const lines: string[] = [];
     if (this.data.author?.name) {
@@ -173,6 +180,10 @@ export class ComponentCardBuilder {
       type: ComponentType.TextDisplay,
       content,
     }));
+    const bottomTextDisplays = (this.data.bottomTextDisplays ?? []).map((content): APITextDisplayComponent => ({
+      type: ComponentType.TextDisplay,
+      content,
+    }));
     const bodyComponent: APITextDisplayComponent | APISectionComponent | null = body
       ? this.data.thumbnail?.url
         ? {
@@ -203,6 +214,7 @@ export class ComponentCardBuilder {
         : []),
       ...mediaComponents,
       ...bottomActionRows,
+      ...bottomTextDisplays,
     ];
     if (components.length === 0) {
       components.push({

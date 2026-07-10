@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.worktrees/
 .env
 data/*.sqlite
 data/*.sqlite-shm
@@ -13,3 +14,4 @@ discordbot-security-skill.md
 .vscode/settings.json
 AGENTS.md
 .codex/skills/l4-discordbot/
+.codex/

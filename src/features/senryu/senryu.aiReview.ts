@@ -1,6 +1,6 @@
 import type { AppConfig } from "../../core/config.js";
-import type { ChatMessage } from "../ai/deepseek.js";
-import { deepseekChat } from "../ai/deepseek.js";
+import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
+import type { ChatMessage } from "../ai/chatTypes.js";
 import { resolveReading } from "./senryu.kuromoji.js";
 import type { KuromojiToken, SenryuCandidate } from "./senryu.types.js";
 
@@ -107,10 +107,12 @@ export type SenryuAiReviewResult =
   | { ok: true; verdict: SenryuAiReviewVerdict; ms: number }
   | { ok: false; err: string };
 
-// DeepSeek（既存の OpenAI 互換エンドポイント）で候補を審査する。
+// 選択中のAI providerで候補を審査する。
 
 export async function reviewSenryuCandidateWithAi(
   config: AppConfig,
+  router: AiProviderRouter,
+  guildId: string,
   log: { warn: (o: Record<string, unknown>, m: string) => void },
   userBlock: string,
 ): Promise<SenryuAiReviewResult> {
@@ -120,9 +122,7 @@ export async function reviewSenryuCandidateWithAi(
   ];
 
   try {
-    const model = config.SENRYU_AI_REVIEW_MODEL ?? config.DEEPSEEK_MODEL;
-    const { content, ms } = await deepseekChat(config, messages, {
-      model,
+    const { content, ms } = await router.chat(guildId, "senryu_review", messages, {
       temperature: config.SENRYU_AI_REVIEW_TEMPERATURE,
       sanitizeOutput: false,
       thinking: false,
@@ -131,12 +131,12 @@ export async function reviewSenryuCandidateWithAi(
     });
     const verdict = parseSenryuAiReviewVerdict(content);
     if (!verdict) {
-      log.warn({ raw: content.slice(0, 200) }, "senryu ai review: unparseable verdict");
+      log.warn({}, "senryu ai review: unparseable verdict");
       return { ok: false, err: "unparseable_verdict" };
     }
     return { ok: true, verdict, ms };
   } catch (err) {
-    log.warn({ err: String(err) }, "senryu ai review: DeepSeek failed");
+    log.warn({ err: String(err) }, "senryu ai review failed");
     return { ok: false, err: "request_failed" };
   }
 }

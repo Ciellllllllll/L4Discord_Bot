@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
 import type pino from "pino";
 import type { BotContext } from "../../bot/context.js";
+import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
+import { ensurePostgresGameDealSchema } from "./postgresGameDealRepository.js";
 import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 
 const searchHtml = `
@@ -46,9 +47,21 @@ function appdetailsResponse(url: string) {
   return { [appid]: common };
 }
 
-async function run() {
+function tempSchemaName(): string {
+  return `game_deals_steam_now_spec_${process.pid}_${Date.now()}`;
+}
+
+async function run(): Promise<boolean> {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.log("steamNowFullDiscount.spec.ts: DATABASE_URL is not set; skipping PostgreSQL runtime assertions");
+    return false;
+  }
+
   const originalFetch = globalThis.fetch;
   const logs: unknown[] = [];
+  const schemaName = tempSchemaName();
+  const pool = await createPgPool(connectionString, schemaName);
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
     const url = input.toString();
     if (url.includes("/search/")) {
@@ -60,10 +73,11 @@ async function run() {
     throw new Error(`unexpected URL: ${url}`);
   }) as typeof fetch;
 
-  const db = new Database(":memory:");
   try {
+    await ensurePostgresGameDealSchema(pool, schemaName);
     const ctx = {
-      sqlite: db,
+      config: { DB_DRIVER: "postgres" },
+      gameDealPgPool: pool,
       log: {
         debug(fields: unknown) {
           logs.push(fields);
@@ -79,21 +93,25 @@ async function run() {
     assert.equal(items[0]?.dedupeKey.startsWith("steam_now:100:"), true);
     const duplicateItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
     assert.equal(duplicateItems.length, 1);
-    db.prepare("UPDATE steam_free_events SET notified_at = CURRENT_TIMESTAMP WHERE state_key = ?").run(items[0]?.dedupeKey);
+    await pool.query("UPDATE steam_free_events SET notified_at = CURRENT_TIMESTAMP WHERE state_key = $1", [
+      items[0]?.dedupeKey,
+    ]);
     const notifiedDuplicateItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
     assert.equal(notifiedDuplicateItems.length, 0);
     const manualItems = await scanSteamNowFullDiscountItems(ctx);
     assert.equal(manualItems.length, 1);
     assert.equal(logs.some((entry) => JSON.stringify(entry).includes("excluded_free_to_play")), true);
+    return true;
   } finally {
-    db.close();
+    await pool.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
+    await pool.end();
     globalThis.fetch = originalFetch;
   }
 }
 
 run()
-  .then(() => {
-    console.log("steamNowFullDiscount.spec.ts: all assertions passed");
+  .then((ranAssertions) => {
+    if (ranAssertions) console.log("steamNowFullDiscount.spec.ts: all assertions passed");
   })
   .catch((err) => {
     console.error(err);

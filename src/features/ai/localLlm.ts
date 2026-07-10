@@ -5,6 +5,7 @@ import type { ChatMessage } from "./deepseek.js";
 export type LocalLlmResult = {
   content: string;
   ms: number;
+  model: string;
 };
 
 export type LocalLlmRequestOptions = {
@@ -20,25 +21,6 @@ function sanitizeAiText(text: string): string {
     .replace(/@everyone/g, "@\u200beveryone")
     .replace(/@here/g, "@\u200bhere")
     .replace(/<@(?:!?|&)\d+>/g, (match) => match.replace("<@", "<@\u200b"));
-}
-
-function safeErrorText(text: string, apiKey: string, rawBase: string): string {
-  const base = rawBase.trim().replace(/\/+$/, "");
-  const secrets = new Set<string>([apiKey, rawBase.trim(), base].filter(Boolean));
-  try {
-    const parsed = new URL(base);
-    secrets.add(parsed.host);
-    secrets.add(parsed.hostname);
-  } catch {}
-
-  let safe = String(text || "")
-    .replaceAll(apiKey, "[redacted]")
-    .replace(/Authorization\s*:\s*Bearer\s+\S+/gi, "[redacted]")
-    .replace(/Bearer\s+\S+/gi, "[redacted]");
-  for (const secret of secrets) {
-    safe = safe.replaceAll(secret, "[redacted]");
-  }
-  return safe;
 }
 
 export async function localLlmChat(
@@ -85,16 +67,26 @@ export async function localLlmChat(
   );
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Local LLM HTTP ${res.status}: ${safeErrorText(text, apiKey, rawBase).slice(0, 200)}`);
+    await res.text();
+    throw new Error(`Local LLM HTTP ${res.status}`);
   }
 
-  const body = (await res.json()) as {
+  let body: {
+    model?: unknown;
     choices?: Array<{ message?: { content?: string } }>;
   };
+  try {
+    body = await res.json() as typeof body;
+  } catch {
+    throw new Error("Local LLM returned invalid JSON");
+  }
   const raw = body.choices?.[0]?.message?.content?.trim() ?? "";
+  const responseModel = typeof body.model === "string" && body.model.trim()
+    ? body.model.trim()
+    : model;
   return {
     content: sanitize ? sanitizeAiText(raw) : raw,
     ms: Date.now() - started,
+    model: responseModel,
   };
 }

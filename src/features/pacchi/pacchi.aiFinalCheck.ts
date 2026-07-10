@@ -1,5 +1,5 @@
-import type { AppConfig } from "../../core/config.js";
-import { deepseekChat, type ChatMessage } from "../ai/deepseek.js";
+import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
+import type { ChatMessage } from "../ai/chatTypes.js";
 
 export type PacchiAiFinalCheckVerdict = "accept" | "reject";
 
@@ -15,7 +15,8 @@ export function parsePacchiAiFinalCheckVerdict(raw: string): PacchiAiFinalCheckV
 }
 
 export async function pacchiAiFinalCheck(
-  config: AppConfig,
+  router: AiProviderRouter,
+  guildId: string,
   log: { warn: (o: Record<string, unknown>, m: string) => void },
   reply: string,
 ): Promise<boolean> {
@@ -35,16 +36,14 @@ export async function pacchiAiFinalCheck(
   ];
 
   try {
-    const result = await deepseekChat(config, messages, {
+    const result = await router.chat(guildId, "pacchi_final_check", messages, {
       temperature: 0,
       thinking: false,
       sanitizeOutput: false,
-      timeoutMs: Math.min(config.AI_REQUEST_TIMEOUT_MS, 8_000),
-      maxRetries: 0,
     });
     const verdict = parsePacchiAiFinalCheckVerdict(result.content);
     if (!verdict) {
-      log.warn({ raw: result.content.slice(0, 200) }, "pacchi ai final check: unparseable verdict");
+      log.warn({}, "pacchi ai final check: unparseable verdict");
       return false;
     }
     return verdict === "accept";

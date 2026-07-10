@@ -16,6 +16,7 @@ import {
   type MessageCreateOptions,
 } from "discord.js";
 import type { AppConfig } from "../../core/config.js";
+import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 import { translateVxTwitterTexts, type VxTwitterTextTranslations } from "./vxtwitterTranslation.js";
 
 const VX_DOMAIN = "vxtwitter.com";
@@ -96,6 +97,8 @@ type VxTwitterReplyBuildOptions = {
   config?: Pick<AppConfig, "DEEPSEEK_API_KEY"> & Partial<AppConfig>;
   log?: LoggerLike;
   translate?: (tweet: TweetPreview) => Promise<VxTwitterTextTranslations>;
+  aiRouter?: AiProviderRouter;
+  guildId?: string;
 };
 
 function ensureScheme(urlText: string): string {
@@ -532,6 +535,8 @@ export async function buildVxTwitterReplyPayloads(
               {
                 config: options.config,
                 log: options.log,
+                router: options.aiRouter,
+                guildId: options.guildId,
               },
             )
             : undefined;

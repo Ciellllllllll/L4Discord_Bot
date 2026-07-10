@@ -97,11 +97,22 @@ import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
 import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
 import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
 import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "./features/japaneseAnalysis/japaneseWorkerProcess.js";
-import { ensureGameDealSchemaOnce } from "./features/gameDeals/gameDealRepository.js";
+import { ensurePostgresGameDealSchema } from "./features/gameDeals/postgresGameDealRepository.js";
 import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
 import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
 import { reconcileWerewolfGames } from "./features/werewolf/werewolfGame.js";
 import type { RuntimeSqlDatabase } from "./bot/context.js";
+import {
+  ensureSqliteAiProviderSchema,
+  SqliteAiProviderBudgetRepository,
+  SqliteAiProviderSettingsRepository,
+} from "./features/ai/aiProviderRepository.js";
+import {
+  ensurePostgresAiProviderSchema,
+  PostgresAiProviderBudgetRepository,
+  PostgresAiProviderSettingsRepository,
+} from "./features/ai/postgresAiProviderRepository.js";
+import { AiProviderRouter } from "./features/ai/aiProviderRouter.js";
 
 let mainStarted = false;
 
@@ -170,7 +181,6 @@ async function main(): Promise<void> {
   ensureTicketDatabaseSchema(ticketSqlite as DatabaseLib.Database);
   ensureVcTimeSchema(vcTimeSqlite as DatabaseLib.Database);
   ensurePacchiSchemaOnce(sqlite as DatabaseLib.Database);
-  ensureGameDealSchemaOnce(sqlite as DatabaseLib.Database);
   ensureAiR18UserSettingsSchema(sqlite as DatabaseLib.Database);
   if (usePostgres) ensureAnonymousSurveySchema(sqlite as DatabaseLib.Database);
   ensureAiHistorySchema(aiHistorySqlite as DatabaseLib.Database);
@@ -216,6 +226,13 @@ async function main(): Promise<void> {
   const messageLogPgPool = usePostgres
     ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MESSAGE_LOG_SCHEMA)
     : null;
+  const mainPgPool = usePostgres
+    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MAIN_SCHEMA)
+    : null;
+  if (mainPgPool) {
+    await ensurePostgresGameDealSchema(mainPgPool, config.POSTGRES_MAIN_SCHEMA);
+    await ensurePostgresAiProviderSchema(mainPgPool, config.POSTGRES_MAIN_SCHEMA);
+  }
   const vcTimePgPool = usePostgres
     ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_VC_TIME_SCHEMA)
     : null;
@@ -254,6 +271,17 @@ async function main(): Promise<void> {
     log.error({ err: e }, "database ping failed");
     process.exit(1);
   }
+
+  if (!usePostgres) {
+    ensureSqliteAiProviderSchema(sqlite as DatabaseLib.Database);
+  }
+  const aiProviderSettings = mainPgPool
+    ? new PostgresAiProviderSettingsRepository(mainPgPool)
+    : new SqliteAiProviderSettingsRepository(sqlite as DatabaseLib.Database);
+  const aiProviderBudget = mainPgPool
+    ? new PostgresAiProviderBudgetRepository(mainPgPool)
+    : new SqliteAiProviderBudgetRepository(sqlite as DatabaseLib.Database);
+  const aiRouter = new AiProviderRouter(config, aiProviderSettings, aiProviderBudget);
 
   try {
     if (usePostgres) {
@@ -331,6 +359,8 @@ async function main(): Promise<void> {
     automodSqlite,
     log,
     client,
+    aiRouter,
+    gameDealPgPool: mainPgPool ?? undefined,
     vcRanking: new SqliteVcRankingRepository(vcTimeSqlite as DatabaseLib.Database, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
   };
@@ -739,6 +769,7 @@ async function main(): Promise<void> {
     await aiHistoryDb.destroy();
     await automodDb.destroy();
     await messageLogPgPool?.end();
+    await mainPgPool?.end();
     await vcTimePgPool?.end();
     await messageAttachmentPgPool?.end();
     await destroyReminderDb();
