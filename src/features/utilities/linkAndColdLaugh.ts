@@ -279,6 +279,8 @@ export class LinkAndColdLaugh {
     const replyPayloads = await this.deps.buildVxTwitterReplyPayloads(xReplyTargets, {
       config: this.ctx.config,
       log: this.ctx.log,
+      aiRouter: this.ctx.aiRouter,
+      guildId: message.guildId ?? this.ctx.config.GUILD_ID,
     });
     for (const payload of replyPayloads) {
       try {

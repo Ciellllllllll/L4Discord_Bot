@@ -21,6 +21,7 @@ async function run(): Promise<void> {
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     calls.push({ url: input.toString(), init: init ?? {} });
     return Response.json({
+      model: "local-response-model",
       choices: [{ message: { content: "  local answer  " } }],
     });
   }) as typeof fetch;
@@ -33,6 +34,7 @@ async function run(): Promise<void> {
     );
 
     assert.equal(result.content, "local answer");
+    assert.equal(result.model, "local-response-model");
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "http://127.0.0.1:8080/v1/chat/completions");
     assert.equal(calls[0]?.init.method, "POST");
@@ -51,6 +53,7 @@ async function run(): Promise<void> {
         choices: [{ message: { content: "@everyone @here <@123> <@!456> <@&789>" } }],
       })) as typeof fetch;
     const sanitized = await localLlmChat(testConfig(), [{ role: "user", content: "mention test" }]);
+    assert.equal(sanitized.model, "local-model");
     assert.equal(sanitized.content.includes("@everyone"), false);
     assert.equal(sanitized.content.includes("@here"), false);
     assert.equal(sanitized.content.includes("<@123>"), false);
@@ -74,7 +77,7 @@ async function run(): Promise<void> {
     }
 
     globalThis.fetch = (async () =>
-      new Response("bad local-secret Bearer x http://local.test/v1 local.test", { status: 500 })) as typeof fetch;
+      new Response("reflected-private-prompt local-secret Bearer x http://local.test/v1 local.test", { status: 500 })) as typeof fetch;
     await assert.rejects(
       () =>
         localLlmChat(
@@ -83,11 +86,26 @@ async function run(): Promise<void> {
         ),
       (err) => {
         assert.ok(err instanceof Error);
-        assert.match(err.message, /Local LLM HTTP 500/);
+        assert.equal(err.message, "Local LLM HTTP 500");
+        assert.equal(err.message.includes("reflected-private-prompt"), false);
         assert.equal(err.message.includes("local-secret"), false);
         assert.equal(err.message.includes("Bearer"), false);
         assert.equal(err.message.includes("http://local.test/v1"), false);
         assert.equal(err.message.includes("local.test"), false);
+        return true;
+      },
+    );
+
+    globalThis.fetch = (async () => new Response("reflected-private-prompt", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+    await assert.rejects(
+      () => localLlmChat(testConfig(), [{ role: "user", content: "hello" }]),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.equal(err.message, "Local LLM returned invalid JSON");
+        assert.equal(err.message.includes("reflected-private-prompt"), false);
         return true;
       },
     );

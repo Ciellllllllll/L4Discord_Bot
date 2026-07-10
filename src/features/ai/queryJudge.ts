@@ -1,6 +1,5 @@
-import type { AppConfig } from "../../core/config.js";
-import type { ChatMessage } from "./deepseek.js";
-import { deepseekChat } from "./deepseek.js";
+import type { AiProviderRouter } from "./aiProviderRouter.js";
+import type { ChatMessage } from "./chatTypes.js";
 
 // 方針: ここに無い action は command として採用しない（question に落とす）
 
@@ -80,9 +79,11 @@ function parseJudgeOutput(raw: string): JudgeResult {
 }
 
 export async function classifyUserIntent(
-  config: AppConfig,
+  router: AiProviderRouter,
+  guildId: string,
   userText: string,
   log: { warn: (o: Record<string, unknown>, m: string) => void },
+  temperature?: number,
 ): Promise<JudgeResult> {
   const messages: ChatMessage[] = [
     { role: "system", content: buildJudgeSystemPrompt() },
@@ -90,14 +91,14 @@ export async function classifyUserIntent(
   ];
 
   try {
-    const { content } = await deepseekChat(config, messages, {
-      temperature: config.AI_JUDGE_TEMPERATURE,
+    const { content } = await router.chat(guildId, "judge", messages, {
+      temperature,
       sanitizeOutput: false,
       thinking: false,
     });
     return parseJudgeOutput(content);
   } catch (err) {
-    log.warn({ err: String(err) }, "classify DeepSeek failed");
+    log.warn({ err: String(err) }, "AI intent classification failed");
     return { kind: "question" };
   }
 }

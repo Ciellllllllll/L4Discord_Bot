@@ -1,5 +1,6 @@
 import type { AppConfig } from "../../core/config.js";
 import { deepseekChat, type ChatMessage, type DeepSeekResult } from "../ai/deepseek.js";
+import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 
 const MIN_CONFIDENCE = 0.75;
 
@@ -32,6 +33,8 @@ type MinimalTranslationConfig =
 type TranslationDeps = {
   config: MinimalTranslationConfig;
   log?: LoggerLike;
+  router?: AiProviderRouter;
+  guildId?: string;
   chat?: (
     config: AppConfig,
     messages: ChatMessage[],
@@ -135,22 +138,22 @@ export async function translateVxTwitterTexts(
   input: TranslationInput,
   deps: TranslationDeps,
 ): Promise<VxTwitterTextTranslations> {
-  if (!deps.config.DEEPSEEK_API_KEY.trim()) {
-    return {};
-  }
-
-  const chat = deps.chat ?? deepseekChat;
   try {
-    const { content } = await chat(
-      deps.config as AppConfig,
-      buildMessages(input),
-      {
+    const messages = buildMessages(input);
+    const result = deps.router && deps.guildId
+      ? await deps.router.chat(deps.guildId, "vx_translation", messages, {
         thinking: false,
         temperature: 0,
         sanitizeOutput: false,
         timeoutMs: Math.min(deps.config.AI_REQUEST_TIMEOUT_MS ?? 45_000, 15_000),
-      },
-    );
+      })
+      : await (deps.chat ?? deepseekChat)(deps.config as AppConfig, messages, {
+        thinking: false,
+        temperature: 0,
+        sanitizeOutput: false,
+        timeoutMs: Math.min(deps.config.AI_REQUEST_TIMEOUT_MS ?? 45_000, 15_000),
+      });
+    const { content } = result;
     const parsed = parseDeepSeekJsonResponse(content);
     const main = normalizeTranslationDecision(parsed.main);
     const quote = normalizeTranslationDecision(parsed.quote);

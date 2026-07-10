@@ -14,7 +14,7 @@ import {
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
-import { deepseekChat, type ChatMessage } from "./deepseek.js";
+import type { ChatMessage } from "./chatTypes.js";
 import { AiQueryService } from "./aiQueryService.js";
 
 const MODAL_ID = "ai_create_prompt:modal";
@@ -24,7 +24,6 @@ const FIELD_AGE = "age";
 const FIELD_TARGET = "target";
 const FIELD_DETAILS = "details";
 const BUTTON_PREFIX = "ai_create_prompt:";
-const MODEL = "deepseek-v4-pro";
 
 type PromptConditions = {
   name?: string;
@@ -214,8 +213,7 @@ function buildGeneratorMessages(conditions: PromptConditions, previousPrompts: s
 }
 
 async function generatePrompt(ctx: BotContext, conditions: PromptConditions, previousPrompts: string[]): Promise<string> {
-  const { content } = await deepseekChat(ctx.config, buildGeneratorMessages(conditions, previousPrompts), {
-    model: MODEL,
+  const { content } = await ctx.aiRouter.chat(ctx.config.GUILD_ID, "prompt_generator", buildGeneratorMessages(conditions, previousPrompts), {
     thinking: true,
     sanitizeOutput: false,
     timeoutMs: Math.max(ctx.config.AI_REQUEST_TIMEOUT_MS, 60_000),

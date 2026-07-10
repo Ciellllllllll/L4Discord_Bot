@@ -16,14 +16,15 @@ import * as path from "node:path";
 import type { AppConfig } from "../../core/config.js";
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
-import { deepseekChat, type ChatMessage } from "./deepseek.js";
+import type { ChatMessage } from "./chatTypes.js";
 import { getAiThinkingEnabled } from "./thinkingSettings.js";
 import { classifyUserIntent } from "./queryJudge.js";
 import { runAiSlashCommand } from "./aiCommandExecution.js";
 import { sendOrReconnectAiHistoryAdminPanel } from "./aiHistoryAdminPanel.js";
-import { localLlmChat } from "./localLlm.js";
+import { localLlmChat, type LocalLlmResult } from "./localLlm.js";
 import { LocalLlmQueue } from "./localLlmQueue.js";
 import { getAiR18Enabled } from "./aiR18Settings.js";
+import { sanitizeAiModelName } from "./modelDisplay.js";
 
 // DiscordBOTv2 AI_Query.js と同じ customId 接頭辞
 
@@ -44,6 +45,24 @@ export type AiQueryRouteOptions = {
 };
 
 type HistoryMode = "normal" | "r18" | "optimizer";
+
+type QuestionProvider = "openai" | "deepseek" | "local_llm";
+
+type QuestionAnswer = {
+  content: string;
+  provider: QuestionProvider;
+  model: string;
+};
+
+function formatModelMetadata(answer: QuestionAnswer): string {
+  const providerLabel: Record<QuestionProvider, string> = {
+    openai: "OpenAI",
+    deepseek: "DeepSeek",
+    local_llm: "ローカルLLM",
+  };
+  const model = sanitizeAiModelName(answer.model);
+  return `-# 使用モデル: ${providerLabel[answer.provider]} / \`${model}\``;
+}
 
 function safeStrip(text: string): string {
   return String(text || "").trim();
@@ -349,7 +368,7 @@ export class AiQueryService {
         ),
       ];
 
-      const { content: optimized } = await deepseekChat(this.ctx.config, optimizerMessages, {
+      const { content: optimized } = await this.ctx.aiRouter.chat(guildId, "prompt_optimizer", optimizerMessages, {
         temperature: this.ctx.config.PROMPT_OPTIMIZER_TEMPERATURE,
         sanitizeOutput: false,
         thinking: false,
@@ -472,14 +491,19 @@ export class AiQueryService {
     userId: string,
     userName: string,
     question: string,
-  ): Promise<string> {
+  ): Promise<QuestionAnswer> {
     const messages = await this.buildQuestionMessages(guildId, userId, userName, question, false);
     const thinking = await getAiThinkingEnabled(this.ctx, guildId, userId);
-    const { content: answer } = await deepseekChat(this.ctx.config, messages, { thinking });
-    await this.appendHistoryPair(guildId, userId, question, answer, { provider: "deepseek", r18: false });
+    const result = await this.ctx.aiRouter.chat(guildId, "answer", messages, { thinking });
+    const answer = result.content;
+    await this.appendHistoryPair(guildId, userId, question, answer, {
+      provider: result.provider,
+      model: result.model,
+      r18: false,
+    });
     void this.optimizeUserPromptFromHistory(guildId, userId, userName).catch(() => undefined);
     this.touchHistoryAdminPanel();
-    return answer;
+    return { content: answer, provider: result.provider, model: result.model };
   }
 
   private async askR18Question(
@@ -488,7 +512,7 @@ export class AiQueryService {
     userId: string,
     userName: string,
     question: string,
-  ): Promise<string | null> {
+  ): Promise<QuestionAnswer | null> {
     if (!this.ctx.config.R18_CHANNEL_ID || interaction.channelId !== this.ctx.config.R18_CHANNEL_ID) {
       await interaction.editReply({
         content: "R18モードの /q は指定されたR18チャンネルでのみ利用できます。",
@@ -550,17 +574,21 @@ export class AiQueryService {
       });
     }
 
-    let answer: string;
+    let result: LocalLlmResult;
     try {
-      ({ content: answer } = await ticket.promise);
+      result = await ticket.promise;
     } catch (error) {
       await startNotice;
       throw error;
     }
     await startNotice;
-    await this.appendHistoryPair(guildId, userId, question, answer, { provider: "local_llm", r18: true });
+    await this.appendHistoryPair(guildId, userId, question, result.content, {
+      provider: "local_llm",
+      model: result.model,
+      r18: true,
+    });
     this.touchHistoryAdminPanel();
-    return answer;
+    return { content: result.content, provider: "local_llm", model: result.model };
   }
 
   async routeSlashInteraction(interaction: ChatInputCommandInteraction, options: AiQueryRouteOptions = {}): Promise<void> {
@@ -571,7 +599,7 @@ export class AiQueryService {
     const noMentions = { parse: [] as const };
     const r18 = options.r18 ?? (await getAiR18Enabled(this.ctx, guildId, userId));
 
-    const replyQuestion = async (answer: string) => {
+    const replyQuestion = async (answer: QuestionAnswer) => {
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
           .setCustomId(`${HISTORY_CLEAR_Q_PREFIX}${guildId}:${userId}`)
@@ -581,10 +609,11 @@ export class AiQueryService {
       const card = new ComponentCardBuilder()
         .addTextDisplays(
           ["### 質問", text.slice(0, 4000)].join("\n"),
-          ["### 回答", answer.slice(0, 4000)].join("\n"),
+          ["### 回答", answer.content.slice(0, 4000)].join("\n"),
         )
-        .addBottomActionRows(row);
-      if (answer.length > 4000) {
+        .addBottomActionRows(row)
+        .addBottomTextDisplays(formatModelMetadata(answer));
+      if (answer.content.length > 4000) {
         card.setFooter({ text: "回答が長いため一部のみ表示しています。" });
       }
       await interaction.editReply({ ...componentCardsPayload([card]), allowedMentions: noMentions });
@@ -619,7 +648,13 @@ export class AiQueryService {
       return;
     }
 
-    const classification = await classifyUserIntent(this.ctx.config, text, this.ctx.log);
+    const classification = await classifyUserIntent(
+      this.ctx.aiRouter,
+      guildId,
+      text,
+      this.ctx.log,
+      this.ctx.config.AI_JUDGE_TEMPERATURE,
+    );
 
     if (classification.kind === "question") {
       await runQuestionFlow();
@@ -682,7 +717,7 @@ export class AiQueryService {
 
     const runQuestionFlow = async () => {
       const answer = await this.askQuestion(guildId, userId, userName, text);
-      await replyQuestion(answer);
+      await replyQuestion(answer.content);
     };
 
     if (await getAiR18Enabled(this.ctx, guildId, userId)) {
@@ -698,7 +733,13 @@ export class AiQueryService {
       return;
     }
 
-    const classification = await classifyUserIntent(this.ctx.config, text, this.ctx.log);
+    const classification = await classifyUserIntent(
+      this.ctx.aiRouter,
+      guildId,
+      text,
+      this.ctx.log,
+      this.ctx.config.AI_JUDGE_TEMPERATURE,
+    );
     if (classification.kind === "question") {
       await runQuestionFlow();
       return;

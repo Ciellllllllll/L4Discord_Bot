@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import { loadConfig } from "../core/config.js";
 import { createPgPool, quotePgIdent } from "../core/db/postgres.js";
+import { ensurePostgresAiProviderSchema } from "../features/ai/postgresAiProviderRepository.js";
 
 type SqliteColumn = {
   cid: number | bigint;
@@ -244,6 +245,9 @@ async function main(): Promise<void> {
   ];
 
   try {
+    // Generic SQLite introspection does not preserve DEFAULT/CHECK/FK clauses.
+    // Create the canonical AI tables first so copied rows land in the runtime-compatible schema.
+    await ensurePostgresAiProviderSchema(pool, config.POSTGRES_MAIN_SCHEMA);
     for (const source of sources) {
       await migrateSource(pool, source);
     }

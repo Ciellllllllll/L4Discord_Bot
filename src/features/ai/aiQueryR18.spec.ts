@@ -13,6 +13,7 @@ import { ensureAiHistorySchema } from "./aiHistorySchema.js";
 import { ensureAiR18UserSettingsSchema } from "./aiR18UserSettingsSchema.js";
 import { AiQueryService } from "./aiQueryService.js";
 import { handleSlashCommand } from "../../commands/slashHandlers.js";
+import { deepseekChat } from "./deepseek.js";
 
 type FetchCall = {
   url: string;
@@ -87,11 +88,21 @@ function makeConfig(dir: string, overrides: Partial<AppConfig> = {}): AppConfig 
   } as AppConfig;
 }
 
-function makeCtx(db: Kysely<AppDatabase>, aiHistoryDb: Kysely<AiHistoryDatabase>, config: AppConfig): BotContext {
+function makeCtx(
+  db: Kysely<AppDatabase>,
+  aiHistoryDb: Kysely<AiHistoryDatabase>,
+  config: AppConfig,
+  provider: "openai" | "deepseek" = "deepseek",
+): BotContext {
   return {
     db,
     aiHistoryDb,
     config,
+    aiRouter: {
+      async chat(_guildId: string, _task: string, messages: Parameters<typeof deepseekChat>[1], options: Parameters<typeof deepseekChat>[2]) {
+        return { ...(await deepseekChat(config, messages, options)), provider };
+      },
+    },
     client: { users: { cache: new Map() } },
     log: {
       info: () => undefined,
@@ -216,6 +227,7 @@ async function run(): Promise<void> {
     calls.push({ url: input.toString(), body });
     const isLocal = input.toString().startsWith("http://local.test");
     return Response.json({
+      model: isLocal ? "local-response-model" : "deepseek-response-model",
       choices: [{ message: { content: isLocal ? "local answer" : "deepseek answer" } }],
     });
   }) as typeof fetch;
@@ -231,7 +243,11 @@ async function run(): Promise<void> {
       assert.equal(calls.at(-1)?.url, "http://deepseek.test/v1/chat/completions");
       const rows = await historyRows(aiHistoryDb);
       assert.equal(rows.length, 2);
-      assert.deepEqual(JSON.parse(String(rows[0]?.meta)), { provider: "deepseek", r18: false });
+      assert.deepEqual(JSON.parse(String(rows[0]?.meta)), {
+        provider: "deepseek",
+        model: "deepseek-response-model",
+        r18: false,
+      });
       const payload = rec.edits[0] as { components?: Array<{ type: ComponentType; components?: Array<{ type: ComponentType; content?: string }> }> };
       assert.equal(payload.components?.length, 1);
       const container = payload.components?.[0];
@@ -240,7 +256,32 @@ async function run(): Promise<void> {
         ?.filter((component) => component.type === ComponentType.TextDisplay)
         .map((component) => component.content ?? "") ?? [];
       assert.deepEqual(texts.slice(0, 2), ["### 質問\n質問です", "### 回答\ndeepseek answer"]);
+      assert.equal(texts.at(-1), "-# 使用モデル: DeepSeek / `deepseek-response-model`");
+      assert.equal(container?.components?.at(-2)?.type, ComponentType.ActionRow);
       assert.equal(/^## 回答$/m.test(texts.join("\n")), false);
+    }
+
+    {
+      const config = makeConfig(dir);
+      const ctx = makeCtx(db, aiHistoryDb, config, "openai");
+      const rec = makeInteraction({ userId: "openai-history-user", channelId: "normal-channel" });
+      await handleSlashCommand(rec.interaction, ctx);
+      const row = await aiHistoryDb
+        .selectFrom("ai_history")
+        .select("meta")
+        .where("user_id", "=", "openai-history-user")
+        .where("role", "=", "assistant")
+        .executeTakeFirstOrThrow();
+      assert.deepEqual(JSON.parse(String(row.meta)), {
+        provider: "openai",
+        model: "deepseek-response-model",
+        r18: false,
+      });
+      const payload = rec.edits[0] as { components?: Array<{ components?: Array<{ type: ComponentType; content?: string }> }> };
+      const texts = payload.components?.[0]?.components
+        ?.filter((component) => component.type === ComponentType.TextDisplay)
+        .map((component) => component.content ?? "") ?? [];
+      assert.equal(texts.at(-1), "-# 使用モデル: OpenAI / `deepseek-response-model`");
     }
 
     {
@@ -249,7 +290,10 @@ async function run(): Promise<void> {
       globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
         const body = JSON.parse(String(init?.body ?? "{}")) as FetchCall["body"];
         calls.push({ url: input.toString(), body });
-        return Response.json({ choices: [{ message: { content: longAnswer } }] });
+        return Response.json({
+          model: `unsafe\`\r\nmodel-${"x".repeat(150)}`,
+          choices: [{ message: { content: longAnswer } }],
+        });
       }) as typeof fetch;
       const config = makeConfig(dir);
       const ctx = makeCtx(db, aiHistoryDb, config);
@@ -261,8 +305,13 @@ async function run(): Promise<void> {
       assert.equal(container?.type, ComponentType.Container);
       const children = container?.components ?? [];
       assert.match(children.find((component) => component.type === ComponentType.TextDisplay)?.content ?? "", /### 質問/);
-      assert.match(children.filter((component) => component.type === ComponentType.TextDisplay).at(-1)?.content ?? "", /一部のみ表示/);
-      assert.equal(children.at(-1)?.type, ComponentType.ActionRow);
+      const textChildren = children.filter((component) => component.type === ComponentType.TextDisplay);
+      assert.equal(textChildren.some((component) => /一部のみ表示/.test(component.content ?? "")), true);
+      const modelLine = textChildren.at(-1)?.content ?? "";
+      assert.match(modelLine, /^-# 使用モデル: DeepSeek \/ `[^`\r\n]+`$/);
+      assert.ok(modelLine.length <= "-# 使用モデル: DeepSeek / ``".length + 120);
+      assert.equal(children.at(-2)?.type, ComponentType.ActionRow);
+      assert.equal(children.at(-1)?.type, ComponentType.TextDisplay);
       globalThis.fetch = standardFetch;
     }
 
@@ -283,7 +332,11 @@ async function run(): Promise<void> {
       assert.equal(calls.at(-1)?.url, "http://deepseek.test/v1/chat/completions");
       const rows = (await historyRows(aiHistoryDb)).filter((row) => row.user_id === "race-user");
       assert.equal(rows.length, 2);
-      assert.deepEqual(JSON.parse(String(rows[0]?.meta)), { provider: "deepseek", r18: false });
+      assert.deepEqual(JSON.parse(String(rows[0]?.meta)), {
+        provider: "deepseek",
+        model: "deepseek-response-model",
+        r18: false,
+      });
     }
 
     {
@@ -316,7 +369,16 @@ async function run(): Promise<void> {
       assert.match(systemMessages.at(-1)?.content ?? "", /未成年|非同意|実在人物/);
       const rows = (await historyRows(aiHistoryDb)).filter((row) => row.user_id === "local-user");
       assert.equal(rows.length, 2);
-      assert.deepEqual(JSON.parse(String(rows[0]?.meta)), { provider: "local_llm", r18: true });
+      assert.deepEqual(JSON.parse(String(rows[0]?.meta)), {
+        provider: "local_llm",
+        model: "local-response-model",
+        r18: true,
+      });
+      const payload = rec.edits.at(-1) as { components?: Array<{ components?: Array<{ type: ComponentType; content?: string }> }> };
+      const modelLine = payload.components?.[0]?.components
+        ?.filter((component) => component.type === ComponentType.TextDisplay)
+        .at(-1)?.content;
+      assert.equal(modelLine, "-# 使用モデル: ローカルLLM / `local-response-model`");
     }
 
     {

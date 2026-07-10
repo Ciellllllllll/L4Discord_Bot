@@ -169,7 +169,7 @@ export async function runSenryuPipeline(
       // API 失敗・JSON 不正時は ai.ok が false のため reject せず、検出結果どおり通過する
       const contextExcerpt = buildSenryuReviewContextExcerpt(normalized, kuromojiCandidate);
       const reviewBlock = buildSenryuAiReviewUserBlock(contextExcerpt, tokens, kuromojiCandidate);
-      const ai = await reviewSenryuCandidateWithAi(config, log, reviewBlock);
+      const ai = await reviewSenryuCandidateWithAi(config, ctx.aiRouter, message.guildId!, log, reviewBlock);
       if (ai.ok && ai.verdict === "reject") {
         log.info(
           {

@@ -1,13 +1,15 @@
 import type { AppConfig } from "../../core/config.js";
 import { fetchWithLimits } from "./fetchWithLimits.js";
+import { type ChatMessage, sanitizeAiText } from "./chatTypes.js";
 
 const DEFAULT_BASE = "https://api.deepseek.com";
 
-export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+export type { ChatMessage } from "./chatTypes.js";
 
 export type DeepSeekResult = {
   content: string;
   ms: number;
+  model: string;
 };
 
 export type DeepSeekRequestOptions = {
@@ -22,14 +24,6 @@ export type DeepSeekRequestOptions = {
   timeoutMs?: number;
   maxRetries?: number;
 };
-
-function sanitizeAiText(text: string): string {
-  return String(text || "")
-    .trim()
-    .replace(/@everyone/g, "@\u200beveryone")
-    .replace(/@here/g, "@\u200bhere")
-    .replace(/<@(?:!?|&)\d+>/g, (match) => match.replace("<@", "<@\u200b"));
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -89,15 +83,24 @@ export async function deepseekChat(
       );
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`DeepSeek HTTP ${res.status}: ${text.slice(0, 200)}`);
+        await res.text();
+        throw new Error(`DeepSeek HTTP ${res.status}`);
       }
-      const body = (await res.json()) as {
+      let body: {
+        model?: unknown;
         choices?: Array<{ message?: { content?: string } }>;
       };
+      try {
+        body = await res.json() as typeof body;
+      } catch {
+        throw new Error("DeepSeek returned invalid JSON");
+      }
       const raw = body.choices?.[0]?.message?.content?.trim() ?? "";
       const content = sanitize ? sanitizeAiText(raw) : raw;
-      return { content, ms: Date.now() - startedTotal };
+      const responseModel = typeof body.model === "string" && body.model.trim()
+        ? body.model.trim()
+        : model;
+      return { content, ms: Date.now() - startedTotal, model: responseModel };
     } catch (e) {
       lastErr = e;
       if (attempt < maxRetries) {
