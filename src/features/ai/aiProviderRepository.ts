@@ -1,9 +1,9 @@
 import type DatabaseLib from "better-sqlite3";
-import type { AiProvider } from "./providerTypes.js";
+import type { AiProvider, AiRoutePreference } from "./providerTypes.js";
 
 export interface AiProviderSettingsRepository {
-  getPreferredProvider(guildId: string): Promise<AiProvider>;
-  setPreferredProvider(guildId: string, provider: AiProvider): Promise<void>;
+  getPreference(guildId: string): Promise<AiRoutePreference>;
+  setPreference(guildId: string, preference: AiRoutePreference): Promise<void>;
 }
 
 export type AiTokenReservationStatus = "pending" | "settled" | "released";
@@ -52,6 +52,8 @@ export function ensureSqliteAiProviderSchema(db: DatabaseLib.Database): void {
       guild_id TEXT PRIMARY KEY NOT NULL,
       preferred_provider TEXT NOT NULL DEFAULT 'openai'
         CHECK (preferred_provider IN ('openai', 'deepseek')),
+      preferred_openai_model TEXT NOT NULL DEFAULT 'gpt56'
+        CHECK (preferred_openai_model IN ('gpt56', 'gpt54_mini')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -80,26 +82,40 @@ export function ensureSqliteAiProviderSchema(db: DatabaseLib.Database): void {
         REFERENCES ai_provider_daily_budget(provider, usage_date)
     );
   `);
+  const settingsColumns = db.pragma("table_info(ai_guild_provider_settings)") as Array<{ name: string }>;
+  if (!settingsColumns.some((column) => column.name === "preferred_openai_model")) {
+    db.exec(`
+      ALTER TABLE ai_guild_provider_settings
+      ADD COLUMN preferred_openai_model TEXT NOT NULL DEFAULT 'gpt56'
+        CHECK (preferred_openai_model IN ('gpt56', 'gpt54_mini'))
+    `);
+  }
 }
 
 export class SqliteAiProviderSettingsRepository implements AiProviderSettingsRepository {
   constructor(private readonly db: DatabaseLib.Database) {}
 
-  async getPreferredProvider(guildId: string): Promise<AiProvider> {
+  async getPreference(guildId: string): Promise<AiRoutePreference> {
     const row = this.db
-      .prepare("SELECT preferred_provider FROM ai_guild_provider_settings WHERE guild_id = ?")
-      .get(guildId) as { preferred_provider: AiProvider } | undefined;
-    return row?.preferred_provider ?? "openai";
+      .prepare("SELECT preferred_provider, preferred_openai_model FROM ai_guild_provider_settings WHERE guild_id = ?")
+      .get(guildId) as {
+        preferred_provider: AiProvider;
+        preferred_openai_model: AiRoutePreference["openAiModel"];
+      } | undefined;
+    return row
+      ? { provider: row.preferred_provider, openAiModel: row.preferred_openai_model }
+      : { provider: "openai", openAiModel: "gpt56" };
   }
 
-  async setPreferredProvider(guildId: string, provider: AiProvider): Promise<void> {
+  async setPreference(guildId: string, preference: AiRoutePreference): Promise<void> {
     this.db.prepare(`
-      INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider, updated_at)
-      VALUES (?, ?, datetime('now'))
+      INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider, preferred_openai_model, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
       ON CONFLICT (guild_id) DO UPDATE SET
         preferred_provider = excluded.preferred_provider,
+        preferred_openai_model = excluded.preferred_openai_model,
         updated_at = excluded.updated_at
-    `).run(guildId, provider);
+    `).run(guildId, preference.provider, preference.openAiModel);
   }
 }
 

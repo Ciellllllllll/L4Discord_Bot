@@ -10,8 +10,12 @@ const provider = command.options?.find((option) => option.name === "provider") a
   | { required?: boolean; choices?: Array<{ value: string | number }> }
   | undefined;
 assert.equal(provider?.required, true);
-assert.deepEqual(provider?.choices?.map((choice) => choice.value), ["openai", "deepseek"]);
-assert.equal(BOT_SEMVER, "2.0.9");
-assert.equal(SLASH_COMMAND_MIN_BOT_VERSION.switch, "2.0.9");
+assert.deepEqual(provider?.choices?.map((choice) => choice.value), [
+  "openai_gpt56",
+  "openai_gpt54_mini",
+  "deepseek",
+]);
+assert.equal(BOT_SEMVER, "2.0.10");
+assert.equal(SLASH_COMMAND_MIN_BOT_VERSION.switch, "2.0.10");
 
 console.log("switchCommand.spec.ts: all assertions passed");

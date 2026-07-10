@@ -21,6 +21,7 @@ import { showCreatePromptModal } from "../features/ai/createPrompt.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
 import { getAiThinkingEnabled, setAiThinkingEnabled } from "../features/ai/thinkingSettings.js";
 import { getAiR18Enabled, setAiR18Enabled } from "../features/ai/aiR18Settings.js";
+import { sanitizeAiModelName } from "../features/ai/modelDisplay.js";
 import { startExecutionFlow } from "../features/execution/executionFlow.js";
 import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
 import { muteChannelForSenryuPersisted } from "../features/senryu/senryu.filters.js";
@@ -284,6 +285,20 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
   }
 }
 
+export function buildAiPingReply(
+  result: { ms: number; provider: "openai" | "deepseek"; model: string },
+  thinking: boolean,
+  workerLine: string,
+): { content: string; allowedMentions: { parse: [] } } {
+  return {
+    content: [
+      `AI応答時間: **${result.ms}** ms / Provider: **${result.provider === "openai" ? "OpenAI" : "DeepSeek"}** / Model: **${sanitizeAiModelName(result.model)}** / Thinking: **${thinking ? "ON" : "OFF"}**`,
+      workerLine,
+    ].join("\n").slice(0, 2000),
+    allowedMentions: { parse: [] },
+  };
+}
+
 async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const worker = ctx.config.JAPANESE_WORKER_ENABLED
@@ -310,16 +325,13 @@ async function handlePing(interaction: ChatInputCommandInteraction, ctx: BotCont
       ],
       { thinking },
     );
-    await interaction.editReply([
-      `AI応答時間: **${result.ms}** ms / Provider: **${result.provider === "openai" ? "GPT-5.6 Terra" : "DeepSeek"}** / Thinking: **${thinking ? "ON" : "OFF"}**`,
-      workerLine,
-    ].join("\n"));
+    await interaction.editReply(buildAiPingReply(result, thinking, workerLine));
   } catch (e) {
     ctx.log.error({ err: e }, "AI ping failed");
-    await interaction.editReply([
-      "AI応答時間: **計測失敗**",
-      workerLine,
-    ].join("\n"));
+    await interaction.editReply({
+      content: ["AI応答時間: **計測失敗**", workerLine].join("\n"),
+      allowedMentions: { parse: [] },
+    });
   }
 }
 
@@ -333,6 +345,17 @@ function fallbackReasonLabel(reason: string | undefined): string {
   }
 }
 
+function openAiPreferenceLabel(preference: "gpt56" | "gpt54_mini"): string {
+  return preference === "gpt56" ? "GPT-5.6 Terra" : "GPT-5.4 mini";
+}
+
+function effectiveRouteLabel(status: Awaited<ReturnType<BotContext["aiRouter"]["getStatus"]>>): string {
+  if (status.effectiveProvider === "deepseek") return "DeepSeek";
+  if (status.effectiveModel === "gpt-5.6-terra") return "GPT-5.6 Terra";
+  if (status.effectiveModel === "gpt-5.4-mini-2026-03-17") return "GPT-5.4 mini";
+  return status.effectiveModel ? `OpenAI (${status.effectiveModel})` : "OpenAI";
+}
+
 export async function handleSwitch(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
@@ -342,21 +365,32 @@ export async function handleSwitch(
     await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
-  const provider = interaction.options.getString("provider", true);
-  if (provider !== "openai" && provider !== "deepseek") {
+  const selection = interaction.options.getString("provider", true);
+  if (selection !== "openai_gpt56" && selection !== "openai_gpt54_mini" && selection !== "deepseek") {
     await interaction.reply({ content: "プロバイダー指定が不正です。", flags: MessageFlags.Ephemeral });
     return;
   }
-  await ctx.aiRouter.setPreferredProvider(interaction.guildId!, provider);
+  const current = await ctx.aiRouter.getPreference(interaction.guildId!);
+  const preference = selection === "openai_gpt56"
+    ? { provider: "openai" as const, openAiModel: "gpt56" as const }
+    : selection === "openai_gpt54_mini"
+      ? { provider: "openai" as const, openAiModel: "gpt54_mini" as const }
+      : { provider: "deepseek" as const, openAiModel: current.openAiModel };
+  await ctx.aiRouter.setPreference(interaction.guildId!, preference);
   const status = await ctx.aiRouter.getStatus(interaction.guildId!);
-  const preferred = status.preferredProvider === "openai" ? "GPT-5.6 Terra" : "DeepSeek";
-  const effective = status.effectiveProvider === "openai" ? "GPT-5.6 Terra" : "DeepSeek";
+  const preferred = status.preferredProvider === "openai"
+    ? openAiPreferenceLabel(status.preferredOpenAiModel)
+    : "DeepSeek";
+  const fallbackNote = status.preferredProvider === "openai" && status.preferredOpenAiModel === "gpt56"
+    ? "Terra利用不能時: GPT-5.4 miniへ自動退避"
+    : null;
   await interaction.reply({
     content: [
-      `希望: **${preferred}** / 次回実効: **${effective}**`,
+      `希望: **${preferred}** / 次回実効: **${effectiveRouteLabel(status)}**`,
+      fallbackNote,
       `退避理由: ${fallbackReasonLabel(status.fallbackReason)}`,
       `予算退避のUTC復帰時刻: ${status.resetAtUtc}`,
-    ].join("\n"),
+    ].filter(Boolean).join("\n"),
     flags: MessageFlags.Ephemeral,
   });
 }

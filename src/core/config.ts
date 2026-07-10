@@ -113,6 +113,8 @@ const profileOverridableKeys = [
   "OPENAI_PROJECT_ID",
   "OPENAI_API_BASE",
   "OPENAI_MODEL",
+  "OPENAI_MODEL_GPT56",
+  "OPENAI_MODEL_GPT54_MINI",
   "OPENAI_REASONING_EFFORT",
   "OPENAI_DAILY_TOKEN_LIMIT",
   "OPENAI_FALLBACK_THRESHOLD",
@@ -313,9 +315,13 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.string().url().default("https://api.openai.com/v1"),
   ),
-  OPENAI_MODEL: z.preprocess(
+  OPENAI_MODEL_GPT56: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.string().min(1).default("gpt-5.6-terra"),
+  ),
+  OPENAI_MODEL_GPT54_MINI: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().min(1).default("gpt-5.4-mini-2026-03-17"),
   ),
   OPENAI_REASONING_EFFORT: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
@@ -555,6 +561,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       : profiledEnv.JAPANESE_WORKER_ENABLED;
   const envWithLogDefaults = {
     ...profiledEnv,
+    OPENAI_MODEL_GPT56: profiledEnv.OPENAI_MODEL_GPT56 || profiledEnv.OPENAI_MODEL,
     JAPANESE_WORKER_ENABLED: japaneseWorkerEnabled,
     MESSAGE_LOG_DB_PATH:
       profiledEnv.MESSAGE_LOG_DB_PATH ||

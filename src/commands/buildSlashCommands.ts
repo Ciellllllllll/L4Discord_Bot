@@ -26,7 +26,8 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
         .setDescription("優先するAIプロバイダー")
         .setRequired(true)
         .addChoices(
-          { name: "GPT-5.6 Terra", value: "openai" },
+          { name: "GPT-5.6 Terra", value: "openai_gpt56" },
+          { name: "GPT-5.4 mini", value: "openai_gpt54_mini" },
           { name: "DeepSeek", value: "deepseek" },
         ))
       .toJSON(),

@@ -24,6 +24,7 @@ import { sendOrReconnectAiHistoryAdminPanel } from "./aiHistoryAdminPanel.js";
 import { localLlmChat, type LocalLlmResult } from "./localLlm.js";
 import { LocalLlmQueue } from "./localLlmQueue.js";
 import { getAiR18Enabled } from "./aiR18Settings.js";
+import { sanitizeAiModelName } from "./modelDisplay.js";
 
 // DiscordBOTv2 AI_Query.js と同じ customId 接頭辞
 
@@ -59,10 +60,7 @@ function formatModelMetadata(answer: QuestionAnswer): string {
     deepseek: "DeepSeek",
     local_llm: "ローカルLLM",
   };
-  const model = String(answer.model || "")
-    .replace(/[\r\n`]/g, " ")
-    .trim()
-    .slice(0, 120) || "不明";
+  const model = sanitizeAiModelName(answer.model);
   return `-# 使用モデル: ${providerLabel[answer.provider]} / \`${model}\``;
 }
 

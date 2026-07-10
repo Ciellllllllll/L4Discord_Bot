@@ -16,16 +16,52 @@ async function assertSqliteProviderPreference(): Promise<void> {
     ensureSqliteAiProviderSchema(db);
     const repo = new SqliteAiProviderSettingsRepository(db);
 
-    assert.equal(await repo.getPreferredProvider("guild-missing"), "openai");
-    await repo.setPreferredProvider("guild-1", "deepseek");
-    assert.equal(await repo.getPreferredProvider("guild-1"), "deepseek");
-    await repo.setPreferredProvider("guild-1", "openai");
-    assert.equal(await repo.getPreferredProvider("guild-1"), "openai");
+    assert.deepEqual(await repo.getPreference("guild-missing"), {
+      provider: "openai",
+      openAiModel: "gpt56",
+    });
+    await repo.setPreference("guild-1", { provider: "openai", openAiModel: "gpt54_mini" });
+    const restartedRepo = new SqliteAiProviderSettingsRepository(db);
+    assert.deepEqual(await restartedRepo.getPreference("guild-1"), {
+      provider: "openai",
+      openAiModel: "gpt54_mini",
+    });
+    await restartedRepo.setPreference("guild-1", { provider: "deepseek", openAiModel: "gpt54_mini" });
+    assert.deepEqual(await new SqliteAiProviderSettingsRepository(db).getPreference("guild-1"), {
+      provider: "deepseek",
+      openAiModel: "gpt54_mini",
+    });
 
     assert.throws(
       () => db.prepare("INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider) VALUES (?, ?)").run("guild-invalid", "other"),
       /CHECK constraint failed/,
     );
+    assert.throws(
+      () => db.prepare("INSERT INTO ai_guild_provider_settings (guild_id, preferred_openai_model) VALUES (?, ?)").run("guild-invalid-model", "other"),
+      /CHECK constraint failed/,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+async function assertSqliteExistingProviderRowMigratesToGpt56(): Promise<void> {
+  const db = new Database(":memory:");
+  try {
+    db.exec(`
+      CREATE TABLE ai_guild_provider_settings (
+        guild_id TEXT PRIMARY KEY NOT NULL,
+        preferred_provider TEXT NOT NULL DEFAULT 'openai',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider) VALUES ('legacy-openai', 'openai');
+    `);
+    ensureSqliteAiProviderSchema(db);
+    const repo = new SqliteAiProviderSettingsRepository(db);
+    assert.deepEqual(await repo.getPreference("legacy-openai"), {
+      provider: "openai",
+      openAiModel: "gpt56",
+    });
   } finally {
     db.close();
   }
@@ -216,6 +252,7 @@ async function assertSqliteCompetingReservations(): Promise<void> {
 
 async function run(): Promise<void> {
   await assertSqliteProviderPreference();
+  await assertSqliteExistingProviderRowMigratesToGpt56();
   await assertSqliteBudgetReservationAndMonotonicObservation();
   await assertSqliteSettlementIsIdempotent();
   await assertSqliteUtcDayIsolationAndPendingPreservation();

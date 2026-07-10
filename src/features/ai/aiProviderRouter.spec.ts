@@ -6,13 +6,15 @@ import type {
   AiProviderSettingsRepository,
   AiTokenReservation,
 } from "./aiProviderRepository.js";
+import type { AiRoutePreference } from "./providerTypes.js";
 
 const baseConfig = {
   OPENAI_API_KEY: "openai",
   OPENAI_ADMIN_KEY: "admin",
   OPENAI_PROJECT_ID: "project",
   OPENAI_API_BASE: "https://api.openai.test/v1",
-  OPENAI_MODEL: "gpt-5.6-terra",
+  OPENAI_MODEL_GPT56: "gpt-5.6-terra",
+  OPENAI_MODEL_GPT54_MINI: "gpt-5.4-mini-2026-03-17",
   OPENAI_REASONING_EFFORT: "high" as const,
   OPENAI_FALLBACK_THRESHOLD: 2_400_000,
   OPENAI_USAGE_CACHE_MS: 30_000,
@@ -23,12 +25,14 @@ const baseConfig = {
   SENRYU_AI_REVIEW_MODEL: "senryu-legacy",
 };
 
-function repositories(preferred: "openai" | "deepseek" = "openai") {
+function repositories(
+  preferred: AiRoutePreference = { provider: "openai", openAiModel: "gpt56" },
+) {
   let selected = preferred;
   const calls: string[] = [];
   const settings: AiProviderSettingsRepository = {
-    async getPreferredProvider() { return selected; },
-    async setPreferredProvider(_guildId, provider) { selected = provider; },
+    async getPreference() { return selected; },
+    async setPreference(_guildId, preference) { selected = preference; },
   };
   const reservation: AiTokenReservation = {
     reservationId: "r1", provider: "openai", usageDate: "2026-07-10",
@@ -52,9 +56,10 @@ async function main() {
     let openAiCalls = 0;
     const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
       usageClient: { async getTodaySnapshot() { return { usageDate: "2026-07-10", organizationTokens: 10, botProjectTokens: 4 }; } },
-      async openAiChat(_messages, options) {
+      async openAiChat(_messages, options, model) {
         openAiCalls += 1;
         assert.equal(options.maxOutputTokens, 512);
+        assert.equal(model, "gpt-5.6-terra");
         return { content: "terra", ms: 3, model: "gpt-5.6-terra-response", usageTotalTokens: 42 };
       },
       async deepSeekChat() { throw new Error("unexpected"); },
@@ -69,7 +74,25 @@ async function main() {
   }
 
   {
-    const repo = repositories("deepseek");
+    const repo = repositories({ provider: "openai", openAiModel: "gpt54_mini" });
+    const models: string[] = [];
+    const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
+      usageClient: { async getTodaySnapshot() { return { usageDate: "2026-07-10", organizationTokens: 1, botProjectTokens: 1 }; } },
+      async openAiChat(_messages, _options, model) {
+        models.push(model);
+        return { content: "mini", ms: 2, model: "gpt-5.4-mini-response", usageTotalTokens: 20 };
+      },
+      async deepSeekChat() { throw new Error("unexpected"); },
+      reservationId: () => "mini-r1",
+    });
+    const result = await router.chat("guild", "answer", [{ role: "user", content: "hello" }], { thinking: false });
+    assert.deepEqual(models, ["gpt-5.4-mini-2026-03-17"]);
+    assert.equal(result.provider, "openai");
+    assert.equal(result.model, "gpt-5.4-mini-response");
+  }
+
+  {
+    const repo = repositories({ provider: "deepseek", openAiModel: "gpt56" });
     let usageCalls = 0;
     const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
       usageClient: { async getTodaySnapshot() { usageCalls += 1; throw new Error("unexpected"); } },
@@ -126,15 +149,46 @@ async function main() {
 
   {
     const repo = repositories();
+    const models: string[] = [];
+    let reservationSequence = 0;
     const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
       usageClient: { async getTodaySnapshot() { return { usageDate: "2026-07-10", organizationTokens: 1, botProjectTokens: 1 }; } },
-      async openAiChat() { throw new AiRequestError("http_status", "model unavailable", { status: 400, apiCode: "model_not_found" }); },
-      async deepSeekChat() { return { content: "fallback", ms: 1, model: "deepseek-fallback" }; },
-      reservationId: () => "r1",
+      async openAiChat(_messages, _options, model) {
+        models.push(model);
+        if (model === "gpt-5.6-terra") {
+          throw new AiRequestError("http_status", "model unavailable", { status: 400, apiCode: "model_not_found" });
+        }
+        return { content: "mini", ms: 2, model: "gpt-5.4-mini-response", usageTotalTokens: 25 };
+      },
+      async deepSeekChat() { throw new Error("unexpected"); },
+      reservationId: () => `model-r${++reservationSequence}`,
     });
     const result = await router.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: true });
-    assert.equal(result.fallbackReason, "openai_model_unavailable");
+    assert.equal(result.provider, "openai");
+    assert.equal(result.model, "gpt-5.4-mini-response");
+    assert.equal(result.fallbackReason, "openai_model_fallback");
+    assert.deepEqual(models, ["gpt-5.6-terra", "gpt-5.4-mini-2026-03-17"]);
     assert.ok(repo.calls.includes("release"));
+    assert.ok(repo.calls.includes("settle:25"));
+  }
+
+  {
+    const repo = repositories();
+    const models: string[] = [];
+    let reservationSequence = 0;
+    const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
+      usageClient: { async getTodaySnapshot() { return { usageDate: "2026-07-10", organizationTokens: 1, botProjectTokens: 1 }; } },
+      async openAiChat(_messages, _options, model) {
+        models.push(model);
+        throw new AiRequestError("http_status", "model unavailable", { status: 404, apiCode: "model_not_found" });
+      },
+      async deepSeekChat() { return { content: "fallback", ms: 1, model: "deepseek-fallback" }; },
+      reservationId: () => `failed-model-r${++reservationSequence}`,
+    });
+    const result = await router.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: true });
+    assert.equal(result.provider, "deepseek");
+    assert.equal(result.fallbackReason, "openai_model_unavailable");
+    assert.deepEqual(models, ["gpt-5.6-terra", "gpt-5.4-mini-2026-03-17"]);
   }
 
   {
@@ -151,14 +205,19 @@ async function main() {
 
   {
     const repo = repositories();
+    const models: string[] = [];
     const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
       usageClient: { async getTodaySnapshot() { return { usageDate: "2026-07-10", organizationTokens: 1, botProjectTokens: 1 }; } },
-      async openAiChat() { throw new AiRequestError("http_status", "request timeout", { status: 408 }); },
+      async openAiChat(_messages, _options, model) {
+        models.push(model);
+        throw new AiRequestError("http_status", "request timeout", { status: 408 });
+      },
       async deepSeekChat() { return { content: "fallback", ms: 1, model: "deepseek-fallback" }; },
       reservationId: () => "r1",
     });
     const result = await router.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: true });
     assert.equal(result.fallbackReason, "openai_408");
+    assert.deepEqual(models, ["gpt-5.6-terra"]);
     assert.ok(repo.calls.includes("consume"));
     assert.equal(repo.calls.includes("release"), false);
   }

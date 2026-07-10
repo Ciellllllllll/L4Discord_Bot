@@ -297,7 +297,8 @@ assert.equal(openAiDefaultsConfig.OPENAI_API_KEY, "");
 assert.equal(openAiDefaultsConfig.OPENAI_ADMIN_KEY, "");
 assert.equal(openAiDefaultsConfig.OPENAI_PROJECT_ID, "");
 assert.equal(openAiDefaultsConfig.OPENAI_API_BASE, "https://api.openai.com/v1");
-assert.equal(openAiDefaultsConfig.OPENAI_MODEL, "gpt-5.6-terra");
+assert.equal(openAiDefaultsConfig.OPENAI_MODEL_GPT56, "gpt-5.6-terra");
+assert.equal(openAiDefaultsConfig.OPENAI_MODEL_GPT54_MINI, "gpt-5.4-mini-2026-03-17");
 assert.equal(openAiDefaultsConfig.OPENAI_REASONING_EFFORT, "high");
 assert.equal(openAiDefaultsConfig.OPENAI_DAILY_TOKEN_LIMIT, 2_500_000);
 assert.equal(openAiDefaultsConfig.OPENAI_FALLBACK_THRESHOLD, 2_400_000);
@@ -322,7 +323,8 @@ const openAiProfileConfig = loadConfig(
     OPENAI_ADMIN_KEY: "common-admin-key",
     OPENAI_PROJECT_ID: "common-project",
     OPENAI_API_BASE: "https://common.openai.example/v1",
-    OPENAI_MODEL: "common-model",
+    OPENAI_MODEL_GPT56: "common-gpt56-model",
+    OPENAI_MODEL_GPT54_MINI: "common-gpt54-mini-model",
     OPENAI_REASONING_EFFORT: "low",
     OPENAI_DAILY_TOKEN_LIMIT: "1000000",
     OPENAI_FALLBACK_THRESHOLD: "900000",
@@ -332,7 +334,8 @@ const openAiProfileConfig = loadConfig(
     DEBUG_OPENAI_ADMIN_KEY: "debug-admin-key",
     DEBUG_OPENAI_PROJECT_ID: "debug-project",
     DEBUG_OPENAI_API_BASE: "https://debug.openai.example/v1",
-    DEBUG_OPENAI_MODEL: "debug-model",
+    DEBUG_OPENAI_MODEL_GPT56: "debug-gpt56-model",
+    DEBUG_OPENAI_MODEL_GPT54_MINI: "debug-gpt54-mini-model",
     DEBUG_OPENAI_REASONING_EFFORT: "xhigh",
     DEBUG_OPENAI_DAILY_TOKEN_LIMIT: "3000000",
     DEBUG_OPENAI_FALLBACK_THRESHOLD: "2900000",
@@ -345,12 +348,24 @@ assert.equal(openAiProfileConfig.OPENAI_API_KEY, "debug-api-key");
 assert.equal(openAiProfileConfig.OPENAI_ADMIN_KEY, "debug-admin-key");
 assert.equal(openAiProfileConfig.OPENAI_PROJECT_ID, "debug-project");
 assert.equal(openAiProfileConfig.OPENAI_API_BASE, "https://debug.openai.example/v1");
-assert.equal(openAiProfileConfig.OPENAI_MODEL, "debug-model");
+assert.equal(openAiProfileConfig.OPENAI_MODEL_GPT56, "debug-gpt56-model");
+assert.equal(openAiProfileConfig.OPENAI_MODEL_GPT54_MINI, "debug-gpt54-mini-model");
 assert.equal(openAiProfileConfig.OPENAI_REASONING_EFFORT, "xhigh");
 assert.equal(openAiProfileConfig.OPENAI_DAILY_TOKEN_LIMIT, 3_000_000);
 assert.equal(openAiProfileConfig.OPENAI_FALLBACK_THRESHOLD, 2_900_000);
 assert.equal(openAiProfileConfig.OPENAI_USAGE_CACHE_MS, 0);
 assert.equal(openAiProfileConfig.OPENAI_MAX_COMPLETION_TOKENS, 4_096);
+
+const openAiLegacyModelConfig = loadConfig(baseEnv({
+  OPENAI_MODEL: "legacy-terra-model",
+}));
+assert.equal(openAiLegacyModelConfig.OPENAI_MODEL_GPT56, "legacy-terra-model");
+
+const openAiNewModelPrecedenceConfig = loadConfig(baseEnv({
+  OPENAI_MODEL: "legacy-terra-model",
+  OPENAI_MODEL_GPT56: "new-terra-model",
+}));
+assert.equal(openAiNewModelPrecedenceConfig.OPENAI_MODEL_GPT56, "new-terra-model");
 
 assert.throws(
   () =>

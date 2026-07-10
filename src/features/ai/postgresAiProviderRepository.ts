@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { quotePgIdent } from "../../core/db/postgres.js";
-import type { AiProvider } from "./providerTypes.js";
+import type { AiProvider, AiRoutePreference } from "./providerTypes.js";
 import type {
   AiProviderBudgetRepository,
   AiProviderSettingsRepository,
@@ -18,6 +18,8 @@ export async function ensurePostgresAiProviderSchema(pool: Pool, schemaName: str
       guild_id text PRIMARY KEY,
       preferred_provider text NOT NULL DEFAULT 'openai'
         CHECK (preferred_provider IN ('openai', 'deepseek')),
+      preferred_openai_model text NOT NULL DEFAULT 'gpt56'
+        CHECK (preferred_openai_model IN ('gpt56', 'gpt54_mini')),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
@@ -45,28 +47,39 @@ export async function ensurePostgresAiProviderSchema(pool: Pool, schemaName: str
       FOREIGN KEY (provider, usage_date)
         REFERENCES ${schema}.ai_provider_daily_budget(provider, usage_date)
     );
+
+    ALTER TABLE ${schema}.ai_guild_provider_settings
+      ADD COLUMN IF NOT EXISTS preferred_openai_model text NOT NULL DEFAULT 'gpt56'
+        CHECK (preferred_openai_model IN ('gpt56', 'gpt54_mini'));
   `);
 }
 
 export class PostgresAiProviderSettingsRepository implements AiProviderSettingsRepository {
   constructor(readonly pool: Pool) {}
 
-  async getPreferredProvider(guildId: string): Promise<AiProvider> {
-    const result = await this.pool.query<{ preferred_provider: AiProvider }>(
-      "SELECT preferred_provider FROM ai_guild_provider_settings WHERE guild_id = $1",
+  async getPreference(guildId: string): Promise<AiRoutePreference> {
+    const result = await this.pool.query<{
+      preferred_provider: AiProvider;
+      preferred_openai_model: AiRoutePreference["openAiModel"];
+    }>(
+      "SELECT preferred_provider, preferred_openai_model FROM ai_guild_provider_settings WHERE guild_id = $1",
       [guildId],
     );
-    return result.rows[0]?.preferred_provider ?? "openai";
+    const row = result.rows[0];
+    return row
+      ? { provider: row.preferred_provider, openAiModel: row.preferred_openai_model }
+      : { provider: "openai", openAiModel: "gpt56" };
   }
 
-  async setPreferredProvider(guildId: string, provider: AiProvider): Promise<void> {
+  async setPreference(guildId: string, preference: AiRoutePreference): Promise<void> {
     await this.pool.query(`
-      INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider, updated_at)
-      VALUES ($1, $2, now())
+      INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider, preferred_openai_model, updated_at)
+      VALUES ($1, $2, $3, now())
       ON CONFLICT (guild_id) DO UPDATE SET
         preferred_provider = excluded.preferred_provider,
+        preferred_openai_model = excluded.preferred_openai_model,
         updated_at = excluded.updated_at
-    `, [guildId, provider]);
+    `, [guildId, preference.provider, preference.openAiModel]);
   }
 }
 

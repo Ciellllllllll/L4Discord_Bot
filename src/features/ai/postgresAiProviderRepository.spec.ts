@@ -36,6 +36,9 @@ async function assertPostgresDdl(): Promise<void> {
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "ai_provider_test"\.ai_provider_daily_budget/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "ai_provider_test"\.ai_provider_token_reservations/);
   assert.match(sql, /preferred_provider IN \('openai', 'deepseek'\)/);
+  assert.match(sql, /preferred_openai_model/);
+  assert.match(sql, /preferred_openai_model IN \('gpt56', 'gpt54_mini'\)/);
+  assert.match(sql, /ALTER TABLE .*ai_guild_provider_settings/s);
   assert.match(sql, /status IN \('pending', 'settled', 'released'\)/);
   assert.match(sql, /PRIMARY KEY \(provider, usage_date\)/);
   assert.match(sql, /FOREIGN KEY \(provider, usage_date\)/);
@@ -53,9 +56,20 @@ async function assertPostgresIntegration(): Promise<boolean> {
   try {
     await ensurePostgresAiProviderSchema(pool, schemaName);
     const settings = new PostgresAiProviderSettingsRepository(pool);
-    assert.equal(await settings.getPreferredProvider("guild-missing"), "openai");
-    await settings.setPreferredProvider("guild-1", "deepseek");
-    assert.equal(await settings.getPreferredProvider("guild-1"), "deepseek");
+    assert.deepEqual(await settings.getPreference("guild-missing"), {
+      provider: "openai",
+      openAiModel: "gpt56",
+    });
+    await settings.setPreference("guild-1", { provider: "openai", openAiModel: "gpt54_mini" });
+    assert.deepEqual(await new PostgresAiProviderSettingsRepository(pool).getPreference("guild-1"), {
+      provider: "openai",
+      openAiModel: "gpt54_mini",
+    });
+    await settings.setPreference("guild-1", { provider: "deepseek", openAiModel: "gpt54_mini" });
+    assert.deepEqual(await new PostgresAiProviderSettingsRepository(pool).getPreference("guild-1"), {
+      provider: "deepseek",
+      openAiModel: "gpt54_mini",
+    });
 
     const budget = new PostgresAiProviderBudgetRepository(pool);
     const input = {
