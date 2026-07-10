@@ -23,6 +23,7 @@ export type AiTask =
 
 export type AiFallbackReason =
   | "manual_deepseek"
+  | "task_policy_deepseek"
   | "openai_unconfigured"
   | "usage_unavailable"
   | "budget_threshold"
@@ -257,6 +258,9 @@ export class AiProviderRouter {
   ): Promise<AiChatResult> {
     if (options.signal?.aborted) {
       throw new AiRequestError("caller_abort", "AI request was cancelled before dispatch.");
+    }
+    if (task === "prompt_generator") {
+      return this.callDeepSeek(task, messages, options, "task_policy_deepseek");
     }
     const preference = await this.settings.getPreference(guildId);
     if (preference.provider === "deepseek") {

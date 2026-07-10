@@ -92,6 +92,87 @@ async function main() {
   }
 
   {
+    const repo = repositories({ provider: "openai", openAiModel: "gpt54_mini" });
+    let preferenceReads = 0;
+    const originalGetPreference = repo.settings.getPreference;
+    repo.settings.getPreference = async (guildId) => {
+      preferenceReads += 1;
+      return originalGetPreference(guildId);
+    };
+    let usageCalls = 0;
+    let openAiCalls = 0;
+    const deepSeekModels: Array<string | undefined> = [];
+    const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
+      usageClient: {
+        async getTodaySnapshot() {
+          usageCalls += 1;
+          return { usageDate: "2026-07-10", organizationTokens: 1, botProjectTokens: 1 };
+        },
+      },
+      async openAiChat() {
+        openAiCalls += 1;
+        return { content: "mini answer", ms: 2, model: "gpt-5.4-mini-response", usageTotalTokens: 20 };
+      },
+      async deepSeekChat(_messages, options) {
+        deepSeekModels.push(options.model);
+        return { content: "generated prompt", ms: 3, model: "deepseek-v4-pro-response" };
+      },
+      reservationId: () => "fixed-task-r1",
+    });
+
+    const generated = await router.chat(
+      "guild",
+      "prompt_generator",
+      [{ role: "user", content: "generate" }],
+      { thinking: true },
+    );
+    assert.equal(generated.provider, "deepseek");
+    assert.equal(generated.fallbackReason, "task_policy_deepseek");
+    assert.deepEqual(deepSeekModels, ["deepseek-v4-pro"]);
+    assert.equal(preferenceReads, 0);
+    assert.equal(usageCalls, 0);
+    assert.equal(openAiCalls, 0);
+    assert.deepEqual(repo.calls, []);
+
+    const answer = await router.chat(
+      "guild",
+      "answer",
+      [{ role: "user", content: "question" }],
+      { thinking: false },
+    );
+    assert.equal(answer.provider, "openai");
+    assert.equal(answer.model, "gpt-5.4-mini-response");
+    assert.equal(preferenceReads, 1);
+    assert.equal(usageCalls, 1);
+    assert.equal(openAiCalls, 1);
+  }
+
+  {
+    let settingsCalls = 0;
+    let openAiCalls = 0;
+    const repo = repositories({ provider: "openai", openAiModel: "gpt56" });
+    repo.settings.getPreference = async () => {
+      settingsCalls += 1;
+      return { provider: "openai", openAiModel: "gpt56" };
+    };
+    const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
+      usageClient: { async getTodaySnapshot() { throw new Error("usage must not be called"); } },
+      async openAiChat() {
+        openAiCalls += 1;
+        throw new Error("OpenAI must not be called");
+      },
+      async deepSeekChat() { throw new Error("deepseek prompt failure"); },
+    });
+    await assert.rejects(
+      router.chat("guild", "prompt_generator", [{ role: "user", content: "x" }], { thinking: true }),
+      /deepseek prompt failure/,
+    );
+    assert.equal(settingsCalls, 0);
+    assert.equal(openAiCalls, 0);
+    assert.deepEqual(repo.calls, []);
+  }
+
+  {
     const repo = repositories({ provider: "deepseek", openAiModel: "gpt56" });
     let usageCalls = 0;
     const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
@@ -105,7 +186,7 @@ async function main() {
     const result = await router.chat("guild", "prompt_generator", [{ role: "user", content: "x" }], { thinking: true });
     assert.equal(result.provider, "deepseek");
     assert.equal(result.model, "deepseek-v4-pro-response");
-    assert.equal(result.fallbackReason, "manual_deepseek");
+    assert.equal(result.fallbackReason, "task_policy_deepseek");
     assert.equal(usageCalls, 0);
   }
 
