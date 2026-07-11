@@ -242,7 +242,6 @@ async function handleShowPrompt(interaction: ChatInputCommandInteraction, ctx: B
   const embed = new ComponentCardBuilder()
     .setTitle("現在の /q プロンプト")
     .setDescription(prompt.slice(0, 4000) || "プロンプトが空です。")
-    .setColor(0x5865f2);
   if (prompt.length > 4000) {
     embed.setFooter({ text: "プロンプトが長いため一部のみ表示しています。" });
   }
@@ -448,7 +447,6 @@ async function handleVcRank(interaction: ChatInputCommandInteraction, ctx: BotCo
 
   const embed = new ComponentCardBuilder()
     .setTitle("\u0056\u0043\u6ede\u5728\u30e9\u30f3\u30ad\u30f3\u30b0\u0020\u0054\u004f\u0050\u0031\u0030")
-    .setColor(0x3498db)
     .setDescription(lines.join("\n"));
   await interaction.editReply({
     ...componentCardsPayload([embed]),
@@ -525,7 +523,6 @@ async function handleStampRanking(interaction: ChatInputCommandInteraction, ctx:
   const lines = rows.map((r, i) => `${i + 1}. <@${r.user_id}> - ${Number(r.total).toLocaleString("ja-JP")}回`);
   const embed = new ComponentCardBuilder()
     .setTitle("スタンプ利用ランキング TOP10")
-    .setColor(0x3498db)
     .setDescription(lines.join("\n"));
   await interaction.editReply({
     ...componentCardsPayload([embed]),

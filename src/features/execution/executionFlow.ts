@@ -257,7 +257,6 @@ function buildPoll1Embed(state: ExecutionFlowState, poll1DeadlineMs: number, pol
         discordVoteDeadlineEmbedLine(poll1DeadlineMs, pollEnded),
       ].join("\n"),
     )
-    .setColor(0x3498db)
     .setTimestamp(new Date());
 }
 
@@ -277,7 +276,6 @@ function buildPoll2Embed(state: ExecutionFlowState, poll2DeadlineMs: number, pol
         discordVoteDeadlineEmbedLine(poll2DeadlineMs, pollEnded),
       ].join("\n"),
     )
-    .setColor(0x9b59b6)
     .setTimestamp(new Date());
 }
 

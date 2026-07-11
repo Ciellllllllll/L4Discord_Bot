@@ -19,10 +19,10 @@ function epicDedupeKey(candidate: ReturnType<typeof detectEpicFreeCandidates>[nu
   return `epic:${candidate.dedupeKey}`;
 }
 
-export async function scanCurrentFreeGamesDetailed(ctx: BotContext): Promise<GameDealScanResult> {
+export async function scanCurrentFreeGamesDetailed(ctx: BotContext, options: { signal?: AbortSignal } = {}): Promise<GameDealScanResult> {
   const tasks = [
-    { platform: "steam" as const, promise: scanSteamCurrentFreeGamesWithStatus(ctx) },
-    { platform: "epic" as const, promise: scanEpicCurrentFreeGamesWithStatus(ctx) },
+    { platform: "steam" as const, promise: scanSteamCurrentFreeGamesWithStatus(ctx, options) },
+    { platform: "epic" as const, promise: scanEpicCurrentFreeGamesWithStatus(ctx, options) },
   ];
   const results = await Promise.allSettled(tasks.map((task) => task.promise));
   const items: GameDealFreeItem[] = [];
@@ -42,6 +42,7 @@ export async function scanCurrentFreeGamesDetailed(ctx: BotContext): Promise<Gam
 
 async function scanSteamCurrentFreeGamesWithStatus(
   ctx: BotContext,
+  _options: { signal?: AbortSignal },
 ): Promise<{ items: GameDealFreeItem[]; source: GameDealSourceStatus }> {
   if (!createGameDealRepository(ctx)) {
     return {
@@ -54,14 +55,15 @@ async function scanSteamCurrentFreeGamesWithStatus(
 
 async function scanEpicCurrentFreeGamesWithStatus(
   ctx: BotContext,
+  options: { signal?: AbortSignal },
 ): Promise<{ items: GameDealFreeItem[]; source: GameDealSourceStatus }> {
-  const items = await scanEpicCurrentFreeGames(ctx);
+  const items = await scanEpicCurrentFreeGames(ctx, options);
   return { items, source: { platform: "epic", status: "ok" } };
 }
 
-async function scanEpicCurrentFreeGames(ctx: BotContext): Promise<GameDealFreeItem[]> {
+async function scanEpicCurrentFreeGames(ctx: BotContext, options: { signal?: AbortSignal }): Promise<GameDealFreeItem[]> {
   const epic = new EpicStoreClient(ctx.log);
-  const offers = await epic.fetchFreePromotions();
+  const offers = await epic.fetchFreePromotions(options);
   const items: GameDealFreeItem[] = [];
   for (const candidate of detectEpicFreeCandidates(offers)) {
     if (candidate.detectedType !== "current_free_game") continue;
@@ -116,13 +118,13 @@ function steamPriceHit(sub: GameDealSubscription, details: SteamAppDetails): Gam
   };
 }
 
-export async function checkSubscription(ctx: BotContext, sub: GameDealSubscription): Promise<GameDealSubscriptionHit | null> {
+export async function checkSubscription(ctx: BotContext, sub: GameDealSubscription, options: { signal?: AbortSignal } = {}): Promise<GameDealSubscriptionHit | null> {
   if (sub.platform === "steam") {
-    const details = await new SteamStoreClient(ctx.log).fetchAppDetails([sub.targetId]);
+    const details = await new SteamStoreClient(ctx.log).fetchAppDetails([sub.targetId], options);
     const detail = details.get(sub.targetId);
     return detail ? steamPriceHit(sub, detail) : null;
   }
-  const offers = await new EpicStoreClient(ctx.log).fetchFreePromotions();
+  const offers = await new EpicStoreClient(ctx.log).fetchFreePromotions(options);
   const candidates = detectEpicFreeCandidates(offers).filter((candidate) => candidate.detectedType === "current_free_game");
   const target = sub.targetId.toLowerCase();
   const matched = candidates.find((candidate) =>

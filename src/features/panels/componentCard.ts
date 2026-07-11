@@ -68,10 +68,6 @@ export class ComponentCardBuilder {
     return this;
   }
 
-  setColor(_color: number): this {
-    return this;
-  }
-
   setTimestamp(date = new Date()): this {
     this.data.timestamp = formatDiscordTimestamp(date);
     return this;

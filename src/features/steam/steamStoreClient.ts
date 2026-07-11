@@ -19,7 +19,7 @@ const steamAppDetailsLimiter = new Bottleneck({
   minTime: SINGLE_APPDETAILS_DELAY_MS,
 });
 
-type FetchOptions = {
+export type SteamStoreFetchOptions = {
   signal?: AbortSignal;
 };
 
@@ -111,7 +111,7 @@ function parseSearchItem($: CheerioAPI, row: Parameters<CheerioAPI>[0]): SteamSe
   };
 }
 
-async function fetchText(url: string, opts: FetchOptions = {}): Promise<string> {
+async function fetchText(url: string, opts: SteamStoreFetchOptions = {}): Promise<string> {
   const res = await fetch(url, {
     signal: opts.signal,
     headers: {
@@ -129,7 +129,7 @@ async function fetchText(url: string, opts: FetchOptions = {}): Promise<string> 
   return await res.text();
 }
 
-async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
+async function fetchJson<T>(url: string, opts: SteamStoreFetchOptions = {}): Promise<T> {
   const res = await fetch(url, {
     signal: opts.signal,
     headers: {
@@ -144,11 +144,11 @@ async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, externalSignal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fn(controller.signal);
+    return await fn(externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal);
   } finally {
     clearTimeout(timer);
   }
@@ -210,10 +210,10 @@ function normalizeAppidList(appids: string[]): string[] {
 export class SteamStoreClient {
   constructor(private readonly log: pino.Logger) {}
 
-  async fetchSearchItems(limit = MAX_SEARCH_ITEMS): Promise<SteamSearchItem[]> {
+  async fetchSearchItems(limit = MAX_SEARCH_ITEMS, options: SteamStoreFetchOptions = {}): Promise<SteamSearchItem[]> {
     const byAppid = new Map<string, SteamSearchItem>();
     try {
-      const html = await steamSearchLimiter.schedule(() => withTimeout((signal) => fetchText(SEARCH_URL, { signal })));
+      const html = await steamSearchLimiter.schedule(() => withTimeout((signal) => fetchText(SEARCH_URL, { signal }), options.signal));
       const $ = load(html);
       const rows = $("a.search_result_row").toArray();
       for (const item of rows.map((row) => parseSearchItem($, row)).filter((v): v is SteamSearchItem => v !== null)) {
@@ -229,7 +229,7 @@ export class SteamStoreClient {
     return [...byAppid.values()].slice(0, limit);
   }
 
-  async fetchAppDetails(appids: string[]): Promise<Map<string, SteamAppDetails>> {
+  async fetchAppDetails(appids: string[], options: SteamStoreFetchOptions = {}): Promise<Map<string, SteamAppDetails>> {
     const unique = normalizeAppidList(appids);
     const out = new Map<string, SteamAppDetails>();
     if (unique.length === 0) return out;
@@ -239,7 +239,7 @@ export class SteamStoreClient {
         try {
           const url = `${APPDETAILS_URL}?appids=${encodeURIComponent(appid)}&cc=jp&l=japanese`;
           const json = await steamAppDetailsLimiter.schedule(() =>
-            withTimeout((signal) => fetchJson<AppDetailsResponse>(url, { signal })),
+            withTimeout((signal) => fetchJson<AppDetailsResponse>(url, { signal }), options.signal),
           );
           return { appid, details: normalizeDetails(appid, json[appid]) };
         } catch (err) {

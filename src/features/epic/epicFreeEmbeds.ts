@@ -36,7 +36,6 @@ export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardB
   const embed = new ComponentCardBuilder()
     .setTitle("Epic Games 無料配布")
     .setThumbnail(EPIC_GAMES_STORE_LOGO_URL)
-    .setColor(candidate.detectedType === "current_free_game" ? 0x2ecc71 : 0x3498db)
     .setDescription(`**${candidate.title}**\n${note}`)
     .addFields(
       { name: "配布終了", value: formatDiscordRelativeTime(candidate.endDate), inline: false },

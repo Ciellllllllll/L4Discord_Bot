@@ -14,7 +14,6 @@ export function buildAnonymousSurveyMessage(sessionId: string, selectedRating?: 
   const embed = new ComponentCardBuilder()
     .setTitle("匿名アンケート")
     .setDescription("BOTの使い心地について、現在の満足度を教えてください。回答は匿名で保存されます。")
-    .setColor(0x5865f2)
     .setFooter({ text: "回答後、またはスキップ後にコマンドを実行します。" });
 
   const ratingRow = new ActionRowBuilder<ButtonBuilder>().addComponents(

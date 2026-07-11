@@ -244,7 +244,6 @@ function updateSession(id: string, patch: Partial<PromptSession>): PromptSession
 function buildPromptEmbed(session: PromptSession): ComponentCardBuilder {
   const embed = new ComponentCardBuilder()
     .setTitle("作成した /q プロンプト")
-    .setColor(0x8e44ad)
     .setDescription(session.prompt.slice(0, 4000))
     .addFields({ name: "生成条件", value: conditionLines(session.conditions).join("\n").slice(0, 1024) });
   if (session.prompt.length > 4000) {

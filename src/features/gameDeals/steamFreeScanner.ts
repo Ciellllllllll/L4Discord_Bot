@@ -27,7 +27,12 @@ type SteamScanSummary = {
 
 type SteamNowScanOptions = {
   onlyUnnotified?: boolean;
+  signal?: AbortSignal;
 };
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Game deal watcher stopped", "AbortError");
+}
 
 function steamApiKey(ctx: BotContext): string | undefined {
   const value = "STEAM_WEB_API_KEY" in ctx.config ? (ctx.config as { STEAM_WEB_API_KEY?: string }).STEAM_WEB_API_KEY : undefined;
@@ -136,9 +141,9 @@ function steamNowEvent(item: SteamSearchItem, details: SteamAppDetails): SteamFr
   };
 }
 
-async function fetchCheapSharkAuxiliaryDeals(ctx: BotContext, appid: string) {
+async function fetchCheapSharkAuxiliaryDeals(ctx: BotContext, appid: string, signal?: AbortSignal) {
   try {
-    return await new CheapSharkClient(ctx.log).fetchSteamDealsByAppId(appid);
+    return await new CheapSharkClient(ctx.log).fetchSteamDealsByAppId(appid, { signal });
   } catch (err) {
     ctx.log.warn({ err, appid }, "cheapshark auxiliary verification failed");
     return [];
@@ -150,15 +155,17 @@ async function verifyChanges(
   repo: PostgresGameDealRepository,
   changes: SteamAppCatalogChange[],
   searchByAppid: Map<string, SteamSearchItem>,
+  signal?: AbortSignal,
 ): Promise<{ items: GameDealFreeItem[]; summary: Pick<SteamScanSummary, "verifiedCount" | "excludedCount" | "notifiedCandidates" | "excludedReasons"> }> {
   const store = new SteamStoreClient(ctx.log);
-  const detailsMap = await store.fetchAppDetails(changes.map((change) => change.appid));
+  const detailsMap = await store.fetchAppDetails(changes.map((change) => change.appid), { signal });
   const items: GameDealFreeItem[] = [];
   let verifiedCount = 0;
   let excludedCount = 0;
   const excludedReasons: Record<string, number> = {};
 
   for (const change of changes) {
+    throwIfAborted(signal);
     const details = detailsMap.get(change.appid) ?? null;
     const searchItem = searchByAppid.get(change.appid) ?? null;
     if (!details) {
@@ -167,7 +174,8 @@ async function verifyChanges(
     }
     const title = details.name || searchItem?.name || change.name || `Steam ${change.appid}`;
     await upsertPaidEvidence(repo, change.appid, title, details, searchItem);
-    const cheapSharkDeals = await fetchCheapSharkAuxiliaryDeals(ctx, change.appid);
+    const cheapSharkDeals = await fetchCheapSharkAuxiliaryDeals(ctx, change.appid, signal);
+    throwIfAborted(signal);
     const cheapSharkPaid = cheapSharkDeals.find((deal) => deal.normalPrice > 0 && deal.salePrice === 0 && deal.savings >= 99.9);
     if (cheapSharkPaid) {
       await repo.upsertSteamPaidPriceHistory({
@@ -219,9 +227,9 @@ async function verifyChanges(
   return { items, summary: { verifiedCount, excludedCount, notifiedCandidates: items.length, excludedReasons } };
 }
 
-async function fetchSearchByAppid(ctx: BotContext): Promise<Map<string, SteamSearchItem>> {
+async function fetchSearchByAppid(ctx: BotContext, signal?: AbortSignal): Promise<Map<string, SteamSearchItem>> {
   try {
-    const items = await new SteamStoreClient(ctx.log).fetchSearchItems();
+    const items = await new SteamStoreClient(ctx.log).fetchSearchItems(undefined, { signal });
     return new Map(items.map((item) => [item.appid, item]));
   } catch (err) {
     ctx.log.warn({ err }, "steam search auxiliary verification failed");
@@ -239,7 +247,7 @@ export async function initializeSteamAppBaseline(ctx: BotContext): Promise<{ cre
   return { created: result.baselineCreated, appCount: apps.length };
 }
 
-export async function scanSteamAppListChanges(ctx: BotContext): Promise<SteamScanSummary> {
+export async function scanSteamAppListChanges(ctx: BotContext, signal?: AbortSignal): Promise<SteamScanSummary> {
   const repo = createGameDealRepository(ctx);
   if (!repo) {
     return {
@@ -253,9 +261,11 @@ export async function scanSteamAppListChanges(ctx: BotContext): Promise<SteamSca
     };
   }
   try {
-    const apps = await new SteamAppListClient(ctx.log, steamApiKey(ctx)).fetchAllApps();
+    const apps = await new SteamAppListClient(ctx.log, steamApiKey(ctx)).fetchAllApps(undefined, { signal });
+    throwIfAborted(signal);
     const result = await repo.upsertSteamAppCatalog(apps);
     for (const change of result.changes) {
+      throwIfAborted(signal);
       await repo.enqueueSteamVerify({
         appid: change.appid,
         reason: "price_change_detected",
@@ -289,13 +299,13 @@ export async function scanSteamAppListChanges(ctx: BotContext): Promise<SteamSca
   }
 }
 
-export async function processSteamVerifyQueue(ctx: BotContext, batchSize = DEFAULT_STEAM_VERIFY_BATCH_SIZE): Promise<GameDealFreeItem[]> {
+export async function processSteamVerifyQueue(ctx: BotContext, batchSize = DEFAULT_STEAM_VERIFY_BATCH_SIZE, signal?: AbortSignal): Promise<GameDealFreeItem[]> {
   const repo = createGameDealRepository(ctx);
   if (!repo) return [];
   const changes = await repo.listDueSteamVerifyQueue(batchSize);
   if (changes.length === 0) return [];
-  const searchByAppid = await fetchSearchByAppid(ctx);
-  const { items, summary } = await verifyChanges(ctx, repo, changes, searchByAppid);
+  const searchByAppid = await fetchSearchByAppid(ctx, signal);
+  const { items, summary } = await verifyChanges(ctx, repo, changes, searchByAppid, signal);
   ctx.log.info({ queuedBatch: changes.length, ...summary }, "steam verify queue processed");
   return items;
 }
@@ -308,16 +318,18 @@ export async function scanSteamNowFullDiscountItems(
   const repo = createGameDealRepository(ctx);
   if (!repo) return [];
   const store = new SteamStoreClient(ctx.log);
-  const searchItems = (await store.fetchSearchItems()).filter(searchItemIsFullDiscount);
+  const searchItems = (await store.fetchSearchItems(undefined, { signal: options.signal })).filter(searchItemIsFullDiscount);
   if (searchItems.length === 0) return [];
 
   const items: GameDealFreeItem[] = [];
   const excludedReasons: Record<string, number> = {};
 
   for (let offset = 0; offset < searchItems.length && items.length < limit; offset += STEAM_NOW_DETAILS_BATCH_SIZE) {
+    throwIfAborted(options.signal);
     const batch = searchItems.slice(offset, offset + STEAM_NOW_DETAILS_BATCH_SIZE);
-    const detailsByAppid = await store.fetchAppDetails(batch.map((item) => item.appid));
+    const detailsByAppid = await store.fetchAppDetails(batch.map((item) => item.appid), { signal: options.signal });
     for (const searchItem of batch) {
+      throwIfAborted(options.signal);
       const details = detailsByAppid.get(searchItem.appid) ?? null;
       const exclusionReason = steamNowExclusionReason(searchItem, details);
       if (exclusionReason) {

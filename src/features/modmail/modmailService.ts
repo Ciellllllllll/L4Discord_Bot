@@ -109,7 +109,6 @@ export function buildModmailThreadSummaryEmbed(row: ModmailThreadRow, data: Reco
   const body = trimMax(String(data.body ?? "(本文なし)"), 1024);
   return new ComponentCardBuilder()
     .setTitle(`Modmail-${code}_対応中`)
-    .setColor(0x3498db)
     .addFields(
       { name: "チケットID", value: code, inline: true },
       { name: "チケット作成日時", value: formatDiscordTime(row.created_at), inline: true },
@@ -127,7 +126,6 @@ function buildParentTicketEmbed(row: ModmailThreadRow, data: Record<string, unkn
   return new ComponentCardBuilder()
     .setTitle(title)
     .setDescription(`Modmail-${code}_対応中`)
-    .setColor(0x2ecc71)
     .setTimestamp(new Date());
 }
 
@@ -458,7 +456,6 @@ export async function relayUserPayloadToThread(
   const embed = new ComponentCardBuilder()
     .setTitle(kind)
     .setDescription(cleaned)
-    .setColor(0x3498db)
     .setTimestamp(new Date());
   try {
     await relayCh.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } });
@@ -511,7 +508,6 @@ async function relayModalIntakeToThread(
       { name: "タイトル", value: trimMax(title || "(未設定)", 1024), inline: false },
       { name: "相談内容", value: trimMax(body.trim() || "(本文なし)", 1024), inline: false },
     )
-    .setColor(0x3498db)
     .setTimestamp(new Date());
 
   await relayCh.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } }).catch((e) => {
@@ -663,7 +659,6 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
               .setDescription(
                 "管理者側へ送信するには、管理者から届いた返信メッセージの「返信する」ボタンを押すか、`!send 本文` を送信してください。添付を送る場合も `!send` と一緒に送信してください。",
               )
-              .setColor(0xe67e22)
               .setTimestamp(new Date()),
           ]),
         })
@@ -679,7 +674,6 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
             new ComponentCardBuilder()
               .setTitle("お問い合わせ返信方法")
               .setDescription("`!send 本文` の形式で送信してください。添付だけ送る場合は、添付と一緒に `!send` と入力してください。")
-              .setColor(0xe67e22)
               .setTimestamp(new Date()),
           ]),
         })
@@ -711,7 +705,6 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
             .setDescription(
               "サーバー内の「お問い合わせを始める」から DM 案内を受け取り、「チケットを作成」ボタンから相談を開始してください。",
             )
-            .setColor(0xe67e22)
             .setTimestamp(new Date()),
         ]),
       })
@@ -728,7 +721,6 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
           .setDescription(
             "まだチケットは作成されていません。先ほど送信した受付メッセージの「チケットを作成」ボタンから内容を入力してください。",
           )
-          .setColor(0xe67e22)
           .setTimestamp(new Date()),
         ],
         [buildModmailIntakeCancelRow(intake.guild_id, message.author.id)],
@@ -762,7 +754,6 @@ export function buildModmailStartDmPayload(rows: unknown[]): ComponentCardsPaylo
           "チケット作成前の通常メッセージはスタッフ側に送信されません。",
         ].join("\n"),
       )
-      .setColor(0x3498db)
       .setTimestamp(new Date()),
     ],
     rows as never,
