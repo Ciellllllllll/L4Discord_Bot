@@ -25,6 +25,8 @@ export const executionFlowStateSchema = z.object({
   channel_id: z.string(),
   /** 事前承認（EXECUTOR_ROLE_ID）用メッセージ */
   precheck_message_id: z.string().nullable(),
+  /** Discord投稿前にCASで取得する事前承認メッセージの送信予約 */
+  precheck_publish_reserved: z.boolean().optional(),
   /** 処刑内容投票: 見出し + Embed + ボタンが同一メッセージ。事前承認フェーズでは null */
   poll1_message_id: z.string().nullable(),
   /** タイムアウト時間投票（タイムアウト選択時のみ） */

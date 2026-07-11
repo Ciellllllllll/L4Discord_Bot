@@ -242,6 +242,7 @@ async function ensureCanonicalSchemas(config: ReturnType<typeof loadConfig>): Pr
       { version: 4, name: "senryu_initial", apply: ensurePostgresSenryuSchema },
       { version: 5, name: "lol_watcher_initial", apply: ensurePostgresLolWatcherSchema },
       { version: 6, name: "pacchi_initial", apply: ensurePostgresPacchiSchema },
+      { version: 7, name: "polls_state_revision", apply: async (pool) => { await pool.query("ALTER TABLE polls ADD COLUMN IF NOT EXISTS state_revision bigint NOT NULL DEFAULT 0"); } },
     ]);
   } finally {
     await mainPool.end();

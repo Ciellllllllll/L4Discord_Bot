@@ -29,10 +29,26 @@ import {
 } from "./timeoutExtendConstants.js";
 import type { TimeoutExtendFlowState } from "./timeoutExtendFlow.types.js";
 import { parseTimeoutExtendFlowState } from "./timeoutExtendFlow.types.js";
+import {
+  FlowDeadlineTimers,
+  FlowOrchestrator,
+  type FlowRuntimeRow,
+  PollFlowStateStore,
+  flowTargetLocks,
+  normalizePollStateRevision,
+  parsePersistedFlowState,
+  pickSingleWinner,
+  persistTerminalState,
+  publishReservedPollMessage,
+  saveOpenPollState,
+  claimPollAdminApproval,
+  commitClaimedPollTerminal,
+  tallyChoices,
+} from "./flowLifecycle.js";
 
-const teAdminWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
-/** `${guildId}:${targetId}` — 同一対象の重複開始防止 */
-const activeTeTargets = new Set<string>();
+const TIMEOUT_EXTEND_LOCK_NAMESPACE = "timeout-extend";
+const timeoutExtendTimers = new FlowDeadlineTimers<ReturnType<typeof setTimeout>>({ setTimeout, clearTimeout });
+const timeoutExtendFlowTargets = new Map<string, { guildId: string; targetId: string }>();
 
 type OpenTimeoutExtendFlowRow = {
   id: string;
@@ -40,37 +56,102 @@ type OpenTimeoutExtendFlowRow = {
   status: string;
   message_id: string | null;
   state: unknown;
+  state_revision: number;
   updated_at: Date;
 };
 
-function teLockKey(guildId: string, targetId: string): string {
-  return `${guildId}:${targetId}`;
+function teTimerKey(phase: "poll1" | "poll2" | "admin", flowId: string): string {
+  return `${phase}:${flowId}`;
 }
 
-function releaseTeLock(guildId: string, targetId: string): void {
-  activeTeTargets.delete(teLockKey(guildId, targetId));
+function retainTimeoutExtendTarget(flowId: string, guildId: string, targetId: string): boolean {
+  const current = timeoutExtendFlowTargets.get(flowId);
+  if (current) return current.guildId === guildId && current.targetId === targetId;
+  if (!flowTargetLocks.acquire(TIMEOUT_EXTEND_LOCK_NAMESPACE, guildId, targetId)) return false;
+  timeoutExtendFlowTargets.set(flowId, { guildId, targetId });
+  return true;
 }
 
-function clearTeAdminWait(flowId: string): void {
-  const t = teAdminWaitTimers.get(flowId);
-  if (t) clearTimeout(t);
-  teAdminWaitTimers.delete(flowId);
+function releaseTimeoutExtendTarget(flowId: string): void {
+  const target = timeoutExtendFlowTargets.get(flowId);
+  if (!target) return;
+  flowTargetLocks.release(TIMEOUT_EXTEND_LOCK_NAMESPACE, target.guildId, target.targetId);
+  timeoutExtendFlowTargets.delete(flowId);
+}
+
+/** プロセス終了時に、このランタイムが保持する延長フローの期限タイマーと対象ロックを解放する。 */
+export function shutdownTimeoutExtendFlowRuntime(): void {
+  timeoutExtendTimers.clearAll();
+  for (const flowId of [...timeoutExtendFlowTargets.keys()]) releaseTimeoutExtendTarget(flowId);
+}
+
+async function commitTimeoutExtendTerminal(
+  ctx: BotContext,
+  flowId: string,
+  phase: string,
+  persist: () => Promise<unknown>,
+  fallbackGuildId?: string,
+): Promise<boolean> {
+  const guildId = timeoutExtendFlowTargets.get(flowId)?.guildId ?? fallbackGuildId ?? "unknown";
+  const result = await persistTerminalState(persist, () => {
+    clearTimeoutExtendTimers(flowId);
+    releaseTimeoutExtendTarget(flowId);
+  });
+  if (!result.ok) {
+    ctx.log.error({ err: result.error, flowId, phase, guildId }, "timeoutExtend: terminal state persistence failed");
+  }
+  return result.ok;
+}
+
+export async function claimTimeoutExtendApproval(ctx: BotContext, row: OpenTimeoutExtendFlowRow, state: TimeoutExtendFlowState): Promise<boolean> {
+  try {
+    return await claimPollAdminApproval({
+      store: new PollFlowStateStore(ctx.db), id: row.id, state, stateRevision: row.state_revision ?? 0, rawState: row.state,
+    });
+  } catch (err) {
+    ctx.log.error({ err, flowId: row.id, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: approval claim failed");
+    throw err;
+  }
+}
+
+export async function tryClaimTimeoutExtendApproval(
+  ctx: BotContext,
+  row: OpenTimeoutExtendFlowRow,
+  state: TimeoutExtendFlowState,
+): Promise<{ ok: true; claimed: boolean } | { ok: false; error: unknown }> {
+  try {
+    return { ok: true, claimed: await claimTimeoutExtendApproval(ctx, row, state) };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+async function commitClaimedTimeoutExtendTerminal(
+  ctx: BotContext,
+  row: OpenTimeoutExtendFlowRow,
+  state: TimeoutExtendFlowState,
+  terminalPhase: "completed" | "cancelled",
+): Promise<boolean> {
+  return commitTimeoutExtendTerminal(ctx, row.id, state.phase, async () => {
+    const committed = await commitClaimedPollTerminal({
+      store: new PollFlowStateStore(ctx.db), id: row.id, state, stateRevision: row.state_revision, terminalPhase,
+    });
+    if (!committed) throw new Error("timeout extend flow terminal CAS lost");
+  }, row.guild_id);
+}
+
+function clearTimeoutExtendTimers(flowId: string): void {
+  timeoutExtendTimers.clear(teTimerKey("poll1", flowId));
+  timeoutExtendTimers.clear(teTimerKey("poll2", flowId));
+  timeoutExtendTimers.clear(teTimerKey("admin", flowId));
 }
 
 function scheduleTePoll1Finalize(ctx: BotContext, flowId: string, guildId: string, delayMs: number): void {
-  setTimeout(() => {
-    void transitionTePoll1ToNext(ctx, flowId, guildId).catch((err) =>
-      ctx.log.error({ err, flowId }, "timeoutExtend: poll1 finalize failed"),
-    );
-  }, Math.max(0, delayMs));
+  timeoutExtendOrchestrator.schedulePoll1(ctx, flowId, guildId, delayMs);
 }
 
 function scheduleTePoll2Finalize(ctx: BotContext, flowId: string, guildId: string, delayMs: number): void {
-  setTimeout(() => {
-    void transitionTePoll2ToAdmin(ctx, flowId, guildId).catch((err) =>
-      ctx.log.error({ err, flowId }, "timeoutExtend: poll2 finalize failed"),
-    );
-  }, Math.max(0, delayMs));
+  timeoutExtendOrchestrator.schedulePoll2(ctx, flowId, guildId, delayMs);
 }
 
 function teAdminWaitDeadlineMs(updatedAt: Date, waitSeconds: number): number {
@@ -80,9 +161,7 @@ function teAdminWaitDeadlineMs(updatedAt: Date, waitSeconds: number): number {
 }
 
 function parsePollRowState(row: { state: unknown }): TimeoutExtendFlowState | null {
-  const raw = row.state as unknown;
-  const obj = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
-  return parseTimeoutExtendFlowState(obj);
+  return parsePersistedFlowState(row.state, parseTimeoutExtendFlowState);
 }
 
 export async function findOpenTimeoutExtendFlowById(
@@ -91,15 +170,20 @@ export async function findOpenTimeoutExtendFlowById(
 ): Promise<{ row: OpenTimeoutExtendFlowRow; state: TimeoutExtendFlowState } | null> {
   const row = await ctx.db
     .selectFrom("polls")
-    .select(["id", "guild_id", "status", "message_id", "state", "updated_at"])
+    .select(["id", "guild_id", "status", "message_id", "state", "state_revision", "updated_at"])
     .where("id", "=", flowId)
     .where("kind", "=", TIMEOUT_EXTEND_FLOW_KIND)
     .where("status", "=", "open")
     .executeTakeFirst();
   if (!row) return null;
+  const stateRevision = normalizePollStateRevision(row.state_revision);
+  if (stateRevision === null) {
+    ctx.log.error({ flowId, guildId: row.guild_id, phase: "invalid_state_revision", stateRevision: row.state_revision }, "timeoutExtend: ignoring unsafe flow state revision");
+    return null;
+  }
   const state = parsePollRowState(row);
   if (!state) return null;
-  return { row, state };
+  return { row: { ...row, state_revision: stateRevision }, state };
 }
 
 async function saveTeFullState(
@@ -107,16 +191,17 @@ async function saveTeFullState(
   flowId: string,
   state: TimeoutExtendFlowState,
   messageId: string | null,
-): Promise<void> {
-  await ctx.db
-    .updateTable("polls")
-    .set({
-      state: JSON.stringify(state) as unknown as Record<string, unknown>,
-      message_id: messageId,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .where("id", "=", flowId)
-    .execute();
+  expected?: OpenTimeoutExtendFlowRow,
+): Promise<boolean> {
+  return saveOpenPollState({
+    store: new PollFlowStateStore(ctx.db),
+    id: flowId,
+    kind: TIMEOUT_EXTEND_FLOW_KIND,
+    parse: parseTimeoutExtendFlowState,
+    nextState: state,
+    messageId,
+    ...(expected ? { expected: { state: parsePollRowState(expected) ?? state, state_revision: expected.state_revision, rawState: expected.state } } : {}),
+  });
 }
 
 export async function deleteTeFlowMessagesQuietly(
@@ -135,7 +220,7 @@ export async function deleteTeFlowMessagesQuietly(
   }
 }
 
-function parseTeVote(customId: string): { flowId: string; choice: string } | null {
+export function parseTimeoutExtendVoteCustomId(customId: string): { flowId: string; choice: string } | null {
   if (!customId.startsWith(TE_VOTE_PREFIX)) return null;
   const rest = customId.slice(TE_VOTE_PREFIX.length);
   const idx = rest.lastIndexOf(":");
@@ -143,7 +228,7 @@ function parseTeVote(customId: string): { flowId: string; choice: string } | nul
   return { flowId: rest.slice(0, idx), choice: rest.slice(idx + 1) };
 }
 
-function parseTeApproval(customId: string): { flowId: string; action: "approve" | "deny" } | null {
+export function parseTimeoutExtendApprovalCustomId(customId: string): { flowId: string; action: "approve" | "deny" } | null {
   if (!customId.startsWith(TE_APPROVAL_PREFIX)) return null;
   const rest = customId.slice(TE_APPROVAL_PREFIX.length);
   const idx = rest.lastIndexOf(":");
@@ -151,32 +236,6 @@ function parseTeApproval(customId: string): { flowId: string; action: "approve" 
   const action = rest.slice(idx + 1);
   if (action !== "approve" && action !== "deny") return null;
   return { flowId: rest.slice(0, idx), action };
-}
-
-function tallyChoices(votes: Record<string, string>, keys: readonly string[]): Record<string, number> {
-  const c: Record<string, number> = {};
-  for (const k of keys) c[k] = 0;
-  for (const v of Object.values(votes)) {
-    if (v in c) c[v] = (c[v] ?? 0) + 1;
-  }
-  return c;
-}
-
-function pickSingleWinner(counts: Record<string, number>, keys: readonly string[]): string | null {
-  let max = -1;
-  const winners: string[] = [];
-  for (const k of keys) {
-    const n = counts[k] ?? 0;
-    if (n > max) {
-      max = n;
-      winners.length = 0;
-      winners.push(k);
-    } else if (n === max && n >= 0) {
-      winners.push(k);
-    }
-  }
-  if (max <= 0 || winners.length !== 1) return null;
-  return winners[0] ?? null;
 }
 
 const TIMEOUT_EXTEND_REASON_BASE = "/タイムアウト延長フロー";
@@ -270,43 +329,53 @@ function teApprovalRows(flowId: string, disabled: boolean): ActionRowBuilder<But
 async function editTeMessagesStopped(
   ctx: BotContext,
   channel: TextChannel,
-  messageIds: (string | null | undefined)[],
+  messages: Array<{ id: string | null | undefined; components: ActionRowBuilder<ButtonBuilder>[] }>,
   heading: string,
 ): Promise<void> {
   const content = `# **${heading}**`;
-  for (const mid of messageIds) {
+  for (const { id: mid, components } of messages) {
     if (!mid) continue;
     try {
       const m = await channel.messages.fetch(mid).catch(() => null);
-      if (m) await m.edit({ content, embeds: [], components: [] }).catch(() => undefined);
+      if (m) await m.edit({ content, embeds: [], components }).catch(() => undefined);
     } catch (err) {
       ctx.log.warn({ err, mid }, "timeoutExtend: edit stopped message failed");
     }
   }
 }
 
-async function abortTeFlow(
+export async function abortTeFlow(
   ctx: BotContext,
   flowId: string,
-  guildId: string,
   state: TimeoutExtendFlowState,
   heading: string,
-): Promise<void> {
-  clearTeAdminWait(flowId);
-  releaseTeLock(guildId, state.target_id);
-  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
+  guildId?: string,
+  expected?: OpenTimeoutExtendFlowRow,
+): Promise<boolean> {
+  let committedState: TimeoutExtendFlowState | null = null;
+  const committed = await commitTimeoutExtendTerminal(ctx, flowId, state.phase, async () => {
+    const current = await new PollFlowStateStore(ctx.db).cancelOpenFlow({
+      id: flowId,
+      kind: TIMEOUT_EXTEND_FLOW_KIND,
+      expectedPhase: state.phase,
+      parse: parseTimeoutExtendFlowState,
+      ...(expected ? { expected: { state, stateRevision: expected.state_revision, rawState: expected.state } } : {}),
+      canCancel: (currentState) => currentState.admin_button_fired === false,
+    });
+    if (!current) throw new Error("timeout extend flow terminal CAS lost");
+    committedState = current;
+  }, guildId);
+  if (!committed) return false;
+  const finalState = committedState ?? state;
+  const ch = (await ctx.client.channels.fetch(finalState.channel_id).catch(() => null)) as TextChannel | null;
   if (ch?.isTextBased()) {
-    await editTeMessagesStopped(ctx, ch, [state.poll1_message_id, state.poll2_message_id, state.admin_message_id], heading);
+    await editTeMessagesStopped(ctx, ch, [
+      { id: finalState.poll1_message_id, components: tePoll1Rows(flowId, true) },
+      { id: finalState.poll2_message_id, components: tePoll2Rows(flowId, true) },
+      { id: finalState.admin_message_id, components: teApprovalRows(flowId, true) },
+    ], heading);
   }
-  await ctx.db
-    .updateTable("polls")
-    .set({
-      status: "cancelled",
-      state: JSON.stringify({ ...state, phase: "cancelled" }) as unknown as Record<string, unknown>,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .where("id", "=", flowId)
-    .execute();
+  return true;
 }
 
 function scheduleTeAdminWait(
@@ -315,25 +384,16 @@ function scheduleTeAdminWait(
   guildId: string,
   delayMs = ctx.config.TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS * 1000,
 ): void {
-  clearTeAdminWait(flowId);
-  const h = setTimeout(() => {
-    void (async () => {
-      const found = await findOpenTimeoutExtendFlowById(ctx, flowId);
-      if (!found || found.state.phase !== "admin_pending" || found.state.admin_button_fired) return;
-      ctx.log.info({ flowId }, "timeoutExtend: admin wait timeout");
-      await abortTeFlow(ctx, flowId, guildId, found.state, "タイムアウト延長フロー: 承認がタイムアウトしました");
-    })().catch((err) => ctx.log.error({ err, flowId }, "timeoutExtend: admin timeout handler failed"));
-  }, Math.max(0, delayMs));
-  teAdminWaitTimers.set(flowId, h);
+  timeoutExtendOrchestrator.scheduleAdmin(ctx, flowId, guildId, delayMs);
 }
 
-async function listOpenTimeoutExtendFlows(ctx: BotContext): Promise<OpenTimeoutExtendFlowRow[]> {
+async function listOpenTimeoutExtendFlows(ctx: BotContext): Promise<FlowRuntimeRow[]> {
   return ctx.db
     .selectFrom("polls")
     .select(["id", "guild_id", "status", "message_id", "state", "updated_at"])
     .where("kind", "=", TIMEOUT_EXTEND_FLOW_KIND)
     .where("status", "=", "open")
-    .execute() as Promise<OpenTimeoutExtendFlowRow[]>;
+    .execute();
 }
 
 async function cancelMalformedTimeoutExtendFlow(ctx: BotContext, flowId: string): Promise<void> {
@@ -348,62 +408,7 @@ async function cancelMalformedTimeoutExtendFlow(ctx: BotContext, flowId: string)
 }
 
 export async function reconcileTimeoutExtendFlows(ctx: BotContext): Promise<void> {
-  const rows = await listOpenTimeoutExtendFlows(ctx);
-  const now = Date.now();
-  activeTeTargets.clear();
-
-  for (const row of rows) {
-    const state = parsePollRowState(row);
-    if (!state) {
-      ctx.log.warn({ flowId: row.id }, "timeoutExtend: cancelling malformed open flow");
-      await cancelMalformedTimeoutExtendFlow(ctx, row.id);
-      continue;
-    }
-
-    if (state.phase === "completed" || state.phase === "cancelled") {
-      await ctx.db
-        .updateTable("polls")
-        .set({
-          status: state.phase === "completed" ? "completed" : "cancelled",
-          updated_at: sqliteTimestamp() as unknown as Date,
-        })
-        .where("id", "=", row.id)
-        .execute();
-      continue;
-    }
-
-    activeTeTargets.add(teLockKey(row.guild_id, state.target_id));
-
-    if (state.phase === "admin_pending") {
-      const waitDeadlineMs = teAdminWaitDeadlineMs(row.updated_at, ctx.config.TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS);
-      const remainingMs = waitDeadlineMs - now;
-      if (remainingMs <= 0) {
-        await abortTeFlow(ctx, row.id, row.guild_id, state, "繧ｿ繧､繝繧｢繧ｦ繝亥ｻｶ髟ｷ繝輔Ο繝ｼ: 再起動後の復元時に期限切れを検出");
-        continue;
-      }
-      scheduleTeAdminWait(ctx, row.id, row.guild_id, remainingMs);
-      continue;
-    }
-
-    if (state.phase === "poll1_pending") {
-      const remainingMs = state.poll1_deadline_ms - now;
-      if (remainingMs <= 0) {
-        await transitionTePoll1ToNext(ctx, row.id, row.guild_id);
-        continue;
-      }
-      scheduleTePoll1Finalize(ctx, row.id, row.guild_id, remainingMs);
-      continue;
-    }
-
-    if (state.phase === "poll2_pending") {
-      const remainingMs = (state.poll2_deadline_ms ?? 0) - now;
-      if (remainingMs <= 0) {
-        await transitionTePoll2ToAdmin(ctx, row.id, row.guild_id);
-        continue;
-      }
-      scheduleTePoll2Finalize(ctx, row.id, row.guild_id, remainingMs);
-    }
-  }
+  await timeoutExtendOrchestrator.reconcile(ctx);
 }
 
 async function postTeAdminRequest(ctx: BotContext, channel: TextChannel, flowId: string, body: string): Promise<Message | null> {
@@ -420,9 +425,13 @@ async function postTeAdminRequest(ctx: BotContext, channel: TextChannel, flowId:
   }
 }
 
-async function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, state: TimeoutExtendFlowState): Promise<void> {
+export async function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, state: TimeoutExtendFlowState): Promise<boolean> {
   const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
-  if (!ch?.isTextBased()) return;
+  if (!ch?.isTextBased()) {
+    ctx.log.error({ flowId, phase: state.phase, guildId }, "timeoutExtend: vote channel unavailable");
+    await abortTeFlow(ctx, flowId, state, "タイムアウト延長フロー: 投票チャンネルを取得できませんでした");
+    return false;
+  }
 
   const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
   const deadline = Date.now() + voteMs;
@@ -431,33 +440,106 @@ async function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, st
     poll1_deadline_ms: deadline,
     votes_poll1: {},
     phase: "poll1_pending",
+    poll1_message_id: null,
+    poll1_publish_reserved: true,
   };
-  const embed = buildPoll1Embed(draft, deadline);
+  if (!await saveTeFullState(ctx, flowId, draft, null)) return false;
 
-  let msg: Message;
-  try {
-    msg = await ch.send({
-      ...componentCardsPayload([embed], tePoll1Rows(flowId, false)),
-      allowedMentions: { users: [state.target_id] },
-    });
-  } catch (err) {
-    ctx.log.error({ err, flowId }, "timeoutExtend: poll1 send failed");
-    await abortTeFlow(ctx, flowId, guildId, state, "タイムアウト延長フロー: 投票メッセージの送信に失敗しました");
-    return;
+  const msg = await publishReservedPollMessage({
+    store: new PollFlowStateStore(ctx.db),
+    id: flowId,
+    kind: TIMEOUT_EXTEND_FLOW_KIND,
+    parse: parseTimeoutExtendFlowState,
+    isReserved: (reserved) => reserved.phase === "poll1_pending"
+      && reserved.poll1_publish_reserved === true
+      && reserved.poll1_message_id === null
+      && reserved.poll1_deadline_ms === deadline,
+    publish: async (reserved) => {
+      try {
+        return await ch.send({
+          ...componentCardsPayload([buildPoll1Embed(reserved, deadline)], tePoll1Rows(flowId, false)),
+          allowedMentions: { users: [reserved.target_id] },
+        });
+      } catch (err) {
+        ctx.log.error({ err, flowId, phase: state.phase, guildId }, "timeoutExtend: poll1 send failed");
+        return null;
+      }
+    },
+    publishedState: (reserved, message) => ({ ...reserved, poll1_message_id: message.id, poll1_publish_reserved: false }),
+    messageId: (message) => message.id,
+    discard: async (message) => { await message.delete().catch(() => undefined); },
+  });
+  if (!msg) {
+    const reserved = await findOpenTimeoutExtendFlowById(ctx, flowId);
+    if (reserved?.state.phase === "poll1_pending" && reserved.state.poll1_deadline_ms === deadline) {
+      await abortTeFlow(ctx, flowId, reserved.state, "タイムアウト延長フロー: 投票メッセージの送信に失敗しました", guildId, reserved.row);
+    }
+    return false;
   }
-
-  const next: TimeoutExtendFlowState = {
-    ...state,
-    phase: "poll1_pending",
-    poll1_message_id: msg.id,
-    poll1_deadline_ms: deadline,
-    votes_poll1: {},
-  };
-  await saveTeFullState(ctx, flowId, next, msg.id);
   scheduleTePoll1Finalize(ctx, flowId, guildId, voteMs);
+  return true;
 }
 
-async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId: string): Promise<void> {
+async function resolveTimeoutExtendTransitionChannel(
+  ctx: BotContext,
+  flowId: string,
+  guildId: string,
+  state: TimeoutExtendFlowState,
+): Promise<TextChannel | null> {
+  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
+  if (ch?.isTextBased()) return ch;
+  ctx.log.error({ flowId, phase: state.phase, guildId }, "timeoutExtend: vote channel unavailable");
+  await abortUnpublishedTimeoutExtendTransition(ctx, flowId, guildId, state.phase, "タイムアウト延長フロー: 投票チャンネルを取得できませんでした");
+  return null;
+}
+
+async function disableTimeoutExtendPollMessage(
+  channel: TextChannel,
+  messageId: string | null,
+  payload: ReturnType<typeof componentCardsPayload>,
+): Promise<void> {
+  if (!messageId) return;
+  try {
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    if (message) await message.edit(payload);
+  } catch {
+    /* UI の無効化失敗は状態確定を巻き戻さない */
+  }
+}
+
+async function persistTimeoutExtendTransitionMessage(
+  ctx: BotContext,
+  flowId: string,
+  pending: TimeoutExtendFlowState,
+  published: TimeoutExtendFlowState,
+  messageId: string | null,
+): Promise<boolean> {
+  const current = await new PollFlowStateStore(ctx.db).findOpen(flowId, TIMEOUT_EXTEND_FLOW_KIND, parseTimeoutExtendFlowState);
+  if (!current || current.state.phase !== pending.phase) return false;
+  return saveOpenPollState({
+    store: new PollFlowStateStore(ctx.db),
+    id: flowId,
+    kind: TIMEOUT_EXTEND_FLOW_KIND,
+    parse: parseTimeoutExtendFlowState,
+    nextState: published,
+    messageId,
+    expected: { state: current.state, state_revision: current.stateRevision, rawState: current.rawState },
+  });
+}
+
+async function abortUnpublishedTimeoutExtendTransition(
+  ctx: BotContext,
+  flowId: string,
+  guildId: string,
+  phase: TimeoutExtendFlowState["phase"],
+  heading: string,
+): Promise<void> {
+  const current = await findOpenTimeoutExtendFlowById(ctx, flowId);
+  if (!current || current.state.phase !== phase) return;
+  await abortTeFlow(ctx, flowId, current.state, heading, guildId);
+}
+
+export async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId: string): Promise<void> {
   const found = await findOpenTimeoutExtendFlowById(ctx, flowId);
   if (!found || found.state.phase !== "poll1_pending") return;
 
@@ -465,84 +547,75 @@ async function transitionTePoll1ToNext(ctx: BotContext, flowId: string, guildId:
 
   const counts = tallyChoices(state.votes_poll1, [...TE_POLL1_KEYS]);
   const winner = pickSingleWinner(counts, [...TE_POLL1_KEYS]);
-  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
-  if (!ch?.isTextBased()) return;
-
-  if (state.poll1_message_id) {
-    try {
-      const m = await ch.messages.fetch(state.poll1_message_id).catch(() => null);
-      if (m) {
-        await m.edit({
-          ...componentCardsPayload([buildPoll1Embed(state, state.poll1_deadline_ms, true)], tePoll1Rows(flowId, true)),
-        });
-      }
-    } catch {
-      /* noop */
-    }
-  }
-
   if (winner == null) {
-    await abortTeFlow(ctx, flowId, guildId, state, "タイムアウト延長フロー: 投票の最多票が確定しませんでした");
+    await abortTeFlow(ctx, flowId, state, "タイムアウト延長フロー: 投票の最多票が確定しませんでした");
     return;
   }
 
   if (winner === "release") {
+    const pending: TimeoutExtendFlowState = {
+      ...state,
+      phase: "admin_pending",
+      resolved_extend: "release",
+      duration_seconds: null,
+      admin_message_id: null,
+    };
+    if (!await saveTeFullState(ctx, flowId, pending, null, found.row)) return;
+    const ch = await resolveTimeoutExtendTransitionChannel(ctx, flowId, guildId, pending);
+    if (!ch) return;
+    await disableTimeoutExtendPollMessage(ch, state.poll1_message_id, componentCardsPayload([buildPoll1Embed(state, state.poll1_deadline_ms, true)], tePoll1Rows(flowId, true)));
     const adminMsg = await postTeAdminRequest(
       ctx,
       ch,
       flowId,
       `タイムアウト延長フロー — 最終承認: <@${state.target_id}> の **タイムアウト解除**`,
     );
-    const next: TimeoutExtendFlowState = {
-      ...state,
-      phase: "admin_pending",
-      resolved_extend: "release",
-      duration_seconds: null,
-      admin_message_id: adminMsg?.id ?? null,
-    };
-    await saveTeFullState(ctx, flowId, next, null);
+    if (!adminMsg) {
+      await abortUnpublishedTimeoutExtendTransition(ctx, flowId, guildId, pending.phase, "タイムアウト延長フロー: 最終承認メッセージの送信に失敗しました");
+      return;
+    }
+    if (!await persistTimeoutExtendTransitionMessage(ctx, flowId, pending, { ...pending, admin_message_id: adminMsg.id }, null)) {
+      await deleteTeFlowMessagesQuietly(ctx, ch, [adminMsg.id], "admin publication CAS lost");
+      return;
+    }
     scheduleTeAdminWait(ctx, flowId, guildId);
     return;
   }
 
   const voteMs = ctx.config.EXEC_VOTE_SECONDS * 1000;
   const deadline = Date.now() + voteMs;
-  const embed = buildPoll2Embed(
-    {
-      ...state,
-      phase: "poll2_pending",
-      poll2_deadline_ms: deadline,
-      votes_poll2: {},
-      resolved_extend: "extend",
-    },
-    deadline,
-  );
+  const pending: TimeoutExtendFlowState = {
+    ...state,
+    phase: "poll2_pending",
+    poll2_message_id: null,
+    poll2_deadline_ms: deadline,
+    votes_poll2: {},
+    resolved_extend: "extend",
+  };
+  if (!await saveTeFullState(ctx, flowId, pending, null, found.row)) return;
+  const ch = await resolveTimeoutExtendTransitionChannel(ctx, flowId, guildId, pending);
+  if (!ch) return;
+  await disableTimeoutExtendPollMessage(ch, state.poll1_message_id, componentCardsPayload([buildPoll1Embed(state, state.poll1_deadline_ms, true)], tePoll1Rows(flowId, true)));
 
   let msg: Message;
   try {
     msg = await ch.send({
-      ...componentCardsPayload([embed], tePoll2Rows(flowId, false)),
+      ...componentCardsPayload([buildPoll2Embed(pending, deadline)], tePoll2Rows(flowId, false)),
       allowedMentions: { users: [state.target_id] },
     });
   } catch (err) {
-    ctx.log.error({ err, flowId }, "timeoutExtend: poll2 send failed");
-    await abortTeFlow(ctx, flowId, guildId, state, "タイムアウト延長フロー: 延長時間投票の送信に失敗しました");
+    ctx.log.error({ err, flowId, phase: pending.phase, guildId }, "timeoutExtend: poll2 send failed");
+    await abortUnpublishedTimeoutExtendTransition(ctx, flowId, guildId, pending.phase, "タイムアウト延長フロー: 延長時間投票の送信に失敗しました");
     return;
   }
-
-  const next: TimeoutExtendFlowState = {
-    ...state,
-    phase: "poll2_pending",
-    resolved_extend: "extend",
-    poll2_message_id: msg.id,
-    poll2_deadline_ms: deadline,
-    votes_poll2: {},
-  };
-  await saveTeFullState(ctx, flowId, next, msg.id);
+  if (!await persistTimeoutExtendTransitionMessage(ctx, flowId, pending, { ...pending, poll2_message_id: msg.id }, msg.id)) {
+    await deleteTeFlowMessagesQuietly(ctx, ch, [msg.id], "poll2 publication CAS lost");
+    return;
+  }
   scheduleTePoll2Finalize(ctx, flowId, guildId, voteMs);
 }
 
-async function transitionTePoll2ToAdmin(ctx: BotContext, flowId: string, guildId: string): Promise<void> {
+export async function transitionTePoll2ToAdmin(ctx: BotContext, flowId: string, guildId: string): Promise<void> {
   const found = await findOpenTimeoutExtendFlowById(ctx, flowId);
   if (!found || found.state.phase !== "poll2_pending") return;
 
@@ -550,24 +623,8 @@ async function transitionTePoll2ToAdmin(ctx: BotContext, flowId: string, guildId
 
   const counts = tallyChoices(state.votes_poll2, [...TE_POLL2_KEYS]);
   const winner = pickSingleWinner(counts, [...TE_POLL2_KEYS]);
-  const ch = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
-  if (!ch?.isTextBased()) return;
-
-  if (state.poll2_message_id && state.poll2_deadline_ms) {
-    try {
-      const m = await ch.messages.fetch(state.poll2_message_id).catch(() => null);
-      if (m) {
-        await m.edit({
-          ...componentCardsPayload([buildPoll2Embed(state, state.poll2_deadline_ms, true)], tePoll2Rows(flowId, true)),
-        });
-      }
-    } catch {
-      /* noop */
-    }
-  }
-
   if (winner == null) {
-    await abortTeFlow(ctx, flowId, guildId, state, "タイムアウト延長フロー: 延長時間の最多票が確定しませんでした");
+    await abortTeFlow(ctx, flowId, state, "タイムアウト延長フロー: 延長時間の最多票が確定しませんでした");
     return;
   }
 
@@ -575,22 +632,75 @@ async function transitionTePoll2ToAdmin(ctx: BotContext, flowId: string, guildId
   const durationSeconds = sec ?? 3600;
   const label = TE_POLL2_LABEL[winner as keyof typeof TE_POLL2_LABEL] ?? winner;
 
+  const pending: TimeoutExtendFlowState = {
+    ...state,
+    phase: "admin_pending",
+    resolved_extend: "extend",
+    duration_seconds: durationSeconds,
+    admin_message_id: null,
+  };
+  if (!await saveTeFullState(ctx, flowId, pending, null, found.row)) return;
+  const ch = await resolveTimeoutExtendTransitionChannel(ctx, flowId, guildId, pending);
+  if (!ch) return;
+  await disableTimeoutExtendPollMessage(ch, state.poll2_message_id, componentCardsPayload([buildPoll2Embed(state, state.poll2_deadline_ms!, true)], tePoll2Rows(flowId, true)));
   const adminMsg = await postTeAdminRequest(
     ctx,
     ch,
     flowId,
     `タイムアウト延長フロー — 最終承認: <@${state.target_id}> の **タイムアウト延長（${label}）**`,
   );
-  const next: TimeoutExtendFlowState = {
-    ...state,
-    phase: "admin_pending",
-    resolved_extend: "extend",
-    duration_seconds: durationSeconds,
-    admin_message_id: adminMsg?.id ?? null,
-  };
-  await saveTeFullState(ctx, flowId, next, null);
+  if (!adminMsg) {
+    await abortUnpublishedTimeoutExtendTransition(ctx, flowId, guildId, pending.phase, "タイムアウト延長フロー: 最終承認メッセージの送信に失敗しました");
+    return;
+  }
+  if (!await persistTimeoutExtendTransitionMessage(ctx, flowId, pending, { ...pending, admin_message_id: adminMsg.id }, null)) {
+    await deleteTeFlowMessagesQuietly(ctx, ch, [adminMsg.id], "admin publication CAS lost");
+    return;
+  }
   scheduleTeAdminWait(ctx, flowId, guildId);
 }
+
+const timeoutExtendOrchestrator = new FlowOrchestrator<BotContext, TimeoutExtendFlowState>({
+  namespace: "timeoutExtend",
+  timers: timeoutExtendTimers,
+  parse: (value) => parsePersistedFlowState(value, parseTimeoutExtendFlowState),
+  targetId: (state) => state.target_id,
+  clearTimers: clearTimeoutExtendTimers,
+  retainTarget: retainTimeoutExtendTarget,
+  releaseTarget: releaseTimeoutExtendTarget,
+  releaseAllTargets: () => {
+    for (const flowId of [...timeoutExtendFlowTargets.keys()]) releaseTimeoutExtendTarget(flowId);
+  },
+  listOpen: listOpenTimeoutExtendFlows,
+  findOpen: async (ctx, flowId) => {
+    const found = await findOpenTimeoutExtendFlowById(ctx, flowId);
+    return found ? { row: found.row, state: found.state } : null;
+  },
+  cancelMalformed: cancelMalformedTimeoutExtendFlow,
+  settleTerminal: async (ctx, row, state) => {
+    await ctx.db.updateTable("polls").set({
+      status: state.phase === "completed" ? "completed" : "cancelled",
+      updated_at: sqliteTimestamp() as unknown as Date,
+    }).where("id", "=", row.id).execute();
+  },
+  abort: async (ctx, flowId, state, heading, guildId) => abortTeFlow(ctx, flowId, state, heading, guildId),
+  transitionPoll1: transitionTePoll1ToNext,
+  transitionPoll2: transitionTePoll2ToAdmin,
+  adminPending: (state) => state.phase === "admin_pending",
+  adminDeadline: (ctx, row) => teAdminWaitDeadlineMs(row.updated_at, ctx.config.TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS),
+  claimed: (state) => state.phase === "admin_pending" && state.admin_button_fired,
+  unpublished: (state) => (state.phase === "poll1_pending" && !state.poll1_message_id)
+    || (state.phase === "poll2_pending" && !state.poll2_message_id)
+    || (state.phase === "admin_pending" && !state.admin_message_id),
+  poll1Deadline: (state) => state.phase === "poll1_pending" ? state.poll1_deadline_ms : null,
+  poll2Deadline: (state) => state.phase === "poll2_pending" ? state.poll2_deadline_ms : null,
+  restoredDeadlineExpiredHeading: "タイムアウト延長フロー: 再起動後の復元時に期限切れを検出",
+  adminTimeoutHeading: "タイムアウト延長フロー: 承認がタイムアウトしました",
+  duplicateTargetHeading: "タイムアウト延長フロー: 同一対象の重複フローを中止しました",
+  claimedHeading: "タイムアウト延長フロー: 再起動後に未完了の承認処理を中止しました",
+  unpublishedHeading: "タイムアウト延長フロー: 再起動後に未公開の遷移を中止しました",
+  log: (ctx, level, fields, message) => ctx.log[level](fields, message),
+});
 
 async function resolveVoteTextChannel(
   ctx: BotContext,
@@ -691,19 +801,19 @@ export async function startTimeoutExtendFlow(
     return;
   }
 
-  const lockKey = teLockKey(guild.id, targetUser.id);
-  if (activeTeTargets.has(lockKey)) {
+  const flowId = randomUUID();
+  if (!retainTimeoutExtendTarget(flowId, guild.id, targetUser.id)) {
     await interaction.editReply({ content: "この対象では既にタイムアウト延長フローが進行中です。" });
     return;
   }
 
-  const flowId = randomUUID();
   const baseState: TimeoutExtendFlowState = {
     phase: "poll1_pending",
     invoker_id: interaction.user.id,
     target_id: targetUser.id,
     channel_id: voteChannel.id,
     poll1_message_id: null,
+    poll1_publish_reserved: false,
     poll2_message_id: null,
     admin_message_id: null,
     votes_poll1: {},
@@ -715,30 +825,41 @@ export async function startTimeoutExtendFlow(
     admin_button_fired: false,
   };
 
-  activeTeTargets.add(lockKey);
-
-  await ctx.db
-    .insertInto("polls")
-    .values({
-      id: flowId,
-      guild_id: guild.id,
-      channel_id: voteChannel.id,
-      message_id: null,
-      kind: TIMEOUT_EXTEND_FLOW_KIND,
-      status: "open",
-      state: JSON.stringify(baseState) as unknown as Record<string, unknown>,
-      ends_at: null,
-      created_at: sqliteTimestamp() as unknown as Date,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .execute();
+  try {
+    await ctx.db
+      .insertInto("polls")
+      .values({
+        id: flowId,
+        guild_id: guild.id,
+        channel_id: voteChannel.id,
+        message_id: null,
+        kind: TIMEOUT_EXTEND_FLOW_KIND,
+        status: "open",
+        state: JSON.stringify(baseState) as unknown as Record<string, unknown>,
+        ends_at: null,
+        created_at: sqliteTimestamp() as unknown as Date,
+        updated_at: sqliteTimestamp() as unknown as Date,
+        state_revision: 0,
+      })
+      .execute();
+  } catch (err) {
+    releaseTimeoutExtendTarget(flowId);
+    ctx.log.error({ err, flowId, guildId: guild.id, phase: baseState.phase }, "timeoutExtend: create flow failed");
+    await interaction.editReply({ content: "フローの開始に失敗しました。" });
+    return;
+  }
 
   try {
-    await beginTePoll1(ctx, flowId, guild.id, baseState);
+    const started = await beginTePoll1(ctx, flowId, guild.id, baseState);
+    if (!started) {
+      releaseTimeoutExtendTarget(flowId);
+      await interaction.editReply({ content: "投票チャンネルを取得できなかったため、フローを開始できませんでした。" });
+      return;
+    }
   } catch (err) {
-    releaseTeLock(guild.id, targetUser.id);
+    releaseTimeoutExtendTarget(flowId);
     await ctx.db.deleteFrom("polls").where("id", "=", flowId).execute().catch(() => undefined);
-    ctx.log.error({ err, flowId }, "timeoutExtend: begin failed");
+    ctx.log.error({ err, flowId, phase: baseState.phase, guildId: guild.id }, "timeoutExtend: begin failed");
     await interaction.editReply({ content: "フローの開始に失敗しました。" });
     return;
   }
@@ -749,7 +870,7 @@ export async function startTimeoutExtendFlow(
 }
 
 async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  const parsed = parseTeVote(interaction.customId);
+  const parsed = parseTimeoutExtendVoteCustomId(interaction.customId);
   if (!parsed) return false;
 
   if (interaction.user.bot) {
@@ -780,9 +901,19 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
       return true;
     }
     const prev = state.votes_poll1[interaction.user.id];
-    const votes = { ...state.votes_poll1, [interaction.user.id]: choice } as TimeoutExtendFlowState["votes_poll1"];
-    const next: TimeoutExtendFlowState = { ...state, votes_poll1: votes };
-    await saveTeFullState(ctx, flowId, next, state.poll1_message_id);
+    const next = await new PollFlowStateStore(ctx.db).mergeVoteWithRetry({
+      id: flowId,
+      kind: TIMEOUT_EXTEND_FLOW_KIND,
+      expectedPhase: "poll1_pending",
+      parse: parseTimeoutExtendFlowState,
+      canMerge: (latest) => Date.now() <= latest.poll1_deadline_ms,
+      merge: (latest) => ({ ...latest, votes_poll1: { ...latest.votes_poll1, [interaction.user.id]: choice } as TimeoutExtendFlowState["votes_poll1"] }),
+      messageId: (latest) => latest.poll1_message_id,
+    });
+    if (!next) {
+      await interaction.reply({ content: "投票状態が更新されたため、もう一度投票してください。", flags: MessageFlags.Ephemeral });
+      return true;
+    }
 
     const label = TE_POLL1_LABEL[choice as keyof typeof TE_POLL1_LABEL];
     const text =
@@ -801,7 +932,7 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
           ...componentCardsPayload([buildPoll1Embed(next, next.poll1_deadline_ms)], tePoll1Rows(flowId, false)),
         });
       } catch (err) {
-        ctx.log.warn({ err, flowId }, "timeoutExtend: poll1 edit failed");
+        ctx.log.warn({ err, flowId, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: poll1 edit failed");
       }
     }
     return true;
@@ -817,9 +948,19 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
       return true;
     }
     const prev = state.votes_poll2[interaction.user.id];
-    const votes = { ...state.votes_poll2, [interaction.user.id]: choice } as TimeoutExtendFlowState["votes_poll2"];
-    const next: TimeoutExtendFlowState = { ...state, votes_poll2: votes };
-    await saveTeFullState(ctx, flowId, next, state.poll2_message_id);
+    const next = await new PollFlowStateStore(ctx.db).mergeVoteWithRetry({
+      id: flowId,
+      kind: TIMEOUT_EXTEND_FLOW_KIND,
+      expectedPhase: "poll2_pending",
+      parse: parseTimeoutExtendFlowState,
+      canMerge: (latest) => Boolean(latest.poll2_deadline_ms && Date.now() <= latest.poll2_deadline_ms),
+      merge: (latest) => ({ ...latest, votes_poll2: { ...latest.votes_poll2, [interaction.user.id]: choice } as TimeoutExtendFlowState["votes_poll2"] }),
+      messageId: (latest) => latest.poll2_message_id,
+    });
+    if (!next) {
+      await interaction.reply({ content: "投票状態が更新されたため、もう一度投票してください。", flags: MessageFlags.Ephemeral });
+      return true;
+    }
 
     const label = TE_POLL2_LABEL[choice as keyof typeof TE_POLL2_LABEL];
     const text =
@@ -838,7 +979,7 @@ async function handleTeVote(interaction: ButtonInteraction, ctx: BotContext): Pr
           ...componentCardsPayload([buildPoll2Embed(next, next.poll2_deadline_ms!)], tePoll2Rows(flowId, false)),
         });
       } catch (err) {
-        ctx.log.warn({ err, flowId }, "timeoutExtend: poll2 edit failed");
+        ctx.log.warn({ err, flowId, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: poll2 edit failed");
       }
     }
     return true;
@@ -856,7 +997,7 @@ function buildResolvedDetailJa(state: TimeoutExtendFlowState): string {
 }
 
 async function handleTeApproval(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  const parsed = parseTeApproval(interaction.customId);
+  const parsed = parseTimeoutExtendApprovalCustomId(interaction.customId);
   if (!parsed) return false;
 
   const { flowId, action } = parsed;
@@ -895,45 +1036,43 @@ async function handleTeApproval(interaction: ButtonInteraction, ctx: BotContext)
     return true;
   }
 
-  await interaction.update({ components: teApprovalRows(flowId, true) }).catch(() => undefined);
-  clearTeAdminWait(flowId);
-
   const approverId = interaction.user.id;
   const textChannel = interaction.channel as TextChannel;
 
   const idsToDelete = [state.poll1_message_id, state.poll2_message_id, state.admin_message_id].filter((x): x is string => Boolean(x));
 
-  const nextFired: TimeoutExtendFlowState = { ...state, admin_button_fired: true };
+  const claim = await tryClaimTimeoutExtendApproval(ctx, row, state);
+  if (!claim.ok) {
+    await interaction.reply({ content: "状態の保存に失敗しました。再試行してください。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  if (!claim.claimed) {
+    await interaction.reply({ content: "すでに処理済みです。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
 
   if (action === "deny") {
+    const committed = await commitClaimedTimeoutExtendTerminal(ctx, row, state, "cancelled");
+    if (!committed) {
+      await interaction.reply({ content: "状態の保存に失敗しました。再試行してください。", flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    await interaction.update({ components: teApprovalRows(flowId, true) }).catch(() => undefined);
     try {
       await textChannel.send({ content: "タイムアウト延長フローが非承認されたため、中止します。" });
     } catch (err) {
-      ctx.log.warn({ err, flowId }, "timeoutExtend: abort message failed");
+      ctx.log.warn({ err, flowId, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: abort message failed");
     }
     await deleteTeFlowMessagesQuietly(ctx, textChannel, idsToDelete, "deny");
-    releaseTeLock(row.guild_id, state.target_id);
-    await ctx.db
-      .updateTable("polls")
-      .set({
-        status: "cancelled",
-        state: JSON.stringify({ ...nextFired, phase: "cancelled" }) as unknown as Record<string, unknown>,
-        updated_at: sqliteTimestamp() as unknown as Date,
-      })
-      .where("id", "=", flowId)
-      .execute();
-    ctx.log.info({ flowId, approverId }, "timeoutExtend: final deny");
+    ctx.log.info({ flowId, approverId, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: final deny");
     return true;
   }
 
   const resolved = state.resolved_extend;
   if (resolved !== "extend" && resolved !== "release") {
-    releaseTeLock(row.guild_id, state.target_id);
-    await ctx.db
-      .updateTable("polls")
-      .set({ status: "cancelled", updated_at: sqliteTimestamp() as unknown as Date })
-      .where("id", "=", flowId)
-      .execute();
+    const committed = await commitClaimedTimeoutExtendTerminal(ctx, row, state, "cancelled");
+    if (committed) await interaction.update({ components: teApprovalRows(flowId, true) }).catch(() => undefined);
+    else await interaction.reply({ content: "状態の保存に失敗しました。再試行してください。", flags: MessageFlags.Ephemeral });
     return true;
   }
 
@@ -953,30 +1092,25 @@ async function handleTeApproval(interaction: ButtonInteraction, ctx: BotContext)
         allowedMentions: { users: [state.target_id] },
       });
     } catch (err) {
-      ctx.log.warn({ err, flowId }, "timeoutExtend: result message failed");
+      ctx.log.warn({ err, flowId, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: result message failed");
     }
   } else {
     try {
       await textChannel.send({ content: `タイムアウト処理の実行に失敗しました: ${result.message}` });
     } catch (err) {
-      ctx.log.warn({ err, flowId }, "timeoutExtend: error message failed");
+      ctx.log.warn({ err, flowId, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: error message failed");
     }
   }
 
+  const committed = await commitClaimedTimeoutExtendTerminal(ctx, row, state, result.ok ? "completed" : "cancelled");
+  if (!committed) {
+    await interaction.reply({ content: "状態の保存に失敗しました。再試行してください。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  await interaction.update({ components: teApprovalRows(flowId, true) }).catch(() => undefined);
   await deleteTeFlowMessagesQuietly(ctx, textChannel, idsToDelete, "approve");
-  releaseTeLock(row.guild_id, state.target_id);
 
-  await ctx.db
-    .updateTable("polls")
-    .set({
-      status: "completed",
-      state: JSON.stringify({ ...nextFired, phase: "completed" }) as unknown as Record<string, unknown>,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .where("id", "=", flowId)
-    .execute();
-
-  ctx.log.info({ flowId, approverId, resolved, detailJa, ok: result.ok }, "timeoutExtend: approved");
+  ctx.log.info({ flowId, approverId, resolved, detailJa, ok: result.ok, phase: state.phase, guildId: row.guild_id }, "timeoutExtend: approved");
   return true;
 }
 
