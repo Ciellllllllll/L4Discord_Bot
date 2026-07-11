@@ -26,7 +26,6 @@ export function buildSubscriptionDealEmbed(hit: GameDealSubscriptionHit): Compon
   const embed = new ComponentCardBuilder()
     .setTitle(hit.platform === "steam" ? "Steam無料情報" : "Epic Games 無料配布")
     .setThumbnail(hit.platform === "steam" ? STEAM_LOGO_URL : EPIC_GAMES_STORE_LOGO_URL)
-    .setColor(0xf1c40f)
     .setDescription(`**${hit.title}**\n登録したゲームが割引されています!`)
     .addFields(
       { name: "ストア", value: platform, inline: true },
@@ -90,7 +89,6 @@ export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBu
   const embed = new ComponentCardBuilder()
     .setTitle("Steam 無料配布")
     .setThumbnail(STEAM_LOGO_URL)
-    .setColor(0x2ecc71)
     .setDescription(`**${event.title}**\n通常有料ゲームがSteamで無料配布または100%OFFになっています。`)
     .addFields(
       { name: "通常価格", value: centsPriceText(event.normalPriceCents), inline: true },

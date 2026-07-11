@@ -82,7 +82,6 @@ export async function handleAutoModStringSelect(
         [
           new ComponentCardBuilder()
           .setTitle("Raidモード変更の確認")
-          .setColor(nextEnabled ? 0xe74c3c : 0x3498db)
           .setDescription(
             `Raidモードを **${nextEnabled ? "有効化" : "無効化"}** しますか？\n承認ボタンを押すまで設定は反映されません。`,
           )
@@ -127,7 +126,6 @@ export async function handleAutoModRaidButton(interaction: ButtonInteraction, ct
       ...componentCardsPayload([
         new ComponentCardBuilder()
           .setTitle("Raidモード変更")
-          .setColor(0x7f8c8d)
           .setDescription("操作をキャンセルしました。"),
       ]),
     });
@@ -150,7 +148,6 @@ export async function handleAutoModRaidButton(interaction: ButtonInteraction, ct
       ...componentCardsPayload([
         new ComponentCardBuilder()
           .setTitle("Raidモード変更")
-          .setColor(nextEnabled ? 0x2ecc71 : 0x95a5a6)
           .setDescription(`Raidモードを **${nextEnabled ? "有効化" : "無効化"}** しました。`),
       ]),
     });

@@ -508,7 +508,6 @@ function buildFiltersSummary(session: SearchSession): string {
 function buildListEmbed(session: SearchSession, rows: LogRow[], total: number, totalPages: number): ComponentCardBuilder {
   const embed = new ComponentCardBuilder()
     .setTitle("メッセージログ検索結果")
-    .setColor(0x3498db)
     .setDescription(buildFiltersSummary(session))
     .setFooter({ text: `ページ ${session.page + 1}/${totalPages} | 全 ${total} 件` });
 
@@ -622,7 +621,6 @@ function buildDetailMetaEmbed(row: LogRow): ComponentCardBuilder {
 
   const embed = new ComponentCardBuilder()
     .setTitle(`メッセージログ詳細 #${row.id}`)
-    .setColor(0x2ecc71)
     .addFields({
       name: "投稿メタ情報",
       value: [
@@ -697,7 +695,7 @@ function splitLongText(text: string, chunk: number): string[] {
 function buildContentEmbeds(content: string | null): ComponentCardBuilder[] {
   const source = String(content || "");
   if (!source) {
-    return [new ComponentCardBuilder().setTitle("本文").setColor(0x1abc9c).setDescription("(本文なし)")];
+    return [new ComponentCardBuilder().setTitle("本文").setDescription("(本文なし)")];
   }
   const chunks = splitLongText(source, CONTENT_CHUNK);
   const out: ComponentCardBuilder[] = [];
@@ -705,7 +703,6 @@ function buildContentEmbeds(content: string | null): ComponentCardBuilder[] {
     out.push(
       new ComponentCardBuilder()
         .setTitle(chunks.length > 1 ? `本文 (${i + 1}/${Math.min(chunks.length, MAX_CONTENT_EMBEDS)})` : "本文")
-        .setColor(0x1abc9c)
         .setDescription(chunks[i]!.slice(0, 4096)),
     );
   }
@@ -758,7 +755,6 @@ function buildOversizeEphemeralEmbed(
     list;
   return new ComponentCardBuilder()
     .setTitle("大きな添付ファイル")
-    .setColor(0xf39c12)
     .setDescription(desc.slice(0, 4096));
 }
 
@@ -781,7 +777,7 @@ function buildDetailPayload(
   if (!row) {
     return {
       cards: [
-        new ComponentCardBuilder().setTitle("詳細").setColor(0xe74c3c).setDescription("ログが見つかりません。"),
+        new ComponentCardBuilder().setTitle("詳細").setDescription("ログが見つかりません。"),
       ],
       components: [
         new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -816,7 +812,6 @@ function buildDetailPayload(
   }
   const attachEmbed = new ComponentCardBuilder()
     .setTitle("添付一覧")
-    .setColor(0x9b59b6)
     .setDescription(attachDesc.slice(0, 4096))
     .setFooter({
       text:
@@ -831,7 +826,6 @@ function buildDetailPayload(
     imageCards.push(
       new ComponentCardBuilder()
         .setTitle(`画像 ${clampedIdx + 1}/${slots.imageSlots.length}: ${cur.displayName}`)
-        .setColor(0x9b59b6)
         .setImage(`attachment://${cur.attachName}`),
     );
   }

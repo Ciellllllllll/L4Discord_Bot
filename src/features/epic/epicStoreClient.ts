@@ -7,7 +7,7 @@ const USER_AGENT = "L4DiscordBot/0.1 EpicFreeWatcher (+https://store.epicgames.c
 const REQUEST_TIMEOUT_MS = 12_000;
 const DEFAULT_FREE_GAMES_PAGE = "https://store.epicgames.com/ja/free-games";
 
-type FetchOptions = {
+export type EpicStoreFetchOptions = {
   signal?: AbortSignal;
 };
 
@@ -51,7 +51,7 @@ function httpErrorLogFields(err: unknown): Record<string, unknown> {
   return { err };
 }
 
-async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
+async function fetchJson<T>(url: string, opts: EpicStoreFetchOptions = {}): Promise<T> {
   const res = await fetch(url, {
     signal: opts.signal,
     headers: {
@@ -66,11 +66,11 @@ async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, externalSignal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fn(controller.signal);
+    return await fn(externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal);
   } finally {
     clearTimeout(timer);
   }
@@ -177,9 +177,9 @@ function extractElements(json: unknown): unknown[] {
 export class EpicStoreClient {
   constructor(private readonly log: pino.Logger) {}
 
-  async fetchFreePromotions(): Promise<EpicStoreOffer[]> {
+  async fetchFreePromotions(options: EpicStoreFetchOptions = {}): Promise<EpicStoreOffer[]> {
     try {
-      const json = await withTimeout((signal) => fetchJson<unknown>(FREE_GAMES_URL, { signal }));
+      const json = await withTimeout((signal) => fetchJson<unknown>(FREE_GAMES_URL, { signal }), options.signal);
       return extractElements(json).map(normalizeOffer).filter((v): v is EpicStoreOffer => v !== null);
     } catch (err) {
       this.log.warn(httpErrorLogFields(err), "epic free promotions fetch failed");

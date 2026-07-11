@@ -390,7 +390,6 @@ export class DetecterService {
     const embed = new ComponentCardBuilder()
       .setTitle("処罰理由の入力が必要です")
       .setDescription("下のボタンからモーダルを開き、処罰理由を入力してください。")
-      .setColor(0xe67e22)
       .setTimestamp(new Date())
       .addFields(
         { name: "実行者", value: `${event.actorDisplay} (\`${event.actorUserId}\`)`, inline: false },
@@ -447,7 +446,6 @@ export class DetecterService {
     const embed = new ComponentCardBuilder()
       .setTitle("処罰の記録（監査ログに理由あり）")
       .setDescription("監査ログに理由が入力されているため、理由入力ボタンは表示していません。対象ユーザーへ異議申し立て案内を送信しました。")
-      .setColor(0x27ae60)
       .setTimestamp(new Date())
       .addFields(
         { name: "実行者", value: `${event.actorDisplay} (\`${event.actorUserId}\`)`, inline: false },
@@ -561,7 +559,6 @@ export class DetecterService {
     const embed = new ComponentCardBuilder()
       .setTitle("処罰通知")
       .setDescription("下のボタンから異議申し立てを送信できます。")
-      .setColor(0xe74c3c)
       .setTimestamp(new Date())
       .addFields(
         { name: "サーバー", value: `${event.guildName} (${event.guildId})`, inline: false },

@@ -7,7 +7,7 @@ import { getGuildSettingsData } from "../core/guildSettings.js";
 import { getDetecterService } from "../features/detecter/detecterService.js";
 import { reconcileExecutionFlows, shutdownExecutionFlowRuntime } from "../features/execution/executionFlow.js";
 import { reconcileTimeoutExtendFlows, shutdownTimeoutExtendFlowRuntime } from "../features/execution/timeoutExtendFlow.js";
-import { startGameDealWatcher } from "../features/gameDeals/gameDealWatcher.js";
+import { startGameDealWatcher, type GameDealWatcherController } from "../features/gameDeals/gameDealWatcher.js";
 import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "../features/japaneseAnalysis/japaneseWorkerProcess.js";
 import { startLolWatcher } from "../features/lolWatcher/lolWatcher.watcher.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "../features/modmail/modmailStaffFlow.js";
@@ -38,7 +38,7 @@ export type RuntimeHandlerHandle = { shutdown(): Promise<void> };
 type RuntimeResources = {
   presenceTimer?: NodeJS.Timeout;
   reminderTimer?: NodeJS.Timeout;
-  gameDealTimer?: NodeJS.Timeout;
+  gameDealWatcher?: GameDealWatcherController;
   clearInterval?: (timer: NodeJS.Timeout) => void;
   clearTimeout?: (timer: NodeJS.Timeout) => void;
   deferredTimers?: Iterable<NodeJS.Timeout>;
@@ -64,7 +64,7 @@ async function stopRuntimeResources(
   for (const timer of options.deferredTimers ?? []) await stop(() => clearDeferred(timer));
   if (options.presenceTimer) await stop(() => clear(options.presenceTimer!));
   if (options.reminderTimer) await stop(() => clear(options.reminderTimer!));
-  if (options.gameDealTimer) await stop(() => clear(options.gameDealTimer!));
+  if (options.gameDealWatcher) await stop(() => options.gameDealWatcher!.stop());
   if (options.lolWatcher) await stop(() => options.lolWatcher!.stop());
   if (options.japaneseWorker) await stop(() => options.japaneseWorker!.stop());
   if (options.shutdownModerationFlows) await stop(() => options.shutdownModerationFlows!());
@@ -96,7 +96,7 @@ export function createRuntimeResourceLifecycle(options: {
   setClientReadyResources(resources: {
     presenceTimer?: NodeJS.Timeout;
     reminderTimer?: NodeJS.Timeout;
-    gameDealTimer?: NodeJS.Timeout;
+    gameDealWatcher?: GameDealWatcherController;
     lolWatcher?: { stop(): void | Promise<void> } | null;
   }): Promise<void>;
   setJapaneseWorker(worker: { stop(): Promise<void> } | null): Promise<void>;
@@ -106,7 +106,7 @@ export function createRuntimeResourceLifecycle(options: {
 } {
   let presenceTimer: NodeJS.Timeout | undefined;
   let reminderTimer: NodeJS.Timeout | undefined;
-  let gameDealTimer: NodeJS.Timeout | undefined;
+  let gameDealWatcher: GameDealWatcherController | undefined;
   let lolWatcher: { stop(): void | Promise<void> } | null = null;
   let japaneseWorker: { stop(): Promise<void> } | null = null;
   let closed = false;
@@ -120,7 +120,7 @@ export function createRuntimeResourceLifecycle(options: {
       }
       presenceTimer = resources.presenceTimer;
       reminderTimer = resources.reminderTimer;
-      gameDealTimer = resources.gameDealTimer;
+      gameDealWatcher = resources.gameDealWatcher;
       lolWatcher = resources.lolWatcher ?? null;
     },
     async setJapaneseWorker(worker) {
@@ -131,10 +131,10 @@ export function createRuntimeResourceLifecycle(options: {
       japaneseWorker = worker;
     },
     async stopClientReadyResources() {
-      const resources = { presenceTimer, reminderTimer, gameDealTimer, lolWatcher, clearInterval: options.clearInterval };
+      const resources = { presenceTimer, reminderTimer, gameDealWatcher, lolWatcher, clearInterval: options.clearInterval };
       presenceTimer = undefined;
       reminderTimer = undefined;
-      gameDealTimer = undefined;
+      gameDealWatcher = undefined;
       lolWatcher = null;
       await stopRuntimeResources(resources);
     },
@@ -153,7 +153,7 @@ export function createRuntimeResourceLifecycle(options: {
       closed = true;
       try {
         await createRuntimeShutdown({
-          presenceTimer, reminderTimer, gameDealTimer, lolWatcher, japaneseWorker,
+          presenceTimer, reminderTimer, gameDealWatcher, lolWatcher, japaneseWorker,
           vcTemp: options.vcTemp, client: options.client, clearInterval: options.clearInterval,
           clearTimeout: options.clearTimeout, deferredTimers, shutdownModerationFlows: options.shutdownModerationFlows,
         })();
@@ -168,19 +168,20 @@ export async function startClientReadyBackgroundServices(options: {
   lifecycle: ReturnType<typeof createRuntimeResourceLifecycle>;
   startPresence(): NodeJS.Timeout;
   startReminder(): NodeJS.Timeout;
-  startGameDeal(): NodeJS.Timeout;
+  startGameDeal(): GameDealWatcherController;
   startLolWatcher(): Promise<{ stop(): void | Promise<void> } | null>;
   logError(error: unknown, message: string): void;
 }): Promise<boolean> {
   if (options.lifecycle.isClosed()) return false;
   const presenceTimer = options.startPresence();
   const reminderTimer = options.startReminder();
-  const gameDealTimer = options.startGameDeal();
-  await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, gameDealTimer });
+  const gameDealWatcher = options.startGameDeal();
+  await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, gameDealWatcher });
   if (options.lifecycle.isClosed()) return false;
   try {
     const lolWatcher = await options.startLolWatcher();
-    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, gameDealTimer, lolWatcher });
+    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, gameDealWatcher, lolWatcher });
+    if (options.lifecycle.isClosed()) return false;
     return true;
   } catch (error) {
     options.logError(error, "lol watcher startup failed; startup timers stopped");

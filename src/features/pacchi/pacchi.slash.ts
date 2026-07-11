@@ -10,7 +10,6 @@ export async function handlePacchiHelp(
 ): Promise<void> {
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ ヘルプ")
-    .setColor(0x5865f2)
     .addFields(
       {
         name: "通常の呼びかけ",

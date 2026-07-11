@@ -237,7 +237,6 @@ export async function approveModmailReply(
             .setTitle("お問い合わせ返信")
             .setDescription(`${reply.fixed_reply_body || "(本文なし)"}${failedNote}`)
             .setFooter({ text: "返信するボタン、または !send 本文 で返信できます。" })
-            .setColor(0x3498db)
             .setTimestamp(new Date()),
           ],
           [buildModmailUserReplyRow(appeal.id, appeal.user_id)],
@@ -300,7 +299,6 @@ export async function approveModmailReply(
           .setTitle("お問い合わせ返信")
           .setDescription(`${reply.fixed_reply_body || "(本文なし)"}${failedNote}`)
           .setFooter({ text: "返信するボタン、または !send 本文 で返信できます。" })
-          .setColor(0x3498db)
           .setTimestamp(new Date()),
         ],
         [buildModmailUserReplyRow(ticket.id, ticket.user_id)],
@@ -385,7 +383,6 @@ export async function closeModmailTicketFull(
                   "\n",
                 ),
               )
-              .setColor(0x95a5a6)
               .setTimestamp(new Date()),
           ]),
         })

@@ -14,7 +14,7 @@ const appListLimiter = new Bottleneck({
   minTime: APP_LIST_PAGE_DELAY_MS,
 });
 
-type FetchOptions = {
+export type SteamAppListFetchOptions = {
   signal?: AbortSignal;
 };
 
@@ -70,7 +70,7 @@ function normalizeApp(raw: unknown): SteamAppCatalogEntry | null {
   };
 }
 
-async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
+async function fetchJson<T>(url: string, opts: SteamAppListFetchOptions = {}): Promise<T> {
   const res = await fetch(url, {
     signal: opts.signal,
     headers: {
@@ -108,11 +108,11 @@ function retryDelayMs(err: SteamAppListHttpError, attempt: number): number {
   return APP_LIST_BASE_RETRY_DELAY_MS * attempt;
 }
 
-async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, externalSignal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fn(controller.signal);
+    return await fn(externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal);
   } finally {
     clearTimeout(timer);
   }
@@ -124,7 +124,7 @@ export class SteamAppListClient {
     private readonly apiKey?: string,
   ) {}
 
-  async fetchAllApps(maxResults = DEFAULT_MAX_RESULTS): Promise<SteamAppCatalogEntry[]> {
+  async fetchAllApps(maxResults = DEFAULT_MAX_RESULTS, options: SteamAppListFetchOptions = {}): Promise<SteamAppCatalogEntry[]> {
     const byAppid = new Map<string, SteamAppCatalogEntry>();
     let lastAppid = 0;
     for (;;) {
@@ -132,7 +132,7 @@ export class SteamAppListClient {
       url.searchParams.set("max_results", String(maxResults));
       if (lastAppid > 0) url.searchParams.set("last_appid", String(lastAppid));
       if (this.apiKey?.trim()) url.searchParams.set("key", this.apiKey.trim());
-      const json = await this.fetchAppListPage(url.toString());
+      const json = await this.fetchAppListPage(url.toString(), options);
       const rawApps = Array.isArray(json.response?.apps) ? json.response.apps : Array.isArray(json.apps) ? json.apps : [];
       const apps = rawApps.map(normalizeApp).filter((value): value is SteamAppCatalogEntry => value !== null);
       for (const app of apps) byAppid.set(app.appid, app);
@@ -146,10 +146,10 @@ export class SteamAppListClient {
     return [...byAppid.values()].sort((a, b) => Number(a.appid) - Number(b.appid));
   }
 
-  private async fetchAppListPage(url: string): Promise<AppListRaw> {
+  private async fetchAppListPage(url: string, options: SteamAppListFetchOptions): Promise<AppListRaw> {
     for (let attempt = 1; attempt <= APP_LIST_MAX_RETRIES; attempt += 1) {
       try {
-        return await appListLimiter.schedule(() => withTimeout((signal) => fetchJson<AppListRaw>(url, { signal })));
+        return await appListLimiter.schedule(() => withTimeout((signal) => fetchJson<AppListRaw>(url, { signal }), options.signal));
       } catch (err) {
         if (!(err instanceof SteamAppListHttpError) || !isRetriableStatus(err.status) || attempt >= APP_LIST_MAX_RETRIES) {
           throw err;

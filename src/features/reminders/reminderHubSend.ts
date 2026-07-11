@@ -19,7 +19,7 @@ export function buildReminderHubPublicEmbed(
     .filter((line) => line.length > 0)
     .join("\n")
     .slice(0, 4096);
-  return new ComponentCardBuilder().setColor(meta.color).setDescription(desc);
+  return new ComponentCardBuilder().setDescription(desc);
 }
 
 export async function sendReminderHubMessage(ctx: BotContext, row: RemindersRow): Promise<void> {

@@ -154,7 +154,6 @@ export async function runAiSlashCommand(ctx: BotContext, params: {
       const embed = new ComponentCardBuilder()
         .setTitle("VC 滞在ランキング")
         .setDescription(lines.join("\n").slice(0, 4000))
-        .setColor(0x3498db);
       return {
         ok: true,
         userMessage: "ランキングを表示しました。",

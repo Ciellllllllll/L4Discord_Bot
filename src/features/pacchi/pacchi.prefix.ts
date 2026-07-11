@@ -201,7 +201,6 @@ async function handleStatus(message: Message, ctx: BotContext): Promise<boolean>
   const stats = await repo.stats(message.guildId!);
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 状態")
-    .setColor(0x5865f2)
     .addFields(
       { name: "機能全体", value: settings.enabled ? "ON" : "OFF", inline: true },
       { name: "学習", value: channel.learnEnabled ? "ON" : "OFF", inline: true },
@@ -228,7 +227,6 @@ async function handleMemory(message: Message, ctx: BotContext, args: string[]): 
   const words = await repo.topWords(message.guildId!, limit);
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 記憶")
-    .setColor(0x5865f2)
     .setDescription(`単語: ${stats.wordCount}\n短文: ${stats.phraseCount}\n絵文字: ${stats.emojiCount}`)
     .addFields({ name: "よく使われる単語", value: words.map((w, i) => `${i + 1}. ${w.word} (${w.count})`).join("\n") || "まだありません" });
   await message.reply({ ...componentCardsPayload([embed]), allowedMentions: SAFE_REPLY });
@@ -240,7 +238,6 @@ async function handleWords(message: Message, ctx: BotContext, args: string[]): P
   const words = await createPacchiRepositoryForContext(ctx).topWords(message.guildId!, parseLimit(args[0], 10, 50));
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 単語ランキング")
-    .setColor(0x5865f2)
     .setDescription(words.map((w, i) => `${i + 1}. ${w.word} (${w.count})`).join("\n") || "まだありません");
   await message.reply({ ...componentCardsPayload([embed]), allowedMentions: SAFE_REPLY });
   return true;

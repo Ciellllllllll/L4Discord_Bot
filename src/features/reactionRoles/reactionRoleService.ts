@@ -248,7 +248,6 @@ export function buildEntryEmbed(entry: ReactionRoleEntry): ComponentCardBuilder 
   return new ComponentCardBuilder()
     .setTitle(entry.title || "Reaction Role")
     .setDescription(entry.description || "ボタンを押してロールを付与/解除します。")
-    .setColor(0x8e44ad);
 }
 
 export function buildReactionRoleAdminPanelPayload(uiChannelMention: string) {
