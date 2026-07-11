@@ -12,6 +12,8 @@ export const timeoutExtendFlowStateSchema = z.object({
   /** 投票・承認メッセージを送るチャンネル */
   channel_id: z.string(),
   poll1_message_id: z.string().nullable(),
+  /** Discord投稿前にCASで取得する第1投票メッセージの送信予約 */
+  poll1_publish_reserved: z.boolean().optional(),
   poll2_message_id: z.string().nullable(),
   admin_message_id: z.string().nullable(),
   votes_poll1: z.record(z.string(), poll1Vote),

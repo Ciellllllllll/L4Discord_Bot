@@ -174,6 +174,17 @@ async function assertMigrationHistory(adminPool: Awaited<ReturnType<typeof creat
   }
 }
 
+async function assertPollsStateRevisionSchema(adminPool: Awaited<ReturnType<typeof createPgPool>>, schema: string): Promise<void> {
+  const result = await adminPool.query<{ data_type: string; is_nullable: string; column_default: string | null; version: number }>(
+    `SELECT columns.data_type, columns.is_nullable, columns.column_default, migrations.version
+     FROM information_schema.columns AS columns
+     JOIN ${quotePgIdent(schema)}.postgres_schema_migrations AS migrations ON migrations.version = 7
+     WHERE columns.table_schema = $1 AND columns.table_name = 'polls' AND columns.column_name = 'state_revision'`,
+    [schema],
+  );
+  assert.deepEqual(result.rows, [{ data_type: "bigint", is_nullable: "NO", column_default: "0", version: 7 }]);
+}
+
 async function assertKyselySchema(label: string, db: Kysely<unknown>, expectedSchema: string): Promise<void> {
   try {
     const result = await sql<{ schema: string | null }>`SELECT current_schema() AS schema`.execute(db);
@@ -329,6 +340,7 @@ async function run(): Promise<void> {
     const verifyChild = runPostgresDataVerification(childEnv);
     assert.equal(verifyChild.status, 0, `${verifyChild.stdout}\n${verifyChild.stderr}`);
     await assertMigrationHistory(adminPool, schemas);
+    await assertPollsStateRevisionSchema(adminPool, schemas.main);
     await assertKyselySchema(
       "main",
       createPostgresMainKysely({ connectionString, schema: schemas.main }) as Kysely<unknown>,
