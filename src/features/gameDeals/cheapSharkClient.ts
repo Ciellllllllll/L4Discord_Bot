@@ -121,26 +121,27 @@ function cheapSharkErrorLogFields(err: unknown): Record<string, unknown> {
 export class CheapSharkClient {
   constructor(private readonly log: pino.Logger) {}
 
-  async fetchSteamDealsByAppId(steamAppId: string): Promise<CheapSharkDeal[]> {
+  async fetchSteamDealsByAppId(steamAppId: string, options: FetchOptions = {}): Promise<CheapSharkDeal[]> {
     if (!/^\d+$/.test(steamAppId)) return [];
     return await this.fetchDeals({
       storeID: "1",
       steamAppID: steamAppId,
-    });
+    }, options);
   }
 
-  private async fetchDeals(params: Record<string, string>): Promise<CheapSharkDeal[]> {
+  private async fetchDeals(params: Record<string, string>, options: FetchOptions): Promise<CheapSharkDeal[]> {
     const url = new URL(CHEAPSHARK_DEALS_URL);
     for (const [key, value] of Object.entries(params)) {
       url.searchParams.set(key, value);
     }
     try {
-      const json = await withTimeout((signal) => fetchJson<unknown>(url.toString(), { signal }));
+      const json = await withTimeout((signal) => fetchJson<unknown>(url.toString(), { signal: options.signal ? AbortSignal.any([signal, options.signal]) : signal }));
       if (!Array.isArray(json)) return [];
       return json
         .map((value) => normalizeDeal(value as CheapSharkDealRaw))
         .filter((value): value is CheapSharkDeal => value !== null);
     } catch (err) {
+      if (options.signal?.aborted) throw err;
       this.log.warn(cheapSharkErrorLogFields(err), "cheapshark deals fetch failed");
       throw err;
     }

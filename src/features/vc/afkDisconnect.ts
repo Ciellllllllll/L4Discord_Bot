@@ -71,12 +71,11 @@ function buildConfirmEmbed(invokerId: string, targetId: string, channelId: strin
       { name: "実行者", value: `<@${invokerId}>`, inline: true },
       { name: "対象ユーザー", value: `<@${targetId}>`, inline: true },
     )
-    .setColor(0xf1c40f)
     .setTimestamp(new Date());
 }
 
-function buildResultEmbed(title: string, description: string, color: number): ComponentCardBuilder {
-  return new ComponentCardBuilder().setTitle(title).setDescription(description).setColor(color).setTimestamp(new Date());
+function buildResultEmbed(title: string, description: string, _color?: number): ComponentCardBuilder {
+  return new ComponentCardBuilder().setTitle(title).setDescription(description).setTimestamp(new Date());
 }
 
 function isSameVoiceChannel(invoker: GuildMember, target: GuildMember): boolean {
@@ -128,7 +127,6 @@ async function sendAfkModLog(
       { name: "実行時刻", value: `<t:${unix}:F>`, inline: false },
       { name: "対象VC", value: `<#${channelId}>`, inline: false },
     )
-    .setColor(0xe67e22)
     .setTimestamp(disconnectedAt);
 
   await channel

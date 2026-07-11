@@ -23,7 +23,6 @@ function applyOptionalMedia(embed: ComponentCardBuilder, detailUrl: string | nul
 export function buildLolWatcherStartEmbed(account: LolWatcherApiAccount, game: LolWatcherLiveGame): ComponentCardBuilder {
   const embed = new ComponentCardBuilder()
     .setTitle(`🎮 ${account.displayName} の試合が開始`)
-    .setColor(0x3498db)
     .addFields(
       { name: "ゲームモード", value: game.queueName, inline: true },
       { name: "チャンピオン", value: game.championName, inline: true },
@@ -41,7 +40,6 @@ export function buildLolWatcherCompletedEmbed(
   const titleIcon = game.aiScore !== null && game.aiScore >= 80 ? "👑" : isWin ? "🏆" : "🔥";
   const embed = new ComponentCardBuilder()
     .setTitle(`${titleIcon} ${account.displayName} の試合が終了`)
-    .setColor(isWin ? 0x2ecc71 : 0xe74c3c)
     .addFields(
       { name: "ゲームモード", value: game.queueName, inline: true },
       { name: "チャンピオン", value: game.championName, inline: true },

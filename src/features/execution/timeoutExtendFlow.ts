@@ -267,7 +267,6 @@ function buildPoll1Embed(state: TimeoutExtendFlowState, poll1DeadlineMs: number,
     .setDescription(
       [`対象: <@${state.target_id}>`, "", ...lines, "", discordVoteDeadlineEmbedLine(poll1DeadlineMs, pollEnded)].join("\n"),
     )
-    .setColor(0x3498db)
     .setTimestamp(new Date());
 }
 
@@ -279,7 +278,6 @@ function buildPoll2Embed(state: TimeoutExtendFlowState, poll2DeadlineMs: number,
     .setDescription(
       [`対象: <@${state.target_id}>`, "", ...lines, "", discordVoteDeadlineEmbedLine(poll2DeadlineMs, pollEnded)].join("\n"),
     )
-    .setColor(0x9b59b6)
     .setTimestamp(new Date());
 }
 

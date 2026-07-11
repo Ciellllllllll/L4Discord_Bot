@@ -185,7 +185,6 @@ async function handleModmailIntakeCancelButton(interaction: ButtonInteraction, c
         ? "受付待機をキャンセルしました。再度開始する場合は、サーバー内の「Modmailを始める」からやり直してください。"
         : "この受付待機は既にキャンセル済み、またはチケット作成済みです。",
     )
-    .setColor(cancelled ? 0x95a5a6 : 0xe67e22)
     .setTimestamp(new Date());
 
   try {

@@ -7,7 +7,7 @@ test("runtime shutdown stops timers, watcher, worker, VC sweep, and Discord clie
   const shutdown = createRuntimeShutdown({
     presenceTimer: { marker: "presence" } as unknown as NodeJS.Timeout,
     reminderTimer: { marker: "reminder" } as unknown as NodeJS.Timeout,
-    gameDealTimer: { marker: "deals" } as unknown as NodeJS.Timeout,
+    gameDealWatcher: { stop: async () => { calls.push("deals"); } },
     clearInterval: (timer) => { calls.push((timer as unknown as { marker: string }).marker); },
     lolWatcher: { stop: async () => { calls.push("lol"); } },
     japaneseWorker: { stop: async () => { calls.push("worker"); } },
@@ -29,7 +29,7 @@ test("runtime shutdown stops resources registered after clientReady", async () =
   await lifecycle.setClientReadyResources({
     presenceTimer: { marker: "presence" } as unknown as NodeJS.Timeout,
     reminderTimer: { marker: "reminder" } as unknown as NodeJS.Timeout,
-    gameDealTimer: { marker: "deals" } as unknown as NodeJS.Timeout,
+    gameDealWatcher: { stop: async () => { calls.push("deals"); } },
     lolWatcher: { stop: async () => { calls.push("lol"); } },
   });
 
@@ -112,7 +112,7 @@ test("closed lifecycle prevents clientReady background services from starting", 
     lifecycle,
     startPresence: () => { calls.push("presence"); return {} as NodeJS.Timeout; },
     startReminder: () => { calls.push("reminder"); return {} as NodeJS.Timeout; },
-    startGameDeal: () => { calls.push("deals"); return {} as NodeJS.Timeout; },
+    startGameDeal: () => { calls.push("deals"); return { stop: async () => undefined }; },
     startLolWatcher: async () => { calls.push("lol"); return null; },
     logError: () => undefined,
   });
@@ -134,7 +134,7 @@ test("Lol watcher startup failure stops already registered clientReady timers", 
     lifecycle,
     startPresence: () => ({ marker: "presence" } as unknown as NodeJS.Timeout),
     startReminder: () => ({ marker: "reminder" } as unknown as NodeJS.Timeout),
-    startGameDeal: () => ({ marker: "deals" } as unknown as NodeJS.Timeout),
+    startGameDeal: () => ({ stop: async () => { calls.push("deals"); } }),
     startLolWatcher: async () => { throw new Error("Lol startup failed"); },
     logError: (error) => { errors.push(error); },
   });

@@ -78,7 +78,6 @@ export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMess
   const embed = new ComponentCardBuilder()
     .setTitle(`${meta.createLabel}: 投稿先チャンネルを選択`)
     .setDescription("投稿先チャンネルを選択してください。選択後に入力画面を開きます。")
-    .setColor(meta.color);
 
   const channelRow = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
     new ChannelSelectMenuBuilder()
@@ -141,7 +140,6 @@ export function buildManageListPayload(
   const embed = new ComponentCardBuilder()
     .setTitle(title)
     .setDescription(descriptionLines.join("\n"))
-    .setColor(EVENT_META[normalized].color);
 
   const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [buildManageTabsRow(normalized)];
 
@@ -173,7 +171,6 @@ export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = "
 
   const embed = new ComponentCardBuilder()
     .setTitle(`${EVENT_META[kind].label} #${row.id}`)
-    .setColor(EVENT_META[kind].color)
     .addFields(
       { name: "タイトル", value: cut(row.title || "(無題)", 1024) },
       { name: "本文", value: cut(row.body || "(本文なし)", 1024) },

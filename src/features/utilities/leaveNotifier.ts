@@ -44,7 +44,6 @@ function copyMessageEmbed(raw: APIEmbed): ComponentCardBuilder | null {
     used = true;
   }
 
-  if (typeof raw.color === "number") embed.setColor(raw.color);
   if (raw.timestamp) embed.setTimestamp(new Date(raw.timestamp));
   if (raw.image?.url) {
     embed.setImage(raw.image.url);
@@ -85,7 +84,6 @@ function buildMessageLinkHeaderEmbed(targetMessage: Message, channelName: string
   const content = truncateText(targetMessage.content, 4096);
   const embed = new ComponentCardBuilder()
     .setTimestamp(targetMessage.createdAt)
-    .setColor(0x34_98_db)
     .setAuthor({
       name:
         targetMessage.member?.displayName ??
@@ -150,7 +148,6 @@ export async function sendMemberLeaveEmbed(
     .setDescription(
       `${member} (${member.user?.username ?? member.displayName}) がサーバーを抜けました。`,
     )
-    .setColor(0xff_00_00)
     .setThumbnail(member.displayAvatarURL());
 
   await channel.send({ ...componentCardsPayload([embed]) }).catch((err: unknown) => {

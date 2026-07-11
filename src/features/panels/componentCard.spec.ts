@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, type APISectionComponent } from "discord.js";
 import { ComponentCardBuilder, componentCardsPayload } from "./componentCard.js";
 
@@ -11,6 +13,14 @@ function collectText(container: ReturnType<ComponentCardBuilder["toContainer"]>)
 }
 
 function run(): void {
+  assert.equal("setColor" in ComponentCardBuilder.prototype, false);
+  const productionFiles = execFileSync("git", ["ls-files", "--", "src"], { encoding: "utf8" })
+    .split(/\r?\n/)
+    .filter((file) => file.endsWith(".ts") && !file.endsWith(".spec.ts"));
+  assert.deepEqual(
+    productionFiles.filter((file) => /\.setColor\s*\(/.test(readFileSync(file, "utf8"))),
+    [],
+  );
   const card = new ComponentCardBuilder()
     .setTitle("画像つきカード")
     .setDescription("本文")

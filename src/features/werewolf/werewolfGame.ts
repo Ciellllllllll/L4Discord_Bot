@@ -650,15 +650,14 @@ function werewolfEmbed(title: string, description: string): ComponentCardBuilder
   return new ComponentCardBuilder()
     .setTitle(title)
     .setDescription(description.slice(0, 4096) || "\u200b")
-    .setColor(0x8e44ad);
 }
 
 function statusEmbed(description: string): ComponentCardBuilder {
-  return werewolfEmbed("人狼", description).setColor(0x3498db);
+  return werewolfEmbed("人狼", description);
 }
 
 function errorEmbed(description: string): ComponentCardBuilder {
-  return werewolfEmbed("人狼エラー", description).setColor(0xe74c3c);
+  return werewolfEmbed("人狼エラー", description);
 }
 
 function lobbyEmbed(state: WerewolfState, disabled: boolean): ComponentCardBuilder {

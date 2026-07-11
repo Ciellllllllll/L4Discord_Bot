@@ -20,7 +20,6 @@ export function buildNologToggleEmbed(opts: {
     : "このチャンネルはログ記録の対象として再度有効になりました。";
   return new ComponentCardBuilder()
     .setTitle("ログ対象切り替え")
-    .setColor(opts.nowExcluded ? 0xe74c3c : 0x2ecc71)
     .setDescription(
       `${summaryLine}\n\n` + `対象チャンネル：${channelMention}\n` + `実行者：${executorMention}`,
     );

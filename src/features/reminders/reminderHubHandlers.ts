@@ -37,12 +37,8 @@ import {
   type ReminderEvType,
 } from "./reminderHubTypes.js";
 
-function makeInfoEmbed(title: string, description: string, color = 0x5865f2): ComponentCardBuilder {
-  return new ComponentCardBuilder().setTitle(title).setDescription(description).setColor(color);
-}
-
-function eventColorFn(kind: ReminderEvType): number {
-  return EVENT_META[normalizeEventType(kind)].color;
+function makeInfoEmbed(title: string, description: string, _color?: number): ComponentCardBuilder {
+  return new ComponentCardBuilder().setTitle(title).setDescription(description);
 }
 
 // DiscordBotv2 と同一のボタン customId か（誤ルーティング防止）
@@ -393,7 +389,6 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
 
     const embed = new ComponentCardBuilder()
       .setTitle(`${EVENT_META[kind].label}を作成しました`)
-      .setColor(eventColorFn(kind))
       .setDescription(`ID: **${newId}**`)
       .addFields(
         { name: "投稿先", value: `<#${channelId}>`, inline: true },

@@ -9,6 +9,87 @@ import { processSteamVerifyQueue, scanSteamAppListChanges, scanSteamNowFullDisco
 import type { GameDealFreeItem, GameDealSubscriptionHit } from "./gameDealTypes.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 60 * 1000;
+const DEFAULT_STOP_GRACE_MS = 10_000;
+
+export type GameDealWatcherController = {
+  stop(): Promise<void>;
+};
+
+type GameDealWatcherControllerOptions = {
+  intervalMs: number;
+  startDelayMs: number;
+  stopGraceMs: number;
+  tick(signal: AbortSignal): Promise<void>;
+  onTickError?(error: unknown): void;
+  setTimeout?(callback: () => void, delay: number): NodeJS.Timeout;
+  clearTimeout?(timer: NodeJS.Timeout): void;
+  setInterval?(callback: () => void, delay: number): NodeJS.Timeout;
+  clearInterval?(timer: NodeJS.Timeout): void;
+};
+
+export function createGameDealWatcherController(options: GameDealWatcherControllerOptions): GameDealWatcherController {
+  const setDelayed = options.setTimeout ?? setTimeout;
+  const clearDelayed = options.clearTimeout ?? clearTimeout;
+  const setRepeated = options.setInterval ?? setInterval;
+  const clearRepeated = options.clearInterval ?? clearInterval;
+  let stopped = false;
+  let running = false;
+  let activeController: AbortController | null = null;
+  let inFlight: Promise<void> | null = null;
+
+  const runTick = () => {
+    if (stopped || running) return;
+    running = true;
+    activeController = new AbortController();
+    const currentController = activeController;
+    inFlight = Promise.resolve()
+      .then(() => options.tick(currentController.signal))
+      .catch((error) => options.onTickError?.(error))
+      .finally(() => {
+        if (activeController === currentController) activeController = null;
+        running = false;
+        inFlight = null;
+      });
+  };
+
+  const startupTimer = options.startDelayMs <= 0
+    ? undefined
+    : setDelayed(runTick, options.startDelayMs);
+  if (options.startDelayMs <= 0) queueMicrotask(runTick);
+  const intervalTimer = setRepeated(runTick, options.intervalMs);
+
+  return {
+    async stop(): Promise<void> {
+      if (stopped) {
+        if (inFlight) await inFlight;
+        return;
+      }
+      stopped = true;
+      if (startupTimer) clearDelayed(startupTimer);
+      clearRepeated(intervalTimer);
+      const current = inFlight;
+      if (!current) return;
+      let graceExpired = false;
+      let graceTimer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        current,
+        new Promise<void>((resolve) => {
+          graceTimer = setDelayed(() => {
+            graceExpired = true;
+            activeController?.abort();
+            resolve();
+          }, options.stopGraceMs);
+        }),
+      ]);
+      if (graceTimer) clearDelayed(graceTimer);
+      if (graceExpired) await current;
+    },
+  };
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Game deal watcher stopped", "AbortError");
+}
 
 function chunkItems(items: GameDealFreeItem[], size = 10): GameDealFreeItem[][] {
   const chunks: GameDealFreeItem[][] = [];
@@ -69,7 +150,7 @@ export async function scanAndNotifyGameDeals(ctx: BotContext): Promise<void> {
   await notifyFreeGameDealItems(ctx, [...steamItems, ...steamNowItems, ...scan.items.filter((item) => item.platform === "epic")]);
 }
 
-async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeItem[]): Promise<number> {
+async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeItem[], signal?: AbortSignal): Promise<number> {
   const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
   if (!repo) {
@@ -91,6 +172,7 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
   }
   const notifyItems: GameDealFreeItem[] = [];
   for (const item of freeItems) {
+    throwIfAborted(signal);
     if (item.platform === "steam") {
       notifyItems.push(item);
       continue;
@@ -108,13 +190,16 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
   }
   const roleMention = gameDealRoleMention(ctx);
   if (roleMention) {
+    throwIfAborted(signal);
     await channel
       .send({ content: roleMention, allowedMentions: gameDealAllowedRoleMentions(ctx) })
       .catch((err) => ctx.log.warn({ err }, "game deal free role mention send failed"));
   }
   for (const chunk of chunkItems(notifyItems)) {
+    throwIfAborted(signal);
     if (chunk.some((item) => item.components && item.components.length > 0)) {
       for (const item of chunk) {
+        throwIfAborted(signal);
         const sent = await channel
           .send({
             ...componentCardsPayload([item.embed], item.components ?? []),
@@ -125,6 +210,7 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
             return null;
         });
         if (sent) {
+          throwIfAborted(signal);
           sentCount += 1;
           if (item.platform === "steam") await repo.markSteamFreeEventNotified(item.dedupeKey);
           else await repo.markFreeNotified(item.dedupeKey);
@@ -141,6 +227,7 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
           return null;
         });
       if (sent) {
+        throwIfAborted(signal);
         sentCount += chunk.length;
         for (const item of chunk) {
           if (item.platform === "steam") await repo.markSteamFreeEventNotified(item.dedupeKey);
@@ -152,7 +239,7 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
   return sentCount;
 }
 
-async function scanAndNotifySubscriptions(ctx: BotContext): Promise<number> {
+async function scanAndNotifySubscriptions(ctx: BotContext, signal?: AbortSignal): Promise<number> {
   const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
   let detectedCount = 0;
@@ -163,8 +250,9 @@ async function scanAndNotifySubscriptions(ctx: BotContext): Promise<number> {
 
   const subNotifyGroups = new Map<string, SubscriptionNotifyGroup>();
   for (const sub of await repo.listActiveSubscriptions()) {
-    const hit = await checkSubscription(ctx, sub).catch((err) => {
-      ctx.log.warn({ err, subscriptionId: sub.id }, "game deal subscription check failed");
+    throwIfAborted(signal);
+    const hit = await checkSubscription(ctx, sub, { signal }).catch((err) => {
+      if (!signal?.aborted) ctx.log.warn({ err, subscriptionId: sub.id }, "game deal subscription check failed");
       return null;
     });
     if (!hit) continue;
@@ -185,6 +273,7 @@ async function scanAndNotifySubscriptions(ctx: BotContext): Promise<number> {
   }
 
   for (const group of subNotifyGroups.values()) {
+    throwIfAborted(signal);
     const { hit } = group;
     if (!configuredChannelId) {
       ctx.log.warn(
@@ -225,27 +314,26 @@ async function scanAndNotifySubscriptions(ctx: BotContext): Promise<number> {
   return detectedCount;
 }
 
-export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_INTERVAL_MS): NodeJS.Timeout {
+export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_INTERVAL_MS): GameDealWatcherController {
   if (!createGameDealRepository(ctx)) {
     ctx.log.warn("game deal watcher disabled because PostgreSQL repository is not available");
-    return setInterval(() => undefined, intervalMs);
+    return createGameDealWatcherController({
+      intervalMs,
+      startDelayMs: 0,
+      stopGraceMs: DEFAULT_STOP_GRACE_MS,
+      tick: async () => undefined,
+    });
   }
-  let running = false;
   let lastSteamAppListAt = 0;
   let lastSteamVerifyAt = 0;
   let lastSteamNowAt = 0;
   let lastEpicAt = 0;
   let lastSubscriptionAt = 0;
-  const tick = async () => {
-    if (running) {
-      ctx.log.warn("game deal watcher tick skipped because previous scan is still running");
-      return;
-    }
-    running = true;
+  const tick = async (signal: AbortSignal) => {
+    throwIfAborted(signal);
     const repo = createGameDealRepository(ctx);
     if (!repo) {
       ctx.log.warn("game deal watcher tick skipped because PostgreSQL repository is not available");
-      running = false;
       return;
     }
     await repo.markScanStarted();
@@ -256,50 +344,57 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
       const now = Date.now();
       if (now - lastSteamAppListAt >= ctx.config.GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS) {
         lastSteamAppListAt = now;
-        await scanSteamAppListChanges(ctx).catch((err) => ctx.log.warn({ err }, "steam app list scheduled scan failed"));
+        await scanSteamAppListChanges(ctx, signal).catch((err) => { if (!signal.aborted) ctx.log.warn({ err }, "steam app list scheduled scan failed"); });
       }
+      throwIfAborted(signal);
       if (now - lastSteamVerifyAt >= ctx.config.GAME_DEAL_STEAM_VERIFY_INTERVAL_MS) {
         lastSteamVerifyAt = now;
-        const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE).catch((err) => {
-          ctx.log.warn({ err }, "steam verify scheduled scan failed");
+        const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE, signal).catch((err) => {
+          if (!signal.aborted) ctx.log.warn({ err }, "steam verify scheduled scan failed");
           return [];
         });
         detectedCount += steamItems.length;
-        notifiedCount += await notifyFreeGameDealItems(ctx, steamItems);
+        notifiedCount += await notifyFreeGameDealItems(ctx, steamItems, signal);
       }
+      throwIfAborted(signal);
       if (now - lastSteamNowAt >= ctx.config.GAME_DEAL_STEAM_NOW_INTERVAL_MS) {
         lastSteamNowAt = now;
-        const steamNowItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true }).catch((err) => {
-          ctx.log.warn({ err }, "steam now full discount scheduled scan failed");
+        const steamNowItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true, signal }).catch((err) => {
+          if (!signal.aborted) ctx.log.warn({ err }, "steam now full discount scheduled scan failed");
           return [];
         });
         detectedCount += steamNowItems.length;
-        notifiedCount += await notifyFreeGameDealItems(ctx, steamNowItems);
+        notifiedCount += await notifyFreeGameDealItems(ctx, steamNowItems, signal);
       }
+      throwIfAborted(signal);
       if (now - lastEpicAt >= ctx.config.GAME_DEAL_EPIC_INTERVAL_MS) {
         lastEpicAt = now;
-        const scan = await scanCurrentFreeGamesDetailed(ctx).catch((err) => {
-          ctx.log.warn({ err }, "epic scheduled scan failed");
+        const scan = await scanCurrentFreeGamesDetailed(ctx, { signal }).catch((err) => {
+          if (!signal.aborted) ctx.log.warn({ err }, "epic scheduled scan failed");
           return { items: [], sources: [] };
         });
         const epicItems = scan.items.filter((item) => item.platform === "epic");
         detectedCount += epicItems.length;
-        notifiedCount += await notifyFreeGameDealItems(ctx, epicItems);
+        notifiedCount += await notifyFreeGameDealItems(ctx, epicItems, signal);
       }
+      throwIfAborted(signal);
       if (now - lastSubscriptionAt >= ctx.config.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS) {
         lastSubscriptionAt = now;
-        detectedCount += await scanAndNotifySubscriptions(ctx);
+        detectedCount += await scanAndNotifySubscriptions(ctx, signal);
       }
+      throwIfAborted(signal);
       const successAt = new Date().toISOString();
       await repo.markScanSuccess(detectedCount, successAt);
       await repo.updateDealStatus({ lastScanAt: successAt, lastSuccessAt: successAt, lastError: null, lastDetectedCount: detectedCount });
       ctx.log.info({ detectedCount, notifiedCount }, "game deal watcher tick completed");
     } catch (err) {
+      if (signal.aborted) {
+        ctx.log.info("game deal watcher stopped");
+        return;
+      }
       await repo.markScanError(err instanceof Error ? err.message : String(err));
       await repo.updateDealStatus({ lastError: err instanceof Error ? err.message : String(err) });
       ctx.log.warn({ err }, "game deal watcher tick failed");
-    } finally {
-      running = false;
     }
   };
   ctx.log.info(
@@ -311,8 +406,13 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
     },
     "game deal watcher started",
   );
-  setTimeout(() => void tick().catch((err) => ctx.log.warn({ err }, "game deal startup scan failed")), 8_000);
-  return setInterval(() => void tick().catch((err) => ctx.log.warn({ err }, "game deal watcher tick failed")), intervalMs);
+  return createGameDealWatcherController({
+    intervalMs,
+    startDelayMs: 8_000,
+    stopGraceMs: DEFAULT_STOP_GRACE_MS,
+    tick,
+    onTickError: (err) => ctx.log.warn({ err }, "game deal watcher tick failed"),
+  });
 }
 
 export async function handleGameDealButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
