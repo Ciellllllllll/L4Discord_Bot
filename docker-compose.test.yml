@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: l4discord_test
+      POSTGRES_USER: l4discord
+      POSTGRES_PASSWORD: l4discord
+    ports:
+      - "127.0.0.1::5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U l4discord -d l4discord_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

@@ -14,28 +14,30 @@ export type RuntimeSqlDatabase = DatabaseLib.Database;
 export type BotContext = {
   config: AppConfig;
   db: Kysely<Database>;
-  sqlite: RuntimeSqlDatabase;
+  sqlite?: RuntimeSqlDatabase;
   // Modmail / 異議申し立て / 汎用 tickets（ticket.db）
 
   ticketDb: Kysely<TicketDatabase>;
-  ticketSqlite: RuntimeSqlDatabase;
+  ticketSqlite?: RuntimeSqlDatabase;
   // メッセージログ専用（message.db）
 
-  messageLogSqlite: RuntimeSqlDatabase;
+  messageLogSqlite?: RuntimeSqlDatabase;
+  messageLogPgPool?: Pool;
   // 添付ローカル複製のメタ（message_attachment_store.db）。message.db とは別ファイル
 
-  messageAttachmentStoreSqlite: RuntimeSqlDatabase;
+  messageAttachmentStoreSqlite?: RuntimeSqlDatabase;
+  messageAttachmentPgPool?: Pool;
   // VC 滞在時間（sessions）専用（vc_time.db）
 
-  vcTimeSqlite: RuntimeSqlDatabase;
+  vcTimeSqlite?: RuntimeSqlDatabase;
   // /q 会話履歴（AI_History.db）
 
   aiHistoryDb: Kysely<AiHistoryDatabase>;
-  aiHistorySqlite: RuntimeSqlDatabase;
+  aiHistorySqlite?: RuntimeSqlDatabase;
   // 自動モデレーション設定（Automoderation.db）
 
   automodDb: Kysely<AutomoderationDatabase>;
-  automodSqlite: RuntimeSqlDatabase;
+  automodSqlite?: RuntimeSqlDatabase;
   log: pino.Logger;
   client: Client;
   aiRouter: AiProviderRouter;

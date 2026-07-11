@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import {
-  SqliteVcRankingRepository,
-  mergedIntervalSeconds,
-} from "../../adapters/legacyDb/sqliteVcRankingRepository.js";
+import { SqliteVcRankingRepository } from "../../adapters/legacyDb/sqliteVcRankingRepository.js";
+import { mergedIntervalSeconds } from "../../adapters/legacyDb/vcRankingIntervals.js";
 import { ensureVcTimeSchema } from "./vcTimeSchema.js";
 
 async function run(): Promise<void> {

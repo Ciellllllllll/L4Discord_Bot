@@ -6,6 +6,7 @@ import { AttachmentBuilder } from "discord.js";
 import type DatabaseLib from "better-sqlite3";
 import type { Message, PartialMessage } from "discord.js";
 import type { Pool } from "pg";
+import type { PgQueryable } from "../../core/db/postgres.js";
 import type pino from "pino";
 import { readResponseArrayBufferWithLimit } from "../ai/fetchWithLimits.js";
 
@@ -274,6 +275,42 @@ export function lookupStoredAttachmentsMap(
   return map;
 }
 
+export async function prepareMessageAttachmentStorePostgres(pool: PgQueryable): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS message_log_attachment_files (
+      guild_id text NOT NULL,
+      message_id text NOT NULL,
+      attachment_id text NOT NULL,
+      filename text NOT NULL,
+      content_type text,
+      size_bytes bigint,
+      kind text,
+      storage_relpath text NOT NULL,
+      sha256_hex text,
+      source_url text,
+      fetched_at text NOT NULL,
+      PRIMARY KEY (guild_id, message_id, attachment_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ml_att_guild_msg ON message_log_attachment_files(guild_id, message_id);
+  `);
+}
+
+export async function lookupStoredAttachmentsMapPostgres(
+  pool: Pool,
+  guildIdStr: string | null,
+  messageIdStr: string | null,
+): Promise<Map<string, StoredAttachmentRow>> {
+  const map = new Map<string, StoredAttachmentRow>();
+  if (!guildIdStr || !messageIdStr) return map;
+  const result = await pool.query<StoredAttachmentRow>(
+    `SELECT attachment_id, filename, content_type, size_bytes, kind, storage_relpath, sha256_hex
+     FROM message_log_attachment_files WHERE guild_id = $1 AND message_id = $2`,
+    [guildIdStr, messageIdStr],
+  );
+  for (const row of result.rows) map.set(row.attachment_id, row);
+  return map;
+}
+
 function resolveStoredAbsPath(storageRelpath: string): string | null {
   const raw = String(storageRelpath || "").trim();
   if (!raw) return null;
@@ -346,6 +383,10 @@ export function buildDetailImageSlots(
   if (!storeDb || !guildIdStr || !messageIdStr) return empty;
 
   const rows = sortedRows(storeDb, guildIdStr, messageIdStr);
+  return buildDetailImageSlotsFromRows(rows);
+}
+
+function buildDetailImageSlotsFromRows(rows: StoredAttachmentRow[]): DetailImageSlotsResult {
   const images = rows.filter((r) => kindOfRow(r) === "image");
   const nonImages = rows.filter((r) => kindOfRow(r) !== "image");
 
@@ -399,6 +440,18 @@ export function buildDetailImageSlots(
   }
 
   return { imageSlots, nonImageFiles, oversizeItems, skippedImageCount };
+}
+
+export async function buildDetailImageSlotsPostgres(
+  pool: Pool | null | undefined,
+  guildIdStr: string | null,
+  messageIdStr: string | null,
+): Promise<DetailImageSlotsResult> {
+  if (!pool || !guildIdStr || !messageIdStr) {
+    return { imageSlots: [], nonImageFiles: [], oversizeItems: [], skippedImageCount: 0 };
+  }
+  const map = await lookupStoredAttachmentsMapPostgres(pool, guildIdStr, messageIdStr);
+  return buildDetailImageSlotsFromRows([...map.values()].sort((a, b) => a.attachment_id.localeCompare(b.attachment_id)));
 }
 
 export function formatStoredHint(stored: StoredAttachmentRow | undefined): string | null {

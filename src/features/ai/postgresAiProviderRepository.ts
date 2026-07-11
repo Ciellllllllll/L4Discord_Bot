@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { quotePgIdent } from "../../core/db/postgres.js";
+import { quotePgIdent, type PgQueryable } from "../../core/db/postgres.js";
 import type { AiProvider, AiRoutePreference } from "./providerTypes.js";
 import type {
   AiProviderBudgetRepository,
@@ -10,7 +10,7 @@ import type {
   AiTokenReservationStatus,
 } from "./aiProviderRepository.js";
 
-export async function ensurePostgresAiProviderSchema(pool: Pool, schemaName: string): Promise<void> {
+export async function ensurePostgresAiProviderSchema(pool: PgQueryable, schemaName: string): Promise<void> {
   const schema = quotePgIdent(schemaName);
   await pool.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
   await pool.query(`

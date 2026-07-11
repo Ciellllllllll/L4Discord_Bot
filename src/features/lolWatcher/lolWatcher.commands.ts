@@ -1,7 +1,7 @@
 import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
-import { LolWatcherRepository } from "./lolWatcher.repository.js";
+import { createLolWatcherRepository } from "./lolWatcher.repository.js";
 import { getLolWatcherController, scanLolWatcher, validateAndPrepareLolWatcher } from "./lolWatcher.watcher.js";
 import { normalizeLolWatcherAccountKey, parseRiotId } from "./lolWatcher.types.js";
 
@@ -44,7 +44,7 @@ export async function handleLolWatchCommand(
     }
     return;
   }
-  const repo = new LolWatcherRepository(ctx.sqlite);
+  const repo = createLolWatcherRepository(ctx);
   if (subcommand === "add") {
     const accountKey = interaction.options.getString("key", true).trim();
     const accountKeyNorm = normalizeLolWatcherAccountKey(accountKey);
@@ -52,7 +52,7 @@ export async function handleLolWatchCommand(
       await interaction.reply({ content: "key は Riot ID 形式（例: name#tag）で指定してください。", flags: MessageFlags.Ephemeral });
       return;
     }
-    const result = repo.upsertUserAccount(interaction.user.id, accountKey, accountKeyNorm);
+    const result = await repo.upsertUserAccount(interaction.user.id, accountKey, accountKeyNorm);
     if (!result.ok) {
       const content =
         result.reason === "already_registered"
@@ -70,7 +70,7 @@ export async function handleLolWatchCommand(
     return;
   }
   if (subcommand === "remove") {
-    const account = repo.disableAccountForUser(interaction.user.id);
+    const account = await repo.disableAccountForUser(interaction.user.id);
     await interaction.reply({
       content: account ? `監視対象を無効化しました: ${account.accountKeyNorm}` : "あなたの監視対象は登録されていません。",
       flags: MessageFlags.Ephemeral,
@@ -78,9 +78,9 @@ export async function handleLolWatchCommand(
     return;
   }
   if (subcommand === "list") {
-    const accounts = repo.listAccounts(true);
-    const statuses = repo.listStatus();
-    const notificationChannelId = repo.getNotificationChannelId();
+    const accounts = await repo.listAccounts(true);
+    const statuses = await repo.listStatus();
+    const notificationChannelId = await repo.getNotificationChannelId();
     const accountLines = accounts.slice(0, 30).map((account, index) => {
       const owner = account.userId ? `<@${account.userId}>` : "-";
       return `${index + 1}. ${account.enabled ? "ON" : "OFF"} ${account.accountKeyNorm} (${account.accountKey}) / user=${owner}`;
@@ -109,7 +109,7 @@ export async function handleLolWatchCommand(
       await interaction.editReply(result.started ? scanSummary(result.result) : result.reason);
       return;
     }
-    if (!validateAndPrepareLolWatcher(ctx)) {
+    if (!(await validateAndPrepareLolWatcher(ctx))) {
       await interaction.editReply("lol watcher は無効、または必須env不足のため起動できません。");
       return;
     }
@@ -136,8 +136,8 @@ export async function handleLolAdminAddCommand(
     await interaction.reply({ content: "key は Riot ID 形式（例: name#tag）で指定してください。", flags: MessageFlags.Ephemeral });
     return;
   }
-  const repo = new LolWatcherRepository(ctx.sqlite);
-  const result = repo.upsertAccount(accountKey, accountKeyNorm);
+  const repo = createLolWatcherRepository(ctx);
+  const result = await repo.upsertAccount(accountKey, accountKeyNorm);
   await interaction.reply({
     content: result.created ? `監視対象を追加しました: ${accountKeyNorm}` : `監視対象を有効化しました: ${accountKeyNorm}`,
     flags: MessageFlags.Ephemeral,
@@ -158,8 +158,8 @@ export async function handleLolAdminRemoveCommand(
     return;
   }
   const accountKeyNorm = normalizeLolWatcherAccountKey(interaction.options.getString("key", true));
-  const repo = new LolWatcherRepository(ctx.sqlite);
-  const changes = repo.disableAccount(accountKeyNorm);
+  const repo = createLolWatcherRepository(ctx);
+  const changes = await repo.disableAccount(accountKeyNorm);
   await interaction.reply({
     content: changes > 0 ? `監視対象を無効化しました: ${accountKeyNorm}` : `監視対象が見つかりません: ${accountKeyNorm}`,
     flags: MessageFlags.Ephemeral,

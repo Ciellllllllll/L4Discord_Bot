@@ -5,7 +5,7 @@ import { pacchiAiFinalCheck } from "./pacchi.aiFinalCheck.js";
 import { extractPhrase, extractWords, isLearnableMessage } from "./pacchi.filters.js";
 import { buildPacchiGeneratedReply } from "./pacchi.generator.js";
 import { buildSentencePattern, toLearnableLexiconTokens } from "./pacchi.japaneseLearning.js";
-import { createPacchiRepository, type PacchiRepository } from "./pacchi.repository.js";
+import { createPacchiRepositoryForContext, type PacchiRepositoryLike } from "./pacchi.repository.js";
 import { appendRandomEmojiAtEnd, buildPacchiReply, formatDuration, janken, RATE_CONFIG } from "./pacchi.reply.js";
 import { isUnsafeForPacchiLearning } from "./pacchi.safety.js";
 import {
@@ -138,14 +138,14 @@ function isReplyEmojiAvailable(message: Message, emoji: string | null): boolean 
 
 async function maybeAiCheckedPacchiReply(
   ctx: BotContext,
-  repo: PacchiRepository,
+  repo: PacchiRepositoryLike,
   guildId: string,
   reply: string,
 ): Promise<string> {
   if (!ctx.config.PACCHI_AI_FINAL_CHECK_ENABLED) return reply;
   const accepted = await pacchiAiFinalCheck(ctx.aiRouter, guildId, ctx.log, reply);
   if (accepted) return reply;
-  return buildPacchiReply(repo.pickWord(guildId));
+  return buildPacchiReply(await repo.pickWord(guildId));
 }
 
 function extractPacchiSenryuSubmission(content: string): string | null {
@@ -160,7 +160,7 @@ function extractPacchiSenryuSubmission(content: string): string | null {
 async function tryHandlePacchiSenryuSubmission(
   ctx: BotContext,
   message: Message,
-  repo: PacchiRepository,
+  repo: PacchiRepositoryLike,
   content: string,
   replyEmoji: string | null,
 ): Promise<boolean> {
@@ -183,7 +183,7 @@ async function tryHandlePacchiSenryuSubmission(
     return true;
   }
   const phrases = result.data.phrases;
-  repo.saveSenryuSubmission({
+  await repo.saveSenryuSubmission({
     guildId: message.guildId!,
     channelId: message.channelId,
     messageId: message.id,
@@ -207,14 +207,14 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
     return false;
   }
 
-  const repo = createPacchiRepository(ctx.sqlite);
-  const settings = repo.getSettings(message.guildId);
-  const channel = repo.getChannelSettings(message.guildId, message.channelId);
+  const repo = createPacchiRepositoryForContext(ctx);
+  const settings = await repo.getSettings(message.guildId);
+  const channel = await repo.getChannelSettings(message.guildId, message.channelId);
   const learnable = isLearnableMessage(content, message.attachments.size > 0);
 
   try {
     if (settings.enabled && channel.learnEnabled && !content.startsWith("!") && !content.startsWith("/")) {
-      repo.learnEmojis(message.guildId, extractGuildSafeEmojis(message));
+      await repo.learnEmojis(message.guildId, extractGuildSafeEmojis(message));
     }
 
     if (settings.enabled && channel.learnEnabled && learnable) {
@@ -229,10 +229,10 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
         });
         if (morph.ok) {
           const lexiconTokens = toLearnableLexiconTokens(morph.data);
-          repo.learnMorph(message.guildId, lexiconTokens);
+          await repo.learnMorph(message.guildId, lexiconTokens);
           if (ctx.config.PACCHI_PATTERN_LEARNING_ENABLED) {
             const pattern = buildSentencePattern(content, morph.data);
-            if (pattern) repo.learnSentencePattern(message.guildId, pattern);
+            if (pattern) await repo.learnSentencePattern(message.guildId, pattern);
           }
         } else {
           ctx.log.warn({ reason: morph.reason, err: morph.error }, "pacchi morph learning skipped");
@@ -240,20 +240,20 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       } else {
         const words = extractWords(content);
         const phrase = extractPhrase(content);
-        if (words.length > 0 || phrase) repo.learn(message.guildId, words, phrase);
+        if (words.length > 0 || phrase) await repo.learn(message.guildId, words, phrase);
       }
     }
 
     const cooldownSeconds = settings.cooldownSeconds || RATE_CONFIG[settings.speakRate].cooldownSeconds;
-    const pickedEmoji = repo.pickEmoji(message.guildId);
+    const pickedEmoji = await repo.pickEmoji(message.guildId);
     const replyEmoji = isReplyEmojiAvailable(message, pickedEmoji) ? pickedEmoji : null;
 
     if (!settings.enabled || !channel.talkEnabled) return false;
 
     if (await tryHandlePacchiSenryuSubmission(ctx, message, repo, content, replyEmoji)) {
       markSpoke(message.channelId);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "senryu_submit", "575");
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "senryu_submit", "575");
       return true;
     }
 
@@ -262,23 +262,23 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       const reply = janken(jankenHand);
       await sendPacchiReply(message, reply, replyEmoji);
       markSpoke(message.channelId);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "janken", reply);
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "janken", reply);
       return true;
     }
 
     if (content.includes("おやすみ") && canSpeak(message.channelId, cooldownSeconds)) {
-      repo.startSleep(message.guildId, message.author.id);
+      await repo.startSleep(message.guildId, message.author.id);
       const reply = "おやすみ。ぱっちぃが覚えた";
       await sendPacchiReply(message, reply, replyEmoji);
       markSpoke(message.channelId);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "sleep_start", reply);
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "sleep_start", reply);
       return true;
     }
 
     if (content.includes("おはよう") && canSpeak(message.channelId, cooldownSeconds)) {
-      const sleep = repo.endSleep(message.guildId, message.author.id);
+      const sleep = await repo.endSleep(message.guildId, message.author.id);
       let reply = "いつ寝たかわからん";
       if (sleep) {
         if (sleep.durationSeconds < 300) reply = `寝てないやん。${formatDuration(sleep.durationSeconds)}`;
@@ -287,8 +287,8 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       }
       await sendPacchiReply(message, reply, replyEmoji);
       markSpoke(message.channelId);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "sleep_end", reply);
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "sleep_end", reply);
       return true;
     }
 
@@ -297,15 +297,15 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       const reply = await explainTerm(ctx, term);
       await sendPacchiReply(message, reply.slice(0, 1200), replyEmoji);
       markSpoke(message.channelId);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "term", reply.slice(0, 1200));
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "term", reply.slice(0, 1200));
       return true;
     }
 
     const poemPattern = extractNaturalPoem(content);
     if (poemPattern && canSpeak(message.channelId, cooldownSeconds)) {
       const result = ctx.config.JAPANESE_WORKER_ENABLED
-        ? await buildVerifiedPacchiPoem(poemPattern, repo.randomWords(message.guildId, 40).map((w) => w.word), {
+        ? await buildVerifiedPacchiPoem(poemPattern, (await repo.randomWords(message.guildId, 40)).map((w) => w.word), {
           baseUrl: ctx.config.JAPANESE_WORKER_URL,
           timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
         })
@@ -316,8 +316,8 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       const reply = result.ok ? result.poem : pacchiVerifiedPoemFailureMessage(result);
       await sendPacchiReply(message, reply, replyEmoji);
       markSpoke(message.channelId);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "poem", reply);
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "poem", reply);
       return true;
     }
 
@@ -330,12 +330,12 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
 
     const called = content.includes("ぱっちぃ");
     if (called && canSpeak(message.channelId, cooldownSeconds)) {
-      const generated = buildPacchiGeneratedReply(repo, message.guildId, ctx.config.PACCHI_GENERATION_MODE, true);
+      const generated = await buildPacchiGeneratedReply(repo, message.guildId, ctx.config.PACCHI_GENERATION_MODE, true);
       const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
       await sendPacchiReply(message, reply, replyEmoji);
       markSpoke(message.channelId);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "called", reply);
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "called", reply);
       return true;
     }
 
@@ -351,8 +351,8 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       await sendPacchiReply(message, reply.slice(0, 1200), replyEmoji);
       markSpoke(message.channelId);
       lastAutoReplyUserByChannel.set(message.channelId, message.author.id);
-      repo.touchSpoke(message.guildId);
-      repo.logReply(message.guildId, message.channelId, message.author.id, "wikipedia_random", reply.slice(0, 1200));
+      await repo.touchSpoke(message.guildId);
+      await repo.logReply(message.guildId, message.channelId, message.author.id, "wikipedia_random", reply.slice(0, 1200));
       return true;
     }
 
@@ -361,13 +361,13 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       const sameUser = lastAutoReplyUserByChannel.get(message.channelId) === message.author.id;
       const lengthFactor = content.length < 6 ? 0.25 : 1;
       if (!sameUser && Math.random() < chance * lengthFactor) {
-        const generated = buildPacchiGeneratedReply(repo, message.guildId, ctx.config.PACCHI_GENERATION_MODE);
+        const generated = await buildPacchiGeneratedReply(repo, message.guildId, ctx.config.PACCHI_GENERATION_MODE);
         const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
         await sendPacchiReply(message, reply, replyEmoji);
         markSpoke(message.channelId);
         lastAutoReplyUserByChannel.set(message.channelId, message.author.id);
-        repo.touchSpoke(message.guildId);
-        repo.logReply(message.guildId, message.channelId, message.author.id, "backchannel", reply);
+        await repo.touchSpoke(message.guildId);
+        await repo.logReply(message.guildId, message.channelId, message.author.id, "backchannel", reply);
         return true;
       }
     }

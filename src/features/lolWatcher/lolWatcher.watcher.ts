@@ -4,7 +4,7 @@ import { componentCardsPayload } from "../panels/componentCard.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { buildLolWatcherCompletedEmbed, buildLolWatcherStartEmbed } from "./lolWatcher.embeds.js";
 import { buildDeepLolDetailUrl, LolWatcherRiotClient } from "./lolWatcher.client.js";
-import { ensureLolWatcherSchema, LolWatcherRepository } from "./lolWatcher.repository.js";
+import { createLolWatcherRepository, ensureLolWatcherSchema, type LolWatcherRepositoryLike } from "./lolWatcher.repository.js";
 import type {
   LolWatcherActiveGame,
   LolWatcherApiAccount,
@@ -49,36 +49,39 @@ function legacyNumericGameId(gameId: string): string | null {
   return /^\d+$/.test(suffix) ? suffix : null;
 }
 
-function findActiveGameForCompleted(
-  repo: LolWatcherRepository,
+async function findActiveGameForCompleted(
+  repo: LolWatcherRepositoryLike,
   accountKeyNorm: string,
   completedGameId: string,
-): LolWatcherActiveGame | null {
-  const active = repo.getActiveGame(accountKeyNorm, completedGameId);
+): Promise<LolWatcherActiveGame | null> {
+  const active = await repo.getActiveGame(accountKeyNorm, completedGameId);
   if (active) return active;
   const legacyId = legacyNumericGameId(completedGameId);
-  return legacyId ? repo.getActiveGame(accountKeyNorm, legacyId) : null;
+  return legacyId ? await repo.getActiveGame(accountKeyNorm, legacyId) : null;
 }
 
-function validateLolWatcherEnv(ctx: BotContext, repo: LolWatcherRepository): boolean {
+async function validateLolWatcherEnv(ctx: BotContext, repo: LolWatcherRepositoryLike): Promise<boolean> {
   const missing: string[] = [];
   if (!ctx.config.RIOT_API_KEY.trim()) missing.push("RIOT_API_KEY");
   if (missing.length === 0) return true;
   const message = `missing required env: ${missing.join(", ")}`;
   ctx.log.error({ missing }, "lol watcher disabled because required env is missing");
   try {
-    repo.setStatus("startup_error", message);
+    await repo.setStatus("startup_error", message);
   } catch (err) {
     ctx.log.error({ err }, "lol watcher status save failed");
   }
   return false;
 }
 
-export function validateAndPrepareLolWatcher(ctx: BotContext): boolean {
+export async function validateAndPrepareLolWatcher(ctx: BotContext): Promise<boolean> {
   if (!ctx.config.DEEPLOL_WATCHER_ENABLED) return false;
-  const repo = new LolWatcherRepository(ctx.sqlite);
+  const repo = createLolWatcherRepository(ctx);
   try {
-    ensureLolWatcherSchema(ctx.sqlite);
+    if (!ctx.gameDealPgPool) {
+      if (!ctx.sqlite) throw new Error("LoL watcher SQLite database is unavailable");
+      ensureLolWatcherSchema(ctx.sqlite);
+    }
   } catch (err) {
     ctx.log.error({ err }, "lol watcher schema ensure failed");
     return false;
@@ -100,7 +103,7 @@ async function fetchLolWatcherChannel(client: Client, channelId: string): Promis
 
 async function postStartEmbed(
   ctx: BotContext,
-  repo: LolWatcherRepository,
+  repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   accountKeyNorm: string,
   account: LolWatcherApiAccount,
@@ -108,10 +111,10 @@ async function postStartEmbed(
 ): Promise<boolean> {
   const sent = await thread
     .send({ ...componentCardsPayload([buildLolWatcherStartEmbed(account, game)]), allowedMentions: { parse: [] } })
-    .catch((err) => {
+    .catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err);
       ctx.log.warn({ err, accountKeyNorm, gameId: game.gameId }, "lol watcher start post failed");
-      repo.upsertActiveGame({
+      await repo.upsertActiveGame({
         accountKeyNorm,
         gameId: game.gameId,
         messageId: null,
@@ -119,11 +122,11 @@ async function postStartEmbed(
         status: "error",
         errorMessage: message,
       });
-      repo.setStatus(`post_error:${accountKeyNorm}:${game.gameId}`, message);
+      await repo.setStatus(`post_error:${accountKeyNorm}:${game.gameId}`, message);
       return null;
     });
   if (!sent) return false;
-  repo.upsertActiveGame({
+  await repo.upsertActiveGame({
     accountKeyNorm,
     gameId: game.gameId,
     messageId: sent.id,
@@ -136,7 +139,7 @@ async function postStartEmbed(
 
 async function postCompletedEmbed(
   ctx: BotContext,
-  repo: LolWatcherRepository,
+  repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   input: {
     accountKeyNorm: string;
@@ -148,10 +151,10 @@ async function postCompletedEmbed(
 ): Promise<boolean> {
   const sent = await thread
     .send({ ...componentCardsPayload([buildLolWatcherCompletedEmbed(input.account, input.game)]), allowedMentions: { parse: [] } })
-    .catch((err) => {
+    .catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err);
       ctx.log.warn({ err, accountKeyNorm: input.accountKeyNorm, gameId: input.game.gameId }, "lol watcher completed post failed");
-      repo.saveNotification({
+      await repo.saveNotification({
         accountKeyNorm: input.accountKeyNorm,
         gameId: input.game.gameId,
         messageId: null,
@@ -159,11 +162,11 @@ async function postCompletedEmbed(
         status: "failed",
         errorMessage: message,
       });
-      repo.setStatus(`post_error:${input.accountKeyNorm}:${input.game.gameId}`, message);
+      await repo.setStatus(`post_error:${input.accountKeyNorm}:${input.game.gameId}`, message);
       return null;
     });
   if (!sent) return false;
-  repo.saveNotification({
+  await repo.saveNotification({
     accountKeyNorm: input.accountKeyNorm,
     gameId: input.game.gameId,
     messageId: sent.id,
@@ -171,7 +174,7 @@ async function postCompletedEmbed(
     status: "posted",
     errorMessage: input.errorMessage ?? null,
   });
-  repo.markCompleted(input.accountKeyNorm, input.game.gameId);
+  await repo.markCompleted(input.accountKeyNorm, input.game.gameId);
   ctx.log.info(
     { accountKeyNorm: input.accountKeyNorm, gameId: input.game.gameId, messageId: sent.id },
     "lol watcher completed posted",
@@ -206,7 +209,7 @@ function withDeepLolDetailUrl(
 
 async function editCompletedEmbed(
   ctx: BotContext,
-  repo: LolWatcherRepository,
+  repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   active: LolWatcherActiveGame,
   accountKey: string,
@@ -231,24 +234,24 @@ async function editCompletedEmbed(
   const edited = await message
     .edit(componentCardsPayload([buildLolWatcherCompletedEmbed(account, linkedGame)]))
     .then(() => true)
-    .catch((err) => {
+    .catch(async (err) => {
       const text = err instanceof Error ? err.message : String(err);
       ctx.log.warn(
         { err, accountKeyNorm: active.accountKeyNorm, gameId: active.gameId, messageId: active.messageId },
         "lol watcher completed edit failed",
       );
-      repo.setStatus(`edit_error:${active.accountKeyNorm}:${active.gameId}`, text);
+      await repo.setStatus(`edit_error:${active.accountKeyNorm}:${active.gameId}`, text);
       return false;
     });
   if (!edited) return false;
-  repo.saveNotification({
+  await repo.saveNotification({
     accountKeyNorm: active.accountKeyNorm,
     gameId: game.gameId,
     messageId: active.messageId,
     notificationType: "edited_from_start",
     status: "edited",
   });
-  repo.markCompleted(active.accountKeyNorm, active.gameId);
+  await repo.markCompleted(active.accountKeyNorm, active.gameId);
   ctx.log.info(
     {
       accountKeyNorm: active.accountKeyNorm,
@@ -263,15 +266,15 @@ async function editCompletedEmbed(
 
 async function handleCompletedGame(
   ctx: BotContext,
-  repo: LolWatcherRepository,
+  repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   accountKey: string,
   accountKeyNorm: string,
   account: LolWatcherApiAccount,
   game: LolWatcherCompletedGame,
 ): Promise<boolean> {
-  if (repo.hasNotification(accountKeyNorm, game.gameId)) return false;
-  const active = findActiveGameForCompleted(repo, accountKeyNorm, game.gameId);
+  if (await repo.hasNotification(accountKeyNorm, game.gameId)) return false;
+  const active = await findActiveGameForCompleted(repo, accountKeyNorm, game.gameId);
   let completed = false;
   if (active) {
     const linkedGame = withDeepLolDetailUrl(ctx, { accountKey, accountKeyNorm, account, game });
@@ -285,7 +288,7 @@ async function handleCompletedGame(
       errorMessage: "edit failed",
     });
     if (completed && active.gameId !== game.gameId) {
-      repo.markCompleted(active.accountKeyNorm, active.gameId);
+      await repo.markCompleted(active.accountKeyNorm, active.gameId);
     }
   } else {
     const linkedGame = withDeepLolDetailUrl(ctx, { accountKey, accountKeyNorm, account, game });
@@ -299,18 +302,18 @@ async function handleCompletedGame(
   return completed;
 }
 
-function updateMissingAndStale(repo: LolWatcherRepository, accountKeyNorm: string, liveGameId: string | null, completedIds: Set<string>, staleMs: number): number {
+async function updateMissingAndStale(repo: LolWatcherRepositoryLike, accountKeyNorm: string, liveGameId: string | null, completedIds: Set<string>, staleMs: number): Promise<number> {
   let staleCount = 0;
-  for (const game of repo.listOpenActiveGames(accountKeyNorm)) {
+  for (const game of await repo.listOpenActiveGames(accountKeyNorm)) {
     if (game.status === "completed") continue;
     if (game.gameId === liveGameId || completedIds.has(game.gameId)) continue;
     if (!game.missingSince && game.status !== "stale") {
-      repo.markMissing(game);
+      await repo.markMissing(game);
       continue;
     }
     const missingSince = game.missingSince ? Date.parse(game.missingSince) : Date.parse(game.updatedAt);
     if (Number.isFinite(missingSince) && Date.now() - missingSince > staleMs && game.status !== "stale") {
-      repo.markStale(game);
+      await repo.markStale(game);
       staleCount += 1;
     }
   }
@@ -321,38 +324,38 @@ export async function scanLolWatcher(
   ctx: BotContext,
 ): Promise<LolWatcherScanResult> {
   const result = emptyScanResult();
-  const repo = new LolWatcherRepository(ctx.sqlite);
+  const repo = createLolWatcherRepository(ctx);
   if (!ctx.config.DEEPLOL_WATCHER_ENABLED) {
     appendError(result, "lol watcher disabled");
     return result;
   }
   if (!ctx.config.RIOT_API_KEY.trim()) {
     appendError(result, "missing required env");
-    repo.setStatus("scan_error", "missing required env");
+    await repo.setStatus("scan_error", "missing required env");
     return result;
   }
-  const notificationChannelId = repo.getNotificationChannelId();
+  const notificationChannelId = await repo.getNotificationChannelId();
   if (!notificationChannelId) {
     appendError(result, "notification channel is not set");
-    repo.setStatus("channel_error", "notification channel is not set");
+    await repo.setStatus("channel_error", "notification channel is not set");
     return result;
   }
   const channelResult = await fetchLolWatcherChannel(ctx.client, notificationChannelId);
   if (!channelResult.ok) {
     appendError(result, channelResult.error);
-    repo.setStatus("channel_error", channelResult.error);
+    await repo.setStatus("channel_error", channelResult.error);
     return result;
   }
 
   const client = new LolWatcherRiotClient(ctx.config);
-  for (const watchAccount of repo.listAccounts()) {
+  for (const watchAccount of await repo.listAccounts()) {
     result.scannedAccounts += 1;
     const fetched = await client.fetchState(watchAccount.accountKey);
     if (!fetched.ok) {
       result.failedAccounts += 1;
       const message = fetched.httpStatus ? `${fetched.error} (${fetched.httpStatus})` : fetched.error;
       appendError(result, `${watchAccount.accountKeyNorm}: ${message}`);
-      repo.setStatus(`account_error:${watchAccount.accountKeyNorm}`, message);
+      await repo.setStatus(`account_error:${watchAccount.accountKeyNorm}`, message);
       ctx.log.warn(
         { accountKeyNorm: watchAccount.accountKeyNorm, httpStatus: fetched.httpStatus, error: fetched.error },
         "lol watcher account scan failed",
@@ -379,32 +382,32 @@ export async function scanLolWatcher(
 
     if (fetched.state.liveGame) {
       const game = fetched.state.liveGame;
-      if (repo.hasNotification(watchAccount.accountKeyNorm, game.gameId)) {
+      if (await repo.hasNotification(watchAccount.accountKeyNorm, game.gameId)) {
         continue;
       }
-      const active = repo.getActiveGame(watchAccount.accountKeyNorm, game.gameId);
+      const active = await repo.getActiveGame(watchAccount.accountKeyNorm, game.gameId);
       if (active) {
-        repo.markActiveSeen(watchAccount.accountKeyNorm, game.gameId);
+        await repo.markActiveSeen(watchAccount.accountKeyNorm, game.gameId);
       } else if (await postStartEmbed(ctx, repo, channelResult.channel, watchAccount.accountKeyNorm, fetched.state.account, game)) {
         result.startedGames += 1;
       }
     }
 
-    result.staleGames += updateMissingAndStale(
+    result.staleGames += await updateMissingAndStale(
       repo,
       watchAccount.accountKeyNorm,
       fetched.state.liveGame?.gameId ?? null,
       completedIds,
       ctx.config.DEEPLOL_ACTIVE_STALE_MS,
     );
-    repo.setStatus(`account_success:${watchAccount.accountKeyNorm}`, sqliteTimestamp());
+    await repo.setStatus(`account_success:${watchAccount.accountKeyNorm}`, sqliteTimestamp());
   }
-  repo.setStatus("last_scan_result", JSON.stringify(result));
+  await repo.setStatus("last_scan_result", JSON.stringify(result));
   return result;
 }
 
-export function startLolWatcher(ctx: BotContext): LolWatcherController | null {
-  if (!validateAndPrepareLolWatcher(ctx)) return null;
+export async function startLolWatcher(ctx: BotContext): Promise<LolWatcherController | null> {
+  if (!(await validateAndPrepareLolWatcher(ctx))) return null;
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
   let running = false;
@@ -418,7 +421,7 @@ export function startLolWatcher(ctx: BotContext): LolWatcherController | null {
       const message = err instanceof Error ? err.message : String(err);
       ctx.log.warn({ err }, "lol watcher scan failed");
       try {
-        new LolWatcherRepository(ctx.sqlite).setStatus("scan_error", message);
+        await createLolWatcherRepository(ctx).setStatus("scan_error", message);
       } catch (statusErr) {
         ctx.log.error({ err: statusErr }, "lol watcher status save failed");
       }
