@@ -167,6 +167,7 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
       kind text NOT NULL,
       status text NOT NULL DEFAULT 'open',
       state jsonb NOT NULL DEFAULT '{}'::jsonb,
+      state_revision bigint NOT NULL DEFAULT 0,
       ends_at text,
       created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP

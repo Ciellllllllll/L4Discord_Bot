@@ -1,149 +1,30 @@
 import { execSync } from "node:child_process";
 import "dotenv/config";
-import type DatabaseLib from "better-sqlite3";
 
 if (process.platform === "win32") {
   try {
     execSync("cmd /c chcp 65001>nul", { stdio: "ignore", windowsHide: true });
   } catch {}
 }
-import { MessageFlags } from "discord.js";
-import { sql, type Kysely } from "kysely";
+
+import { PostgresVcRankingRepository } from "./adapters/legacyDb/postgresVcRankingRepository.js";
+import { SqliteVcRankingRepository } from "./adapters/legacyDb/sqliteVcRankingRepository.js";
 import { createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
-import { startPresenceRotation } from "./bot/presence.js";
-import { syncGuildApplicationCommands } from "./bot/syncCommands.js";
-import { handleSlashCommand } from "./commands/slashHandlers.js";
+import { closeDatabaseRuntime, createDatabaseRuntime } from "./bot/databaseRuntime.js";
+import { registerRuntimeHandlers } from "./bot/registerRuntimeHandlers.js";
+import { initializeRuntimeHandlersWithCleanup } from "./bot/registerWithCleanup.js";
+import { loginWithCleanup } from "./bot/loginWithCleanup.js";
+import { shutdownWithCleanup } from "./bot/shutdownWithCleanup.js";
 import { loadConfig } from "./core/config.js";
-import { getReleaseBundleForLog } from "./core/releaseVersions.js";
-import { getGuildSettingsData } from "./core/guildSettings.js";
-import {
-  createAiHistoryKysely,
-  createAutomoderationKysely,
-  createKysely,
-  createPostgresAiHistoryKysely,
-  createPostgresAutomoderationKysely,
-  createPostgresMainKysely,
-  createPostgresTicketKysely,
-  createTicketKysely,
-} from "./core/db/kysely.js";
-import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
-import { createSqliteDatabase } from "./core/db/sqlite.js";
-import { createPgPool } from "./core/db/postgres.js";
-import { ensurePostgresMainSchema } from "./core/db/postgresMainSchema.js";
-import { applyPostgresMigrations, type PostgresMigration } from "./core/db/postgresMigrations.js";
 import { createLogger } from "./core/logger.js";
-import { getDetecterService } from "./features/detecter/detecterService.js";
-import { handleAutoModerationMessage } from "./features/moderation/autoModerationMessage.js";
-import { handleEmojiGuardMessage, handleEmojiGuardReaction } from "./features/moderation/emojiGuard.js";
-import { trackStampMessage, trackStampReaction } from "./features/stamps/trackReaction.js";
-import {
-  routeButton,
-  routeChannelSelectMenu,
-  routeModal,
-  routeStringSelectMenu,
-} from "./interactions/handleComponents.js";
-import { SqliteVcRankingRepository } from "./adapters/legacyDb/sqliteVcRankingRepository.js";
-import { PostgresVcRankingRepository } from "./adapters/legacyDb/postgresVcRankingRepository.js";
-import {
-  hydrateMessageIfPartial,
-  ingestMessageCreate,
-  ingestMessageCreatePostgres,
-  ingestMessageDelete,
-  ingestMessageDeletePostgres,
-  ingestMessageUpdate,
-  ingestMessageUpdatePostgres,
-  prepareMessageLogsDatabase,
-} from "./features/messageLog/index.js";
-import {
-  prepareMessageAttachmentStore,
-  prepareMessageAttachmentStorePostgres,
-  scheduleArchiveMessageAttachments,
-  scheduleArchiveMessageAttachmentsPostgres,
-} from "./features/messageLog/messageAttachmentArchive.js";
-import { ensurePostgresMessageLogsSchema } from "./features/messageLog/messageLogsSchema.js";
-import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
-import { destroyReminderDb } from "./features/reminders/reminderDb.js";
-import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
-import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
-import { createPostgresVcTempPersistence, createSqliteVcTempPersistence, ensurePostgresVcTempSchema } from "./features/vc/vcTempPersistence.js";
-import { ensurePostgresVcTimeSchema, ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
-import { ensurePacchiSchemaOnce, ensurePostgresPacchiSchema } from "./features/pacchi/pacchi.schema.js";
-import {
-  endOpenVcSessionForMember,
-  endOpenVcSessionForMemberPostgres,
-  reconcileVcTimeSessionsAtReady,
-  reconcileVcTimeSessionsAtReadyPostgres,
-  trackVoiceStateUpdate,
-  trackVoiceStateUpdatePostgres,
-} from "./features/vc/voiceSessionTracker.js";
-import { createUtilitiesMessageHandlers, runUtilitiesMessageChain } from "./features/utilities/utilitiesMessage.js";
-import { sendMemberLeaveEmbed } from "./features/utilities/leaveNotifier.js";
-import { handleExtendedAutoReplies } from "./message/extendedAutoReply.js";
-import { handleAiChatMonitorMessage } from "./features/ai/aiQueryService.js";
-import { copyAiHistoryFromMainToDedicatedDb } from "./features/ai/copyAiHistoryFromMain.js";
-import { copyRemindersFromMainToReminderDb } from "./features/reminders/copyRemindersFromMain.js";
-import { ensureAiHistorySchema, ensurePostgresAiHistorySchema } from "./features/ai/aiHistorySchema.js";
-import { ensureAiR18UserSettingsSchema } from "./features/ai/aiR18UserSettingsSchema.js";
+import { getReleaseBundleForLog } from "./core/releaseVersions.js";
 import { copyAutomodFromGuildSettingsIfMissing } from "./features/moderation/copyAutomodFromGuildSettings.js";
-import { ensureAutomoderationSchema, ensurePostgresAutomoderationSchema } from "./features/moderation/automodSchema.js";
-import { copyTicketDataFromMainToTicketDb } from "./features/tickets/copyTicketDataFromMain.js";
-import { ensurePostgresTicketDatabaseSchema, ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js";
-import { reconcileExecutionFlows } from "./features/execution/executionFlow.js";
-import { reconcileTimeoutExtendFlows } from "./features/execution/timeoutExtendFlow.js";
-import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
-import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "./features/modmail/modmailStaffFlow.js";
-import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
-import { handlePrefixMessage } from "./message/prefixHandlers.js";
-import { handleZigAutoReply } from "./features/zig/zigAutoReply.js";
-import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
-import { bindPostgresSenryuRepository, bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
-import { ensurePostgresSenryuSchema } from "./features/senryu/senryu.repository.js";
-import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
-import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "./features/japaneseAnalysis/japaneseWorkerProcess.js";
-import { ensurePostgresGameDealSchema } from "./features/gameDeals/postgresGameDealRepository.js";
-import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
-import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
-import { ensurePostgresLolWatcherSchema } from "./features/lolWatcher/lolWatcher.repository.js";
-import { reconcileWerewolfGames } from "./features/werewolf/werewolfGame.js";
-import {
-  ensureSqliteAiProviderSchema,
-  SqliteAiProviderBudgetRepository,
-  SqliteAiProviderSettingsRepository,
-} from "./features/ai/aiProviderRepository.js";
-import {
-  ensurePostgresAiProviderSchema,
-  PostgresAiProviderBudgetRepository,
-  PostgresAiProviderSettingsRepository,
-} from "./features/ai/postgresAiProviderRepository.js";
-import { AiProviderRouter } from "./features/ai/aiProviderRouter.js";
-import { ensurePostgresReminderSchema } from "./features/reminders/reminderDbSchema.js";
+import { bindPostgresSenryuRepository, bindSenryuRepository } from "./features/senryu/senryu.message-handler.js";
+import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
+import { createPostgresVcTempPersistence, createSqliteVcTempPersistence } from "./features/vc/vcTempPersistence.js";
 
 let mainStarted = false;
-
-async function pingPostgresKysely(label: string, db: Kysely<unknown>, expectedSchema: string): Promise<void> {
-  const result = await sql<{ schema: string | null }>`SELECT current_schema() AS schema`.execute(db);
-  const actualSchema = result.rows[0]?.schema ?? null;
-  if (actualSchema !== expectedSchema) {
-    throw new Error(
-      `PostgreSQL ${label} search_path resolved to ${actualSchema ?? "<none>"}; expected ${expectedSchema}`,
-    );
-  }
-  await sql`SELECT 1 AS ok`.execute(db);
-}
-
-async function ensurePostgresSchemaWithTemporaryPool(
-  connectionString: string,
-  schema: string,
-  migrations: PostgresMigration[],
-): Promise<void> {
-  const pool = await createPgPool(connectionString, schema);
-  try {
-    await applyPostgresMigrations(pool, migrations);
-  } finally {
-    await pool.end();
-  }
-}
 
 async function main(): Promise<void> {
   if (mainStarted) {
@@ -178,202 +59,12 @@ async function main(): Promise<void> {
     "config loaded (BOT_VERSION = code default or env override; release bundle from TypeScript)",
   );
 
-  const usePostgres = config.DB_DRIVER === "postgres";
-  const sqlite = usePostgres ? undefined : createSqliteDatabase(config.DATABASE_PATH);
-  const ticketSqlite = usePostgres ? undefined : createSqliteDatabase(config.TICKET_DATABASE_PATH);
-  const messageLogSqlite = usePostgres ? undefined : createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
-  // 19桁スノーフレークを Number で読むと精度が落ち、添付ストア検索が一致しない
-  messageLogSqlite?.defaultSafeIntegers(true);
-  const messageAttachmentStoreSqlite = usePostgres ? undefined : createSqliteDatabase(config.MESSAGE_ATTACHMENT_STORE_DB_PATH);
-  const vcTimeSqlite = usePostgres ? undefined : createSqliteDatabase(config.VC_TIME_DATABASE_PATH);
-  const aiHistorySqlite = usePostgres ? undefined : createSqliteDatabase(config.AI_HISTORY_DATABASE_PATH);
-  const automodSqlite = usePostgres ? undefined : createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
-  if (!usePostgres) {
-    ensureTicketDatabaseSchema(ticketSqlite!);
-    ensureVcTimeSchema(vcTimeSqlite!);
-    ensurePacchiSchemaOnce(sqlite!);
-    ensureAiR18UserSettingsSchema(sqlite!);
-    ensureAiHistorySchema(aiHistorySqlite!);
-    ensureAutomoderationSchema(automodSqlite!);
-    prepareMessageLogsDatabase(messageLogSqlite!);
-    prepareMessageAttachmentStore(messageAttachmentStoreSqlite!);
-  }
-  const db =
-    usePostgres
-      ? createPostgresMainKysely({
-          connectionString: config.DATABASE_URL!,
-          schema: config.POSTGRES_MAIN_SCHEMA,
-        })
-      : createKysely(sqlite!);
-  const ticketDb =
-    usePostgres
-      ? createPostgresTicketKysely({
-          connectionString: config.DATABASE_URL!,
-          schema: config.POSTGRES_TICKET_SCHEMA,
-        })
-      : createTicketKysely(ticketSqlite!);
-  const aiHistoryDb =
-    usePostgres
-      ? createPostgresAiHistoryKysely({
-          connectionString: config.DATABASE_URL!,
-          schema: config.POSTGRES_AI_HISTORY_SCHEMA,
-        })
-      : createAiHistoryKysely(aiHistorySqlite!);
-  const automodDb =
-    usePostgres
-      ? createPostgresAutomoderationKysely({
-          connectionString: config.DATABASE_URL!,
-          schema: config.POSTGRES_AUTOMOD_SCHEMA,
-        })
-      : createAutomoderationKysely(automodSqlite!);
-  const messageLogPgPool = usePostgres
-    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MESSAGE_LOG_SCHEMA)
-    : null;
-  const mainPgPool = usePostgres
-    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MAIN_SCHEMA)
-    : null;
-  if (mainPgPool) {
-    await applyPostgresMigrations(mainPgPool, [
-      { version: 1, name: "main_core_initial", apply: ensurePostgresMainSchema },
-      { version: 2, name: "game_deals_initial", apply: (pool) => ensurePostgresGameDealSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
-      { version: 3, name: "ai_provider_initial", apply: (pool) => ensurePostgresAiProviderSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
-      { version: 4, name: "senryu_initial", apply: ensurePostgresSenryuSchema },
-      { version: 5, name: "lol_watcher_initial", apply: ensurePostgresLolWatcherSchema },
-      { version: 6, name: "pacchi_initial", apply: ensurePostgresPacchiSchema },
-    ]);
-  }
-  if (usePostgres) {
-    await ensurePostgresSchemaWithTemporaryPool(
-      config.DATABASE_URL!,
-      config.POSTGRES_TICKET_SCHEMA,
-      [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }],
-    );
-    await ensurePostgresSchemaWithTemporaryPool(
-      config.DATABASE_URL!,
-      config.POSTGRES_AI_HISTORY_SCHEMA,
-      [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }],
-    );
-    await ensurePostgresSchemaWithTemporaryPool(
-      config.DATABASE_URL!,
-      config.POSTGRES_AUTOMOD_SCHEMA,
-      [{ version: 1, name: "automod_initial", apply: ensurePostgresAutomoderationSchema }],
-    );
-    await ensurePostgresSchemaWithTemporaryPool(
-      config.DATABASE_URL!,
-      config.POSTGRES_REMINDER_SCHEMA,
-      [{ version: 1, name: "reminder_initial", apply: ensurePostgresReminderSchema }],
-    );
-  }
-  const vcTimePgPool = usePostgres
-    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_VC_TIME_SCHEMA)
-    : null;
-  if (vcTimePgPool) {
-    await applyPostgresMigrations(vcTimePgPool, [
-      { version: 1, name: "vc_time_sessions_initial", apply: ensurePostgresVcTimeSchema },
-      { version: 2, name: "vc_temp_initial", apply: ensurePostgresVcTempSchema },
-    ]);
-  }
-  const messageAttachmentPgPool = usePostgres
-    ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MESSAGE_ATTACHMENT_SCHEMA)
-    : null;
-  if (messageLogPgPool) {
-    await applyPostgresMigrations(messageLogPgPool, [
-      { version: 1, name: "message_logs_initial", apply: ensurePostgresMessageLogsSchema },
-    ]);
-  }
-  if (messageAttachmentPgPool) {
-    await applyPostgresMigrations(messageAttachmentPgPool, [
-      { version: 1, name: "message_attachments_initial", apply: prepareMessageAttachmentStorePostgres },
-    ]);
-  }
-
-  try {
-    if (!usePostgres) {
-      sqlite!.prepare("SELECT 1").get();
-      ticketSqlite!.prepare("SELECT 1").get();
-      messageLogSqlite!.prepare("SELECT 1").get();
-      messageAttachmentStoreSqlite!.prepare("SELECT 1").get();
-      vcTimeSqlite!.prepare("SELECT 1").get();
-      aiHistorySqlite!.prepare("SELECT 1").get();
-      automodSqlite!.prepare("SELECT 1").get();
-    }
-    if (usePostgres) {
-      await pingPostgresKysely("main", db as Kysely<unknown>, config.POSTGRES_MAIN_SCHEMA);
-      await pingPostgresKysely("ticket", ticketDb as Kysely<unknown>, config.POSTGRES_TICKET_SCHEMA);
-      await pingPostgresKysely("aiHistory", aiHistoryDb as Kysely<unknown>, config.POSTGRES_AI_HISTORY_SCHEMA);
-      await pingPostgresKysely("automod", automodDb as Kysely<unknown>, config.POSTGRES_AUTOMOD_SCHEMA);
-    }
-    log.info(
-      {
-        main: config.DATABASE_PATH,
-        ticket: config.TICKET_DATABASE_PATH,
-        messageLog: config.MESSAGE_LOG_DB_PATH,
-        messageAttachmentStore: config.MESSAGE_ATTACHMENT_STORE_DB_PATH,
-        vcTime: config.VC_TIME_DATABASE_PATH,
-        aiHistory: config.AI_HISTORY_DATABASE_PATH,
-        automoderation: config.AUTOMODERATION_DATABASE_PATH,
-        reminderLazy: config.REMINDER_DATABASE_PATH,
-      },
-      config.DB_DRIVER === "postgres" ? "database connection ok (postgres runtime)" : "sqlite connection ok",
-    );
-  } catch (e) {
-    log.error({ err: e }, "database ping failed");
-    process.exit(1);
-  }
-
-  if (!usePostgres) {
-    ensureSqliteAiProviderSchema(sqlite as DatabaseLib.Database);
-  }
-  const aiProviderSettings = mainPgPool
-    ? new PostgresAiProviderSettingsRepository(mainPgPool)
-    : new SqliteAiProviderSettingsRepository(sqlite as DatabaseLib.Database);
-  const aiProviderBudget = mainPgPool
-    ? new PostgresAiProviderBudgetRepository(mainPgPool)
-    : new SqliteAiProviderBudgetRepository(sqlite as DatabaseLib.Database);
-  const aiRouter = new AiProviderRouter(config, aiProviderSettings, aiProviderBudget);
-
-  try {
-    if (usePostgres) {
-      log.info(
-        {
-          mainSchema: config.POSTGRES_MAIN_SCHEMA,
-          ticketSchema: config.POSTGRES_TICKET_SCHEMA,
-          messageLogSchema: config.POSTGRES_MESSAGE_LOG_SCHEMA,
-          vcTimeSchema: config.POSTGRES_VC_TIME_SCHEMA,
-        },
-        "sqlite migrations skipped because runtime databases are postgres",
-      );
-    } else {
-      const beforeV = getSqliteUserVersion(sqlite as DatabaseLib.Database);
-      const applied = applyPendingSqliteMigrations(sqlite as DatabaseLib.Database, {
-        beforeApplyVersion(version, mainDb) {
-          if (version === 10) {
-            copyTicketDataFromMainToTicketDb(mainDb, ticketSqlite!);
-          }
-          if (version === 11) {
-            copyAiHistoryFromMainToDedicatedDb(mainDb, aiHistorySqlite!);
-          }
-          if (version === 12) {
-            const rs = createSqliteDatabase(config.REMINDER_DATABASE_PATH);
-            try {
-              copyRemindersFromMainToReminderDb(mainDb, rs);
-            } finally {
-              rs.close();
-            }
-          }
-        },
-      });
-      const afterV = getSqliteUserVersion(sqlite as DatabaseLib.Database);
-      if (applied.length > 0) {
-        log.info({ applied, userVersion: afterV, previousVersion: beforeV, dbDriver: config.DB_DRIVER }, "sqlite migrations applied");
-      } else {
-        log.info({ userVersion: afterV, dbDriver: config.DB_DRIVER }, "sqlite schema up to date (no pending migrations)");
-      }
-    }
-  } catch (e) {
-    log.error({ err: e }, "sqlite migration failed");
-    process.exit(1);
-  }
+  const runtime = await createDatabaseRuntime(config, log);
+  const {
+    sqlite, ticketSqlite, messageLogSqlite, messageAttachmentStoreSqlite, vcTimeSqlite,
+    aiHistorySqlite, automodSqlite, db, ticketDb, aiHistoryDb, automodDb, messageLogPgPool, mainPgPool,
+    vcTimePgPool, messageAttachmentPgPool, aiRouter,
+  } = runtime;
 
   const client = createDiscordClient();
   log.info(
@@ -394,10 +85,10 @@ async function main(): Promise<void> {
     log,
     client,
     config,
-    vcTimePgPool ? createPostgresVcTempPersistence(vcTimePgPool) : createSqliteVcTempPersistence(sqlite as DatabaseLib.Database),
+    vcTimePgPool ? createPostgresVcTempPersistence(vcTimePgPool) : createSqliteVcTempPersistence(sqlite!),
   );
   if (mainPgPool) bindPostgresSenryuRepository(mainPgPool);
-  else bindSenryuRepository(sqlite as DatabaseLib.Database);
+  else bindSenryuRepository(sqlite!);
 
   const ctx: BotContext = {
     config,
@@ -420,10 +111,9 @@ async function main(): Promise<void> {
     gameDealPgPool: mainPgPool ?? undefined,
     vcRanking: vcTimePgPool
       ? new PostgresVcRankingRepository(vcTimePgPool, config.VC_TIME_RANKING_TIMEZONE)
-      : new SqliteVcRankingRepository(vcTimeSqlite as DatabaseLib.Database, config.VC_TIME_RANKING_TIMEZONE),
+      : new SqliteVcRankingRepository(vcTimeSqlite!, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
   };
-  const utilitiesBundle = createUtilitiesMessageHandlers(ctx);
   log.info(
     config.DB_DRIVER === "postgres"
       ? "repositories: PostgreSQL schemas selected for tickets, message log, attachments, VC, AI history, automoderation, reminders"
@@ -436,376 +126,21 @@ async function main(): Promise<void> {
     log.warn({ err: e }, "automod migration from guild_settings skipped or failed");
   }
 
-  const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
-  let presenceTimer: NodeJS.Timeout | undefined;
-  let reminderTimer: NodeJS.Timeout | undefined;
-  let gameDealTimer: NodeJS.Timeout | undefined;
-  let lolWatcher: LolWatcherController | null = null;
-  let japaneseWorker: JapaneseWorkerController | null = null;
-
-  client.once("clientReady", async () => {
-    const u = client.user;
-    log.info(
-      {
-        tag: u?.tag,
-        userId: u?.id,
-        guilds: client.guilds.cache.size,
-        usersCached: client.users.cache.size,
-      },
-      "discord gateway ready (clientReady)",
-    );
-    const g = client.guilds.cache.get(config.GUILD_ID);
-    if (!g) {
-      log.error({ expectedGuildId: config.GUILD_ID }, "bot is not a member of GUILD_ID");
-      if (config.GUILD_MISMATCH_POLICY !== "warn") {
-        process.exit(1);
-        return;
-      }
-    } else {
-      log.info({ guildId: g.id, guildName: g.name }, "target guild resolved");
-      try {
-        await reconcilePanelsForGuild(ctx, g.id);
-        log.info({ guildId: g.id }, "panel reconcile on startup completed");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "panel reconcile on startup failed");
-      }
-      try {
-        await restoreModmailUiState(ctx);
-        log.info({ guildId: g.id }, "modmail UI restore on startup completed");
-      } catch (err) {
-        log.warn({ err, guildId: g.id }, "modmail UI restore on startup failed");
-      }
-      try {
-        await reconcileExecutionFlows(ctx);
-        log.info({ guildId: g.id }, "execution flows reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "execution flow reconcile at startup failed");
-      }
-      try {
-        await reconcileTimeoutExtendFlows(ctx);
-        log.info({ guildId: g.id }, "timeout-extend flows reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "timeout-extend flow reconcile at startup failed");
-      }
-      try {
-        await reconcileWerewolfGames(ctx);
-        log.info({ guildId: g.id }, "werewolf games reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "werewolf reconcile at startup failed");
-      }
-      try {
-        if (vcTimePgPool) {
-          await reconcileVcTimeSessionsAtReadyPostgres(client, vcTimePgPool, config.GUILD_ID);
-        } else {
-          reconcileVcTimeSessionsAtReady(client, vcTimeSqlite!, config.GUILD_ID);
-        }
-        log.info({ guildId: g.id }, "vc_time sessions reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "vc_time reconcile at startup failed");
-      }
-      try {
-        await vcTemp.restoreFromDatabase(g.id);
-        log.info({ guildId: g.id }, "temporary VC tracking restored from database");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "temporary VC restore from database failed");
-      }
-      vcTemp.startSweep();
-    }
-    const runSync = () => {
-      void syncGuildApplicationCommands(config, log);
-    };
-    if (debounceMs > 0) {
-      log.info({ debounceMs }, "guild slash command sync scheduled");
-      setTimeout(runSync, debounceMs);
-    } else {
-      void runSync();
-    }
-    presenceTimer = startPresenceRotation(client, log, config.BOT_VERSION);
-    reminderTimer = startReminderScheduler(ctx);
-    gameDealTimer = startGameDealWatcher(ctx);
-    lolWatcher = await startLolWatcher(ctx);
-    log.info("startup tasks from clientReady finished (sync may still be in flight)");
+  const runtimeHandlers = await initializeRuntimeHandlersWithCleanup({
+    registerHandlers: () => registerRuntimeHandlers(ctx, { vcTimePgPool }),
+    closeDatabase: () => closeDatabaseRuntime(runtime),
+    destroyClient: () => client.destroy(),
+    warn: (err, message) => log.warn({ err }, message),
   });
-
-  client.on("interactionCreate", async (interaction) => {
-    try {
-      if (interaction.isChatInputCommand()) {
-        const command = interaction.commandName;
-        const userId = interaction.user.id;
-        log.info({ command, userId, interactionId: interaction.id }, "slash command received");
-        try {
-          await handleSlashCommand(interaction, ctx);
-          log.info({ command, userId, interactionId: interaction.id }, "slash command completed");
-        } catch (cmdErr) {
-          log.error({ err: cmdErr, command, userId, interactionId: interaction.id }, "slash command failed");
-          throw cmdErr;
-        }
-        return;
-      }
-      if (interaction.isButton()) {
-        log.debug(
-          { customId: interaction.customId, userId: interaction.user.id, interactionId: interaction.id },
-          "button interaction",
-        );
-        await routeButton(interaction, ctx);
-        log.debug({ customId: interaction.customId }, "button interaction completed");
-        return;
-      }
-      if (interaction.isModalSubmit()) {
-        log.debug(
-          { customId: interaction.customId, userId: interaction.user.id, interactionId: interaction.id },
-          "modal submit",
-        );
-        await routeModal(interaction, ctx);
-        log.debug({ customId: interaction.customId }, "modal submit completed");
-        return;
-      }
-      if (interaction.isStringSelectMenu()) {
-        log.debug(
-          { customId: interaction.customId, userId: interaction.user.id, interactionId: interaction.id },
-          "string select menu",
-        );
-        await routeStringSelectMenu(interaction, ctx);
-        log.debug({ customId: interaction.customId }, "string select menu completed");
-        return;
-      }
-      if (interaction.isChannelSelectMenu()) {
-        log.debug(
-          { customId: interaction.customId, userId: interaction.user.id, interactionId: interaction.id },
-          "channel select menu",
-        );
-        await routeChannelSelectMenu(interaction, ctx);
-        log.debug({ customId: interaction.customId }, "channel select menu completed");
-        return;
-      }
-    } catch (err) {
-      log.error(
-        { err, id: interaction.id, type: interaction.type },
-        "interaction handler error",
-      );
-      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-        await interaction
-          .reply({ content: "エラーが発生しました。", flags: MessageFlags.Ephemeral })
-          .catch(() => undefined);
-      }
-    }
-  });
-
-  client.on("messageCreate", async (message) => {
-    try {
-      if (!message.guild && !message.author.bot) {
-        if (await handleModmailDmMessage(ctx, message)) return;
-      }
-      if (message.guildId === config.GUILD_ID && !message.author.bot) {
-        const s = await getGuildSettingsData(db, message.guildId);
-        const ex = s.message_log_excluded_channel_ids ?? [];
-        const messageLogOptions = {
-          targetGuildId: config.GUILD_ID,
-          excludedChannelIds: ex,
-          botUserId: client.user?.id ?? "",
-        };
-        if (messageLogPgPool) {
-          await ingestMessageCreatePostgres(messageLogPgPool, message, messageLogOptions);
-        } else {
-          ingestMessageCreate(messageLogSqlite!, message, messageLogOptions);
-        }
-        if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-          if (messageAttachmentPgPool) {
-            scheduleArchiveMessageAttachmentsPostgres(
-              messageAttachmentPgPool,
-              config.MESSAGE_ATTACHMENT_FILES_DIR,
-              message,
-              log,
-            );
-          } else {
-            scheduleArchiveMessageAttachments(
-              messageAttachmentStoreSqlite,
-              config.MESSAGE_ATTACHMENT_FILES_DIR,
-              message,
-              log,
-            );
-          }
-        }
-        await trackStampMessage(message, ctx);
-        if (await routeModmailGuildThreadMessage(message, ctx)) return;
-      }
-      if (await handlePrefixMessage(message, ctx)) return;
-      if (await handleZigAutoReply(message, ctx)) return;
-      if (await handlePacchiMessage(ctx, message)) return;
-      await runUtilitiesMessageChain(utilitiesBundle, message);
-      if (await handleSenryuMessage(ctx, message)) return;
-      if (await handleExtendedAutoReplies(message, ctx)) return;
-      if (await handleAiChatMonitorMessage(message, ctx)) return;
-      await handleAutoModerationMessage(message, ctx);
-      await handleEmojiGuardMessage(message, ctx);
-    } catch (err) {
-      log.error({ err }, "messageCreate");
-    }
-  });
-
-  client.on("messageUpdate", async (_oldMessage, newMessage) => {
-    try {
-      const message = newMessage;
-      if (!message.guildId || message.author?.bot) return;
-      if (message.guildId !== config.GUILD_ID) return;
-      const s = await getGuildSettingsData(db, message.guildId);
-      const ex = s.message_log_excluded_channel_ids ?? [];
-      const messageLogOptions = {
-        targetGuildId: config.GUILD_ID,
-        excludedChannelIds: ex,
-        botUserId: client.user?.id ?? "",
-      };
-      if (messageLogPgPool) {
-        await ingestMessageUpdatePostgres(messageLogPgPool, message, messageLogOptions);
-      } else {
-        ingestMessageUpdate(messageLogSqlite!, message, messageLogOptions);
-      }
-      if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        if (messageAttachmentPgPool) {
-          scheduleArchiveMessageAttachmentsPostgres(
-            messageAttachmentPgPool,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            message,
-            log,
-          );
-        } else {
-          scheduleArchiveMessageAttachments(
-            messageAttachmentStoreSqlite,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            message,
-            log,
-          );
-        }
-      }
-    } catch (err) {
-      log.error({ err }, "messageUpdate");
-    }
-  });
-
-  client.on("messageDelete", async (message) => {
-    try {
-      if (!message.guildId || message.guildId !== config.GUILD_ID) return;
-      const s = await getGuildSettingsData(db, message.guildId);
-      const ex = s.message_log_excluded_channel_ids ?? [];
-      const target = await hydrateMessageIfPartial(message);
-      await cancelPendingRepliesBySource(ctx, target.id);
-      const messageLogOptions = {
-        targetGuildId: config.GUILD_ID,
-        excludedChannelIds: ex,
-        botUserId: client.user?.id ?? "",
-      };
-      if (messageLogPgPool) {
-        await ingestMessageDeletePostgres(messageLogPgPool, target, messageLogOptions);
-      } else {
-        ingestMessageDelete(messageLogSqlite!, target, messageLogOptions);
-      }
-      if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        if (messageAttachmentPgPool) {
-          scheduleArchiveMessageAttachmentsPostgres(
-            messageAttachmentPgPool,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            target,
-            log,
-          );
-        } else {
-          scheduleArchiveMessageAttachments(
-            messageAttachmentStoreSqlite,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            target,
-            log,
-          );
-        }
-      }
-    } catch (err) {
-      log.error({ err }, "messageDelete");
-    }
-  });
-
-  client.on("messageReactionAdd", async (reaction, user) => {
-    try {
-      const u = user.partial ? await user.fetch() : user;
-      await handleEmojiGuardReaction(reaction, u, ctx);
-      await trackStampReaction(reaction, u, ctx);
-    } catch (err) {
-      log.error({ err }, "messageReactionAdd");
-    }
-  });
-
-  client.on("voiceStateUpdate", (oldS, newS) => {
-    try {
-      if (vcTimePgPool) {
-        void trackVoiceStateUpdatePostgres(vcTimePgPool, oldS, newS, config.GUILD_ID).catch((err) => {
-          log.error({ err }, "voiceStateUpdate postgres tracking");
-        });
-      } else {
-        trackVoiceStateUpdate(vcTimeSqlite!, oldS, newS, config.GUILD_ID);
-      }
-      ctx.vcTemp.onVoiceStateUpdate(oldS, newS);
-    } catch (err) {
-      log.error({ err }, "voiceStateUpdate");
-    }
-  });
-
-  client.on("guildBanAdd", async (ban) => {
-    try {
-      await getDetecterService(ctx).onGuildBanAdd(ban);
-    } catch (err) {
-      log.error({ err }, "guildBanAdd");
-    }
-  });
-
-  client.on("guildMemberUpdate", async (before, after) => {
-    try {
-      await getDetecterService(ctx).onGuildMemberUpdate(before, after);
-    } catch (err) {
-      log.error({ err }, "guildMemberUpdate");
-    }
-  });
-
-  client.on("guildMemberRemove", async (member) => {
-    try {
-      if (member.guild.id !== config.GUILD_ID) return;
-      await getDetecterService(ctx).onGuildMemberRemove(member);
-      if (vcTimePgPool) {
-        await endOpenVcSessionForMemberPostgres(vcTimePgPool, member.guild.id, member.id);
-      } else {
-        endOpenVcSessionForMember(vcTimeSqlite!, member.guild.id, member.id);
-      }
-      await sendMemberLeaveEmbed(ctx, member);
-    } catch (err) {
-      log.error({ err }, "guildMemberRemove");
-    }
-  });
-
-  if (config.SENRYU_ENABLED) {
-    await initKuromojiTokenizer(config.SENRYU_KUROMOJI_DICT_PATH, log);
-  }
-  japaneseWorker = await startJapaneseWorkerIfEnabled(config, log);
-
-  log.info(
-    {
-      events: [
-        "interactionCreate",
-        "messageCreate",
-        "messageUpdate",
-        "messageDelete",
-        "messageReactionAdd",
-        "voiceStateUpdate",
-        "guildBanAdd",
-        "guildMemberUpdate",
-        "guildMemberRemove",
-      ],
-    },
-    "discord client event listeners registered",
-  );
-
   log.info("connecting to Discord (login)…");
   try {
-    await client.login(config.DISCORD_TOKEN);
-  } catch (err) {
-    await japaneseWorker?.stop().catch((stopErr) => {
-      log.warn({ err: stopErr }, "japanese worker shutdown after login failure failed");
+    await loginWithCleanup({
+      login: () => client.login(config.DISCORD_TOKEN),
+      shutdownHandlers: () => runtimeHandlers.shutdown(),
+      closeDatabase: () => closeDatabaseRuntime(runtime),
+      warn: (err, message) => log.warn({ err }, message),
     });
+  } catch (err) {
     if (err instanceof Error && (err as { code?: unknown }).code === "TokenInvalid") {
       throw new Error(
         "DISCORD_TOKEN was rejected by Discord. Regenerate the bot token in Discord Developer Portal > Bot > Reset Token, paste only the raw token into .env, then restart the bot.",
@@ -816,32 +151,16 @@ async function main(): Promise<void> {
   }
   log.info("discord login call returned (awaiting clientReady for full readiness)");
 
-  const shutdown = async () => {
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = () => shutdownPromise ??= (async () => {
     log.info("shutting down");
-    if (presenceTimer) clearInterval(presenceTimer);
-    if (reminderTimer) clearInterval(reminderTimer);
-    if (gameDealTimer) clearInterval(gameDealTimer);
-    lolWatcher?.stop();
-    await japaneseWorker?.stop();
-    ctx.vcTemp.stopSweep();
-    client.destroy();
-    await db.destroy();
-    await ticketDb.destroy();
-    await aiHistoryDb.destroy();
-    await automodDb.destroy();
-    await messageLogPgPool?.end();
-    await mainPgPool?.end();
-    await vcTimePgPool?.end();
-    await messageAttachmentPgPool?.end();
-    await destroyReminderDb();
-    messageLogSqlite?.close();
-    messageAttachmentStoreSqlite?.close();
-    vcTimeSqlite?.close();
-    ticketSqlite?.close();
-    aiHistorySqlite?.close();
-    sqlite?.close();
+    await shutdownWithCleanup({
+      shutdownHandlers: () => runtimeHandlers.shutdown(),
+      closeDatabase: () => closeDatabaseRuntime(runtime),
+      warn: (err, message) => log.warn({ err }, message),
+    });
     process.exit(0);
-  };
+  })();
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
 }

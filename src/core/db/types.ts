@@ -301,6 +301,8 @@ export interface PollsRow {
   kind: string;
   status: string;
   state: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  /** 楽観的ロック用。polls.state の更新ごとに単調増加する。 */
+  state_revision: Generated<number>;
   ends_at: string | null;
   created_at: Date;
   updated_at: Date;
