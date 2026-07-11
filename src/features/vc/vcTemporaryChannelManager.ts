@@ -13,7 +13,6 @@ import {
   type VoiceChannel,
   type VoiceState,
 } from "discord.js";
-import type DatabaseLib from "better-sqlite3";
 import type { BotContext } from "../../bot/context.js";
 import type { AppConfig } from "../../core/config.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
@@ -27,12 +26,7 @@ import {
   VC_NAME_MODAL_PREFIX,
 } from "./vcCreatorUi.js";
 import { messageComponentsHaveCustomId } from "../panels/componentPanelPayload.js";
-import {
-  vcTempDeleteTracked,
-  vcTempInsertTracked,
-  vcTempListTracked,
-  vcTempSetUserEverJoined,
-} from "./vcTempPersistence.js";
+import type { VcTempPersistence } from "./vcTempPersistence.js";
 
 const GRACE_NO_JOIN_MS = 24 * 60 * 60 * 1000;
 const EMPTY_DELETE_DEBOUNCE_MS = 1000;
@@ -105,7 +99,7 @@ export class VcTemporaryChannelManager {
     private readonly log: pino.Logger,
     private readonly client: Client,
     private readonly config: AppConfig,
-    private readonly sqlite: DatabaseLib.Database,
+    private readonly persistence: VcTempPersistence,
   ) {}
 
   startSweep(): void {
@@ -130,7 +124,7 @@ export class VcTemporaryChannelManager {
       const meta = this.activeVcs.get(joinedId);
       if (meta && !meta.userEverJoined) {
         meta.userEverJoined = true;
-        vcTempSetUserEverJoined(this.sqlite, joinedId);
+        void this.persistence.setUserEverJoined(joinedId).catch((err) => this.log.warn({ err, channelId: joinedId }, "temporary VC join state persist failed"));
       }
     }
 
@@ -143,7 +137,7 @@ export class VcTemporaryChannelManager {
     // 起動時: SQLite に残った一時VCをメモリへ載せ、空室なら削除処理へ回す
 
   async restoreFromDatabase(expectedGuildId: string): Promise<void> {
-    const rows = vcTempListTracked(this.sqlite);
+    const rows = await this.persistence.listTracked();
     for (const row of rows) {
       if (row.guildId !== expectedGuildId) {
         this.removeTracking(row.channelId);
@@ -168,7 +162,7 @@ export class VcTemporaryChannelManager {
 
   private removeTracking(channelId: string): void {
     this.activeVcs.delete(channelId);
-    vcTempDeleteTracked(this.sqlite, channelId);
+    void this.persistence.deleteTracked(channelId).catch((err) => this.log.warn({ err, channelId }, "temporary VC tracking delete failed"));
   }
 
   private async maybeDeleteEmptyVcById(channelId: string): Promise<void> {
@@ -266,7 +260,7 @@ export class VcTemporaryChannelManager {
         createdAtMs,
         userEverJoined: false,
       });
-      vcTempInsertTracked(this.sqlite, {
+      await this.persistence.insertTracked({
         channelId: vc.id,
         guildId: guild.id,
         createdAtMs,

@@ -71,10 +71,10 @@ function makeCtx(db: ReturnType<typeof makeDb>): BotContext {
 
 function makeRepo(): SenryuRepository {
   return {
-    saveSenryu(record: SenryuRecord): SavedSenryuRecord {
+    async saveSenryu(record: SenryuRecord): Promise<SavedSenryuRecord> {
       return { ...record, id: "saved" };
     },
-    deleteSenryu(): void {},
+    async deleteSenryu(): Promise<void> {},
   };
 }
 

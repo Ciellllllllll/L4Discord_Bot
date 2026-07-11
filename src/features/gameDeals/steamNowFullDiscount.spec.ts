@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type pino from "pino";
 import type { BotContext } from "../../bot/context.js";
 import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
+import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
 import { ensurePostgresGameDealSchema } from "./postgresGameDealRepository.js";
 import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 
@@ -52,11 +53,8 @@ function tempSchemaName(): string {
 }
 
 async function run(): Promise<boolean> {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    console.log("steamNowFullDiscount.spec.ts: DATABASE_URL is not set; skipping PostgreSQL runtime assertions");
-    return false;
-  }
+  const connectionString = getOptionalPostgresTestUrl("DATABASE_URL", "steamNowFullDiscount.spec.ts");
+  if (!connectionString) return false;
 
   const originalFetch = globalThis.fetch;
   const logs: unknown[] = [];

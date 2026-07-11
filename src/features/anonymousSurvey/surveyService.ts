@@ -1,5 +1,6 @@
 import type DatabaseLib from "better-sqlite3";
 import type { Kysely, Transaction } from "kysely";
+import type { PgQueryable } from "../../core/db/postgres.js";
 import { ulid } from "ulid";
 import { createSession, getSession } from "../../core/interactionSessions.js";
 import type { Database } from "../../core/db/types.js";
@@ -33,6 +34,26 @@ export function ensureAnonymousSurveySchema(db: DatabaseLib.Database): void {
       last_action TEXT NOT NULL CHECK (last_action IN ('answer', 'skip')),
       next_prompt_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      PRIMARY KEY (guild_id, user_id)
+    );
+  `);
+}
+
+export async function ensurePostgresAnonymousSurveySchema(pool: PgQueryable): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS anonymous_survey_responses (
+      id text PRIMARY KEY,
+      guild_id text NOT NULL,
+      rating integer NOT NULL CHECK (rating >= 1 AND rating <= 5),
+      created_at timestamptz NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS anonymous_survey_user_state (
+      guild_id text NOT NULL,
+      user_id text NOT NULL,
+      last_action text NOT NULL CHECK (last_action IN ('answer', 'skip')),
+      next_prompt_at timestamptz NOT NULL,
+      updated_at timestamptz NOT NULL,
       PRIMARY KEY (guild_id, user_id)
     );
   `);

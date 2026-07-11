@@ -1,6 +1,6 @@
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
-import { quotePgIdent } from "../../core/db/postgres.js";
+import { quotePgIdent, type PgQueryable } from "../../core/db/postgres.js";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type {
@@ -62,7 +62,7 @@ function legacyBooleanColumnMigrationSql(schema: string, schemaName: string, tab
   `;
 }
 
-export async function ensurePostgresGameDealSchema(pool: Pool, schemaName: string): Promise<void> {
+export async function ensurePostgresGameDealSchema(pool: PgQueryable, schemaName: string): Promise<void> {
   const schema = quotePgIdent(schemaName);
 
   await pool.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
@@ -1170,7 +1170,9 @@ export class PostgresGameDealRepository {
 
   async markSteamVerifyRetry(appid: string, reason: string, lastError: string | null): Promise<void> {
     const current = await this.pool.query<{ attempts: number }>("SELECT attempts FROM steam_verify_queue WHERE appid = $1", [appid]);
-    const attempts = (current.rows[0]?.attempts ?? 0) + 1;
+    const storedAttempts = Number(current.rows[0]?.attempts ?? 0);
+    // 旧SQLiteデータ移行で壊れた値が混在しても、バックオフ用カウンタでPostgreSQL整数範囲を超えないようにする。
+    const attempts = Number.isSafeInteger(storedAttempts) && storedAttempts >= 0 && storedAttempts < 60 ? storedAttempts + 1 : 1;
     const delayMs = Math.min(60 * 60 * 1000, 60_000 * attempts);
     await this.pool.query(
       `

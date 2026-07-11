@@ -8,7 +8,7 @@ import { buildSetupEntryButtonRow } from "../features/panels/setupWizard.js";
 import { reloadPanelsFromGuildSettings } from "../features/panels/panelService.js";
 import { runNologToggleAndBuildEmbed } from "../features/messageLog/messageLogNolog.js";
 import { handlePacchiPrefixMessage } from "../features/pacchi/pacchi.prefix.js";
-import { LolWatcherRepository } from "../features/lolWatcher/lolWatcher.repository.js";
+import { createLolWatcherRepository } from "../features/lolWatcher/lolWatcher.repository.js";
 
 const PREFIX = "!";
 
@@ -128,9 +128,9 @@ export async function handlePrefixMessage(message: Message, ctx: BotContext): Pr
       await message.reply("このチャンネルはLoL通知先に設定できません。").catch(() => undefined);
       return true;
     }
-    const repo = new LolWatcherRepository(ctx.sqlite);
-    const previousChannelId = repo.getNotificationChannelId();
-    repo.setNotificationChannelId(message.channelId);
+    const repo = createLolWatcherRepository(ctx);
+    const previousChannelId = await repo.getNotificationChannelId();
+    await repo.setNotificationChannelId(message.channelId);
     await message.reply(
       previousChannelId && previousChannelId !== message.channelId
         ? `LoL通知先を <#${previousChannelId}> からこのチャンネルに変更しました。`

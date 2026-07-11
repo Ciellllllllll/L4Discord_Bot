@@ -4,6 +4,7 @@ import {
   ensurePostgresGameDealSchema,
   PostgresGameDealRepository,
 } from "./postgresGameDealRepository.js";
+import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
 import type { CheapSharkDeal } from "./cheapSharkTypes.js";
 import type { GameDealSubscription, SteamFreeEvent } from "./gameDealTypes.js";
 
@@ -125,11 +126,8 @@ async function assertSchemaTables(pool: { query: PostgresGameDealRepository["poo
 async function run(): Promise<boolean> {
   await assertLegacyBooleanColumnMigrationsAreEmitted();
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    console.log("postgresGameDealRepository.spec.ts: DATABASE_URL is not set; skipping PostgreSQL integration assertions");
-    return false;
-  }
+  const connectionString = getOptionalPostgresTestUrl("DATABASE_URL", "postgresGameDealRepository.spec.ts");
+  if (!connectionString) return false;
 
   const schemaName = tempSchemaName();
   const pool = await createPgPool(connectionString, schemaName);

@@ -48,21 +48,21 @@ async function run(): Promise<void> {
   const originalRandom = Math.random;
   Math.random = () => 0;
   try {
-    const fixed = buildPacchiGeneratedReply(repo, guildId, "template");
+    const fixed = await buildPacchiGeneratedReply(repo, guildId, "template");
     assert.ok(fixed.length > 0);
     assert.equal(fixed.includes("草"), false);
 
-    const slot = buildPacchiGeneratedReply(repo, guildId, "slot-template");
+    const slot = await buildPacchiGeneratedReply(repo, guildId, "slot-template");
     assert.match(slot, /原神|猫|速い|話題/);
     assert.equal(slot.includes("草"), false);
 
-    const learned = buildPacchiGeneratedReply(repo, guildId, "learned-pattern");
+    const learned = await buildPacchiGeneratedReply(repo, guildId, "learned-pattern");
     assert.match(learned, /猫/);
     assert.match(learned, /速い/);
     assert.equal(learned.includes("草"), false);
 
-    const duplicateA = buildPacchiGeneratedReply(repo, "duplicate-guild", "template");
-    const duplicateB = buildPacchiGeneratedReply(repo, "duplicate-guild", "template");
+    const duplicateA = await buildPacchiGeneratedReply(repo, "duplicate-guild", "template");
+    const duplicateB = await buildPacchiGeneratedReply(repo, "duplicate-guild", "template");
     assert.notEqual(duplicateA, duplicateB);
   } finally {
     Math.random = originalRandom;

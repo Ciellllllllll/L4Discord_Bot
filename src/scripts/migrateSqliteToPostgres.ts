@@ -3,7 +3,21 @@ import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import { loadConfig } from "../core/config.js";
 import { createPgPool, quotePgIdent } from "../core/db/postgres.js";
+import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
+import { applyPostgresMigrations, type PostgresMigration } from "../core/db/postgresMigrations.js";
+import { ensurePostgresAiHistorySchema } from "../features/ai/aiHistorySchema.js";
 import { ensurePostgresAiProviderSchema } from "../features/ai/postgresAiProviderRepository.js";
+import { ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
+import { prepareMessageAttachmentStorePostgres } from "../features/messageLog/messageAttachmentArchive.js";
+import { ensurePostgresMessageLogsSchema } from "../features/messageLog/messageLogsSchema.js";
+import { ensurePostgresAutomoderationSchema } from "../features/moderation/automodSchema.js";
+import { ensurePostgresPacchiSchema } from "../features/pacchi/pacchi.schema.js";
+import { ensurePostgresReminderSchema } from "../features/reminders/reminderDbSchema.js";
+import { ensurePostgresSenryuSchema } from "../features/senryu/senryu.repository.js";
+import { ensurePostgresTicketDatabaseSchema } from "../features/tickets/ticketDbSchema.js";
+import { ensurePostgresVcTempSchema } from "../features/vc/vcTempPersistence.js";
+import { ensurePostgresVcTimeSchema } from "../features/vc/vcTimeSchema.js";
+import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
 
 type SqliteColumn = {
   cid: number | bigint;
@@ -42,9 +56,19 @@ const snowflakeColumns = new Set([
   "channel_id",
   "message_id",
   "user_id",
+  "executor_user_id",
   "author_id",
+  "audit_entry_id",
   "opener_id",
   "assignee_id",
+  "host_id",
+  "emoji_id",
+  "role_id",
+  "category_id",
+  "parent_channel_id",
+  "bot_user_id",
+  "webhook_id",
+  "application_id",
   "executor_id",
   "target_id",
   "thread_id",
@@ -103,7 +127,7 @@ async function ensureTable(pool: Awaited<ReturnType<typeof createPgPool>>, schem
   );
 }
 
-async function ensureUniqueIndexes(
+async function ensureSqliteIndexes(
   pool: Awaited<ReturnType<typeof createPgPool>>,
   sqlite: Database.Database,
   schema: string,
@@ -111,7 +135,7 @@ async function ensureUniqueIndexes(
 ): Promise<void> {
   const indexes = sqlite.prepare(`PRAGMA index_list(${quoteSqliteIdent(table)})`).all() as SqliteIndex[];
   for (const index of indexes) {
-    if (!index.unique) continue;
+    if (index.origin === "pk") continue;
     const cols = sqlite.prepare(`PRAGMA index_info(${quoteSqliteIdent(index.name)})`).all() as SqliteIndexColumn[];
     const names = cols
       .sort((a, b) => Number(a.seqno) - Number(b.seqno))
@@ -121,11 +145,11 @@ async function ensureUniqueIndexes(
     const indexName = `${schema}_${table}_${index.name}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 60);
     const partialWhere = index.partial ? sqliteIndexWhereClause(sqlite, index.name) : null;
     if (index.partial && !partialWhere) {
-      console.warn(`[skip] ${schema}.${table}.${index.name}: partial unique index WHERE clause could not be converted`);
+      console.warn(`[skip] ${schema}.${table}.${index.name}: partial index WHERE clause could not be converted`);
       continue;
     }
     await pool.query(
-      `create unique index if not exists ${quotePgIdent(indexName)} on ${quotePgIdent(schema)}.${quotePgIdent(table)} (${names.map(quotePgIdent).join(", ")})${partialWhere ? ` where ${partialWhere}` : ""}`,
+      `create ${index.unique ? "unique " : ""}index if not exists ${quotePgIdent(indexName)} on ${quotePgIdent(schema)}.${quotePgIdent(table)} (${names.map(quotePgIdent).join(", ")})${partialWhere ? ` where ${partialWhere}` : ""}`,
     );
   }
 }
@@ -165,7 +189,7 @@ async function copyTable(
   const columns = sqlite.prepare(`PRAGMA table_info(${quoteSqliteIdent(table)})`).all() as SqliteColumn[];
   if (columns.length === 0) return 0;
   await ensureTable(pool, schema, table, columns);
-  await ensureUniqueIndexes(pool, sqlite, schema, table);
+  await ensureSqliteIndexes(pool, sqlite, schema, table);
   await pool.query(`truncate table ${quotePgIdent(schema)}.${quotePgIdent(table)} restart identity cascade`);
 
   const rows = sqlite.prepare(`SELECT * FROM ${quoteSqliteIdent(table)}`).all() as Record<string, unknown>[];
@@ -207,6 +231,45 @@ async function copyTable(
   return rows.length;
 }
 
+async function ensureCanonicalSchemas(config: ReturnType<typeof loadConfig>): Promise<void> {
+  if (!config.DATABASE_URL) throw new Error("DATABASE_URL is required.");
+  const mainPool = await createPgPool(config.DATABASE_URL, config.POSTGRES_MAIN_SCHEMA);
+  try {
+    await applyPostgresMigrations(mainPool, [
+      { version: 1, name: "main_core_initial", apply: ensurePostgresMainSchema },
+      { version: 2, name: "game_deals_initial", apply: (pool) => ensurePostgresGameDealSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
+      { version: 3, name: "ai_provider_initial", apply: (pool) => ensurePostgresAiProviderSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
+      { version: 4, name: "senryu_initial", apply: ensurePostgresSenryuSchema },
+      { version: 5, name: "lol_watcher_initial", apply: ensurePostgresLolWatcherSchema },
+      { version: 6, name: "pacchi_initial", apply: ensurePostgresPacchiSchema },
+    ]);
+  } finally {
+    await mainPool.end();
+  }
+
+  const tasks: Array<[string, PostgresMigration[]]> = [
+    [config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]],
+    [config.POSTGRES_MESSAGE_LOG_SCHEMA, [{ version: 1, name: "message_logs_initial", apply: ensurePostgresMessageLogsSchema }]],
+    [config.POSTGRES_MESSAGE_ATTACHMENT_SCHEMA, [{ version: 1, name: "message_attachments_initial", apply: prepareMessageAttachmentStorePostgres }]],
+    [config.POSTGRES_VC_TIME_SCHEMA, [
+      { version: 1, name: "vc_time_sessions_initial", apply: ensurePostgresVcTimeSchema },
+      { version: 2, name: "vc_temp_initial", apply: ensurePostgresVcTempSchema },
+    ]],
+    [config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]],
+    [config.POSTGRES_AUTOMOD_SCHEMA, [{ version: 1, name: "automod_initial", apply: ensurePostgresAutomoderationSchema }]],
+    [config.POSTGRES_REMINDER_SCHEMA, [{ version: 1, name: "reminder_initial", apply: ensurePostgresReminderSchema }]],
+  ];
+
+  for (const [schema, migrations] of tasks) {
+    const pool = await createPgPool(config.DATABASE_URL, schema);
+    try {
+      await applyPostgresMigrations(pool, migrations);
+    } finally {
+      await pool.end();
+    }
+  }
+}
+
 async function migrateSource(pool: Awaited<ReturnType<typeof createPgPool>>, source: SourceDb): Promise<void> {
   if (!existsSync(source.path)) {
     console.warn(`[skip] ${source.label}: SQLite file not found: ${source.path}`);
@@ -246,8 +309,8 @@ async function main(): Promise<void> {
 
   try {
     // Generic SQLite introspection does not preserve DEFAULT/CHECK/FK clauses.
-    // Create the canonical AI tables first so copied rows land in the runtime-compatible schema.
-    await ensurePostgresAiProviderSchema(pool, config.POSTGRES_MAIN_SCHEMA);
+    // Create canonical runtime tables first so copied rows land in runtime-compatible schemas.
+    await ensureCanonicalSchemas(config);
     for (const source of sources) {
       await migrateSource(pool, source);
     }

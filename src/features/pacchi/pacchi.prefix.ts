@@ -9,7 +9,7 @@ import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
 import { readResponseArrayBufferWithLimit } from "../ai/fetchWithLimits.js";
 import { buildVerifiedPacchiPoem, pacchiVerifiedPoemFailureMessage } from "./pacchi.poem.js";
-import { createPacchiRepository } from "./pacchi.repository.js";
+import { createPacchiRepositoryForContext } from "./pacchi.repository.js";
 import { formatDuration, RATE_CONFIG } from "./pacchi.reply.js";
 import { parseLimit, sanitizeForReply } from "./pacchi.filters.js";
 import type { PacchiExportData, PacchiRate } from "./pacchi.types.js";
@@ -86,7 +86,7 @@ export async function handlePacchiPrefixMessage(
   lower: string,
   args: string[],
 ): Promise<boolean> {
-  const repo = createPacchiRepository(ctx.sqlite);
+  const repo = createPacchiRepositoryForContext(ctx);
   const guildId = message.guildId;
   if (!guildId) return false;
 
@@ -95,12 +95,12 @@ export async function handlePacchiPrefixMessage(
       case "pacchi_on":
         if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
         if (args[0] === "server") {
-          repo.setEnabled(guildId, true);
+          await repo.setEnabled(guildId, true);
           await replySafe(message, "ぱっちぃ機能をサーバー全体で有効にしました。");
           return true;
         }
         if (!args[0] || args[0] === "channel") {
-          repo.setChannelSettings(guildId, message.channelId, true, true);
+          await repo.setChannelSettings(guildId, message.channelId, true, true);
           await replySafe(message, "このチャンネルのぱっちぃ機能を有効にしました。");
           return true;
         }
@@ -110,12 +110,12 @@ export async function handlePacchiPrefixMessage(
       case "pacchi_off":
         if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
         if (args[0] === "server") {
-          repo.setEnabled(guildId, false);
+          await repo.setEnabled(guildId, false);
           await replySafe(message, "ぱっちぃ機能をサーバー全体で無効にしました。");
           return true;
         }
         if (!args[0] || args[0] === "channel") {
-          repo.setChannelSettings(guildId, message.channelId, false, false);
+          await repo.setChannelSettings(guildId, message.channelId, false, false);
           await replySafe(message, "このチャンネルのぱっちぃ機能を無効にしました。");
           return true;
         }
@@ -162,8 +162,8 @@ export async function handlePacchiPrefixMessage(
 
 async function handleChannel(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
-  const repo = createPacchiRepository(ctx.sqlite);
-  const current = repo.getChannelSettings(message.guildId!, message.channelId);
+  const repo = createPacchiRepositoryForContext(ctx);
+  const current = await repo.getChannelSettings(message.guildId!, message.channelId);
   let learn = current.learnEnabled;
   let talk = current.talkEnabled;
   for (let i = 0; i < args.length; i += 2) {
@@ -176,7 +176,7 @@ async function handleChannel(message: Message, ctx: BotContext, args: string[]):
     if (key === "learn") learn = value === "on";
     if (key === "talk") talk = value === "on";
   }
-  repo.setChannelSettings(message.guildId!, message.channelId, talk, learn);
+  await repo.setChannelSettings(message.guildId!, message.channelId, talk, learn);
   await replySafe(message, `このチャンネルの設定: 学習 ${learn ? "ON" : "OFF"} / 発話 ${talk ? "ON" : "OFF"}`);
   return true;
 }
@@ -188,17 +188,17 @@ async function handleRate(message: Message, ctx: BotContext, args: string[]): Pr
     await replySafe(message, "使い方: `!pacchi_rate silent|low|normal|high|unlimited`");
     return true;
   }
-  createPacchiRepository(ctx.sqlite).setRate(message.guildId!, rate);
+  await createPacchiRepositoryForContext(ctx).setRate(message.guildId!, rate);
   await replySafe(message, `自然発話頻度を ${rate} にしました。クールダウンは ${RATE_CONFIG[rate].cooldownSeconds} 秒です。`);
   return true;
 }
 
 async function handleStatus(message: Message, ctx: BotContext): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
-  const repo = createPacchiRepository(ctx.sqlite);
-  const settings = repo.getSettings(message.guildId!);
-  const channel = repo.getChannelSettings(message.guildId!, message.channelId);
-  const stats = repo.stats(message.guildId!);
+  const repo = createPacchiRepositoryForContext(ctx);
+  const settings = await repo.getSettings(message.guildId!);
+  const channel = await repo.getChannelSettings(message.guildId!, message.channelId);
+  const stats = await repo.stats(message.guildId!);
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 状態")
     .setColor(0x5865f2)
@@ -222,10 +222,10 @@ async function handleStatus(message: Message, ctx: BotContext): Promise<boolean>
 
 async function handleMemory(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
-  const repo = createPacchiRepository(ctx.sqlite);
+  const repo = createPacchiRepositoryForContext(ctx);
   const limit = parseLimit(args[0], 10, 50);
-  const stats = repo.stats(message.guildId!);
-  const words = repo.topWords(message.guildId!, limit);
+  const stats = await repo.stats(message.guildId!);
+  const words = await repo.topWords(message.guildId!, limit);
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 記憶")
     .setColor(0x5865f2)
@@ -237,7 +237,7 @@ async function handleMemory(message: Message, ctx: BotContext, args: string[]): 
 
 async function handleWords(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
-  const words = createPacchiRepository(ctx.sqlite).topWords(message.guildId!, parseLimit(args[0], 10, 50));
+  const words = await createPacchiRepositoryForContext(ctx).topWords(message.guildId!, parseLimit(args[0], 10, 50));
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ 単語ランキング")
     .setColor(0x5865f2)
@@ -248,19 +248,19 @@ async function handleWords(message: Message, ctx: BotContext, args: string[]): P
 
 async function handleForget(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
-  const repo = createPacchiRepository(ctx.sqlite);
+  const repo = createPacchiRepositoryForContext(ctx);
   const [kind, ...rest] = args;
   const target = rest.join(" ").trim();
   if (kind === "word" && target) {
-    await replySafe(message, `削除件数: ${repo.forgetWord(message.guildId!, target)}`);
+    await replySafe(message, `削除件数: ${await repo.forgetWord(message.guildId!, target)}`);
     return true;
   }
   if (kind === "phrase" && target) {
-    await replySafe(message, `削除件数: ${repo.forgetPhrase(message.guildId!, target)}`);
+    await replySafe(message, `削除件数: ${await repo.forgetPhrase(message.guildId!, target)}`);
     return true;
   }
   if (kind === "all" && rest[0] === "confirm") {
-    await replySafe(message, `削除件数: ${repo.forgetAll(message.guildId!)}`);
+    await replySafe(message, `削除件数: ${await repo.forgetAll(message.guildId!)}`);
     return true;
   }
   await replySafe(message, "使い方: `!pacchi_forget word 単語` / `!pacchi_forget phrase 短文` / `!pacchi_forget all confirm`");
@@ -269,9 +269,9 @@ async function handleForget(message: Message, ctx: BotContext, args: string[]): 
 
 async function handlePoem(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
   const pattern = args[0] ?? "";
-  const repo = createPacchiRepository(ctx.sqlite);
+  const repo = createPacchiRepositoryForContext(ctx);
   const result = ctx.config.JAPANESE_WORKER_ENABLED
-    ? await buildVerifiedPacchiPoem(pattern, repo.randomWords(message.guildId!, 40).map((w) => w.word), {
+    ? await buildVerifiedPacchiPoem(pattern, (await repo.randomWords(message.guildId!, 40)).map((w) => w.word), {
       baseUrl: ctx.config.JAPANESE_WORKER_URL,
       timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
     })
@@ -285,20 +285,20 @@ async function handlePoem(message: Message, ctx: BotContext, args: string[]): Pr
 
 export async function handleWorkStart(message: Message, ctx: BotContext, goalText: string): Promise<boolean> {
   const safeGoal = sanitizeForReply(goalText) ?? "";
-  const ok = createPacchiRepository(ctx.sqlite).startReport(message.guildId!, message.author.id, message.channelId, safeGoal);
+  const ok = await createPacchiRepositoryForContext(ctx).startReport(message.guildId!, message.author.id, message.channelId, safeGoal);
   await replySafe(message, ok ? "日報を開始しました。" : "既に日報を開始中です。先に `!pacchi_work_end` してください。");
   return true;
 }
 
 export async function handleWorkEnd(message: Message, ctx: BotContext, progressText: string): Promise<boolean> {
   const safeProgress = sanitizeForReply(progressText) ?? "";
-  const report = createPacchiRepository(ctx.sqlite).endReport(message.guildId!, message.author.id, safeProgress);
+  const report = await createPacchiRepositoryForContext(ctx).endReport(message.guildId!, message.author.id, safeProgress);
   await replySafe(message, report ? report.reportText : "開始中の日報がありません。");
   return true;
 }
 
 async function handleSleep(message: Message, ctx: BotContext): Promise<boolean> {
-  const latest = createPacchiRepository(ctx.sqlite).latestSleep(message.guildId!, message.author.id);
+  const latest = await createPacchiRepositoryForContext(ctx).latestSleep(message.guildId!, message.author.id);
   if (!latest) {
     await replySafe(message, "睡眠記録がありません。");
     return true;
@@ -309,7 +309,7 @@ async function handleSleep(message: Message, ctx: BotContext): Promise<boolean> 
 
 async function handleExport(message: Message, ctx: BotContext): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
-  const json = JSON.stringify(createPacchiRepository(ctx.sqlite).exportData(message.guildId!), null, 2);
+  const json = JSON.stringify(await createPacchiRepositoryForContext(ctx).exportData(message.guildId!), null, 2);
   const file = new AttachmentBuilder(Buffer.from(json, "utf8"), { name: "pacchi-memory.json" });
   await message.reply({ content: "ぱっちぃの学習データです。", files: [file], allowedMentions: SAFE_REPLY });
   return true;
@@ -363,7 +363,7 @@ async function handleImport(message: Message, ctx: BotContext): Promise<boolean>
     return true;
   }
   const data: PacchiExportData = parsed.data;
-  const result = createPacchiRepository(ctx.sqlite).importData(message.guildId!, data);
+  const result = await createPacchiRepositoryForContext(ctx).importData(message.guildId!, data);
   await replySafe(
     message,
     `インポートしました。単語 ${result.words} 件 / 短文 ${result.phrases} 件 / 絵文字 ${result.emojis} 件 / 形態素 ${result.lexicon} 件 / 文型 ${result.sentencePatterns} 件`,
