@@ -5,6 +5,7 @@ import {
   PostgresAiProviderBudgetRepository,
   PostgresAiProviderSettingsRepository,
 } from "./postgresAiProviderRepository.js";
+import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
 
 type CapturingPool = {
   queries: string[];
@@ -45,11 +46,8 @@ async function assertPostgresDdl(): Promise<void> {
 }
 
 async function assertPostgresIntegration(): Promise<boolean> {
-  const connectionString = process.env.TEST_DATABASE_URL;
-  if (!connectionString) {
-    console.log("postgresAiProviderRepository.spec.ts: TEST_DATABASE_URL is not set; skipping PostgreSQL integration assertions");
-    return false;
-  }
+  const connectionString = getOptionalPostgresTestUrl("TEST_DATABASE_URL", "postgresAiProviderRepository.spec.ts");
+  if (!connectionString) return false;
 
   const schemaName = tempSchemaName();
   const pool = await createPgPool(connectionString, schemaName);

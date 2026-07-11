@@ -15,10 +15,14 @@
     "migrate:debug": "cmd /c \"set BOT_PROFILE=debug&& tsx src/scripts/migrateSqlite.ts up\"",
     "migrate:sqlite-to-postgres": "tsx src/scripts/migrateSqliteToPostgres.ts",
     "verify:postgres-data": "tsx src/scripts/verifyPostgresData.ts",
+    "check:postgres-cutover": "tsx src/scripts/checkPostgresCutoverReadiness.ts",
     "verify:openai-terra": "tsx src/scripts/verifyOpenAiTerra.ts",
     "migrate:down": "tsx src/scripts/migrateSqlite.ts down",
     "merge:vc-time": "tsx src/scripts/mergeVcTimeDbs.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/run-postgres-specs.mjs",
+    "test:sqlite": "node scripts/run-specs.mjs",
+    "test:postgres": "node scripts/run-postgres-specs.mjs"
   },
   "engines": {
     "node": ">=20"

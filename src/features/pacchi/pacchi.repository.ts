@@ -1,4 +1,5 @@
 import type DatabaseLib from "better-sqlite3";
+import type { BotContext } from "../../bot/context.js";
 import { ulid } from "ulid";
 import type {
   PacchiChannelSettings,
@@ -22,6 +23,7 @@ import type {
 } from "./pacchi.types.js";
 import { RATE_CONFIG } from "./pacchi.reply.js";
 import { ensurePacchiSchemaOnce } from "./pacchi.schema.js";
+import { PostgresPacchiRepository } from "./postgresPacchiRepository.js";
 
 type SettingsRow = {
   guild_id: string;
@@ -783,3 +785,11 @@ export function createPacchiRepository(sqlite: DatabaseLib.Database) {
 }
 
 export type PacchiRepository = ReturnType<typeof createPacchiRepository>;
+
+export type PacchiRepositoryLike = PacchiRepository | PostgresPacchiRepository;
+
+export function createPacchiRepositoryForContext(ctx: BotContext): PacchiRepositoryLike {
+  if (ctx.gameDealPgPool) return new PostgresPacchiRepository(ctx.gameDealPgPool);
+  if (!ctx.sqlite) throw new Error("Pacchi SQLite repository is unavailable");
+  return createPacchiRepository(ctx.sqlite);
+}

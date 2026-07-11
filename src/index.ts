@@ -29,8 +29,9 @@ import {
 } from "./core/db/kysely.js";
 import { applyPendingSqliteMigrations, getSqliteUserVersion } from "./core/db/sqliteMigrations.js";
 import { createSqliteDatabase } from "./core/db/sqlite.js";
-import { createSyncPostgresCompatDatabase } from "./core/db/syncPostgresCompat.js";
 import { createPgPool } from "./core/db/postgres.js";
+import { ensurePostgresMainSchema } from "./core/db/postgresMainSchema.js";
+import { applyPostgresMigrations, type PostgresMigration } from "./core/db/postgresMigrations.js";
 import { createLogger } from "./core/logger.js";
 import { getDetecterService } from "./features/detecter/detecterService.js";
 import { handleAutoModerationMessage } from "./features/moderation/autoModerationMessage.js";
@@ -43,7 +44,7 @@ import {
   routeStringSelectMenu,
 } from "./interactions/handleComponents.js";
 import { SqliteVcRankingRepository } from "./adapters/legacyDb/sqliteVcRankingRepository.js";
-import { ensureAnonymousSurveySchema } from "./features/anonymousSurvey/surveyService.js";
+import { PostgresVcRankingRepository } from "./adapters/legacyDb/postgresVcRankingRepository.js";
 import {
   hydrateMessageIfPartial,
   ingestMessageCreate,
@@ -56,16 +57,18 @@ import {
 } from "./features/messageLog/index.js";
 import {
   prepareMessageAttachmentStore,
+  prepareMessageAttachmentStorePostgres,
   scheduleArchiveMessageAttachments,
   scheduleArchiveMessageAttachmentsPostgres,
 } from "./features/messageLog/messageAttachmentArchive.js";
+import { ensurePostgresMessageLogsSchema } from "./features/messageLog/messageLogsSchema.js";
 import { reconcilePanelsForGuild } from "./features/panels/panelService.js";
 import { destroyReminderDb } from "./features/reminders/reminderDb.js";
 import { startReminderScheduler } from "./features/reminders/reminderScheduler.js";
-import { ensureReminderSchema } from "./features/reminders/reminderDbSchema.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
-import { ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
-import { ensurePacchiSchemaOnce } from "./features/pacchi/pacchi.schema.js";
+import { createPostgresVcTempPersistence, createSqliteVcTempPersistence, ensurePostgresVcTempSchema } from "./features/vc/vcTempPersistence.js";
+import { ensurePostgresVcTimeSchema, ensureVcTimeSchema } from "./features/vc/vcTimeSchema.js";
+import { ensurePacchiSchemaOnce, ensurePostgresPacchiSchema } from "./features/pacchi/pacchi.schema.js";
 import {
   endOpenVcSessionForMember,
   endOpenVcSessionForMemberPostgres,
@@ -80,12 +83,12 @@ import { handleExtendedAutoReplies } from "./message/extendedAutoReply.js";
 import { handleAiChatMonitorMessage } from "./features/ai/aiQueryService.js";
 import { copyAiHistoryFromMainToDedicatedDb } from "./features/ai/copyAiHistoryFromMain.js";
 import { copyRemindersFromMainToReminderDb } from "./features/reminders/copyRemindersFromMain.js";
-import { ensureAiHistorySchema } from "./features/ai/aiHistorySchema.js";
+import { ensureAiHistorySchema, ensurePostgresAiHistorySchema } from "./features/ai/aiHistorySchema.js";
 import { ensureAiR18UserSettingsSchema } from "./features/ai/aiR18UserSettingsSchema.js";
 import { copyAutomodFromGuildSettingsIfMissing } from "./features/moderation/copyAutomodFromGuildSettings.js";
-import { ensureAutomoderationSchema } from "./features/moderation/automodSchema.js";
+import { ensureAutomoderationSchema, ensurePostgresAutomoderationSchema } from "./features/moderation/automodSchema.js";
 import { copyTicketDataFromMainToTicketDb } from "./features/tickets/copyTicketDataFromMain.js";
-import { ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js";
+import { ensurePostgresTicketDatabaseSchema, ensureTicketDatabaseSchema } from "./features/tickets/ticketDbSchema.js";
 import { reconcileExecutionFlows } from "./features/execution/executionFlow.js";
 import { reconcileTimeoutExtendFlows } from "./features/execution/timeoutExtendFlow.js";
 import { restoreModmailUiState } from "./features/modmail/modmailRestore.js";
@@ -94,14 +97,15 @@ import { handleModmailDmMessage } from "./features/modmail/modmailService.js";
 import { handlePrefixMessage } from "./message/prefixHandlers.js";
 import { handleZigAutoReply } from "./features/zig/zigAutoReply.js";
 import { initKuromojiTokenizer } from "./features/senryu/senryu.kuromoji.js";
-import { bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
+import { bindPostgresSenryuRepository, bindSenryuRepository, handleSenryuMessage } from "./features/senryu/senryu.message-handler.js";
+import { ensurePostgresSenryuSchema } from "./features/senryu/senryu.repository.js";
 import { handlePacchiMessage } from "./features/pacchi/pacchi.message-handler.js";
 import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "./features/japaneseAnalysis/japaneseWorkerProcess.js";
 import { ensurePostgresGameDealSchema } from "./features/gameDeals/postgresGameDealRepository.js";
 import { startGameDealWatcher } from "./features/gameDeals/gameDealWatcher.js";
 import { startLolWatcher, type LolWatcherController } from "./features/lolWatcher/lolWatcher.watcher.js";
+import { ensurePostgresLolWatcherSchema } from "./features/lolWatcher/lolWatcher.repository.js";
 import { reconcileWerewolfGames } from "./features/werewolf/werewolfGame.js";
-import type { RuntimeSqlDatabase } from "./bot/context.js";
 import {
   ensureSqliteAiProviderSchema,
   SqliteAiProviderBudgetRepository,
@@ -113,6 +117,7 @@ import {
   PostgresAiProviderSettingsRepository,
 } from "./features/ai/postgresAiProviderRepository.js";
 import { AiProviderRouter } from "./features/ai/aiProviderRouter.js";
+import { ensurePostgresReminderSchema } from "./features/reminders/reminderDbSchema.js";
 
 let mainStarted = false;
 
@@ -125,6 +130,19 @@ async function pingPostgresKysely(label: string, db: Kysely<unknown>, expectedSc
     );
   }
   await sql`SELECT 1 AS ok`.execute(db);
+}
+
+async function ensurePostgresSchemaWithTemporaryPool(
+  connectionString: string,
+  schema: string,
+  migrations: PostgresMigration[],
+): Promise<void> {
+  const pool = await createPgPool(connectionString, schema);
+  try {
+    await applyPostgresMigrations(pool, migrations);
+  } finally {
+    await pool.end();
+  }
 }
 
 async function main(): Promise<void> {
@@ -161,39 +179,24 @@ async function main(): Promise<void> {
   );
 
   const usePostgres = config.DB_DRIVER === "postgres";
-  const createRuntimeSqlDatabase = (sqlitePath: string, postgresSchema: string): RuntimeSqlDatabase =>
-    usePostgres
-      ? (createSyncPostgresCompatDatabase(config.DATABASE_URL!, postgresSchema) as unknown as RuntimeSqlDatabase)
-      : createSqliteDatabase(sqlitePath);
-
-  const sqlite = createRuntimeSqlDatabase(config.DATABASE_PATH, config.POSTGRES_MAIN_SCHEMA);
-  const ticketSqlite = createRuntimeSqlDatabase(config.TICKET_DATABASE_PATH, config.POSTGRES_TICKET_SCHEMA);
-  const messageLogSqlite = createRuntimeSqlDatabase(config.MESSAGE_LOG_DB_PATH, config.POSTGRES_MESSAGE_LOG_SCHEMA);
+  const sqlite = usePostgres ? undefined : createSqliteDatabase(config.DATABASE_PATH);
+  const ticketSqlite = usePostgres ? undefined : createSqliteDatabase(config.TICKET_DATABASE_PATH);
+  const messageLogSqlite = usePostgres ? undefined : createSqliteDatabase(config.MESSAGE_LOG_DB_PATH);
   // 19桁スノーフレークを Number で読むと精度が落ち、添付ストア検索が一致しない
-  messageLogSqlite.defaultSafeIntegers(true);
-  const messageAttachmentStoreSqlite = createRuntimeSqlDatabase(
-    config.MESSAGE_ATTACHMENT_STORE_DB_PATH,
-    config.POSTGRES_MESSAGE_ATTACHMENT_SCHEMA,
-  );
-  const vcTimeSqlite = createRuntimeSqlDatabase(config.VC_TIME_DATABASE_PATH, config.POSTGRES_VC_TIME_SCHEMA);
-  const aiHistorySqlite = createRuntimeSqlDatabase(config.AI_HISTORY_DATABASE_PATH, config.POSTGRES_AI_HISTORY_SCHEMA);
-  const automodSqlite = createRuntimeSqlDatabase(config.AUTOMODERATION_DATABASE_PATH, config.POSTGRES_AUTOMOD_SCHEMA);
-  ensureTicketDatabaseSchema(ticketSqlite as DatabaseLib.Database);
-  ensureVcTimeSchema(vcTimeSqlite as DatabaseLib.Database);
-  ensurePacchiSchemaOnce(sqlite as DatabaseLib.Database);
-  ensureAiR18UserSettingsSchema(sqlite as DatabaseLib.Database);
-  if (usePostgres) ensureAnonymousSurveySchema(sqlite as DatabaseLib.Database);
-  ensureAiHistorySchema(aiHistorySqlite as DatabaseLib.Database);
-  ensureAutomoderationSchema(automodSqlite as DatabaseLib.Database);
-  prepareMessageLogsDatabase(messageLogSqlite as DatabaseLib.Database);
-  prepareMessageAttachmentStore(messageAttachmentStoreSqlite as DatabaseLib.Database);
-  if (usePostgres) {
-    const reminderSqlite = createRuntimeSqlDatabase(config.REMINDER_DATABASE_PATH, config.POSTGRES_REMINDER_SCHEMA);
-    try {
-      ensureReminderSchema(reminderSqlite as DatabaseLib.Database);
-    } finally {
-      reminderSqlite.close();
-    }
+  messageLogSqlite?.defaultSafeIntegers(true);
+  const messageAttachmentStoreSqlite = usePostgres ? undefined : createSqliteDatabase(config.MESSAGE_ATTACHMENT_STORE_DB_PATH);
+  const vcTimeSqlite = usePostgres ? undefined : createSqliteDatabase(config.VC_TIME_DATABASE_PATH);
+  const aiHistorySqlite = usePostgres ? undefined : createSqliteDatabase(config.AI_HISTORY_DATABASE_PATH);
+  const automodSqlite = usePostgres ? undefined : createSqliteDatabase(config.AUTOMODERATION_DATABASE_PATH);
+  if (!usePostgres) {
+    ensureTicketDatabaseSchema(ticketSqlite!);
+    ensureVcTimeSchema(vcTimeSqlite!);
+    ensurePacchiSchemaOnce(sqlite!);
+    ensureAiR18UserSettingsSchema(sqlite!);
+    ensureAiHistorySchema(aiHistorySqlite!);
+    ensureAutomoderationSchema(automodSqlite!);
+    prepareMessageLogsDatabase(messageLogSqlite!);
+    prepareMessageAttachmentStore(messageAttachmentStoreSqlite!);
   }
   const db =
     usePostgres
@@ -201,28 +204,28 @@ async function main(): Promise<void> {
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_MAIN_SCHEMA,
         })
-      : createKysely(sqlite);
+      : createKysely(sqlite!);
   const ticketDb =
     usePostgres
       ? createPostgresTicketKysely({
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_TICKET_SCHEMA,
         })
-      : createTicketKysely(ticketSqlite);
+      : createTicketKysely(ticketSqlite!);
   const aiHistoryDb =
     usePostgres
       ? createPostgresAiHistoryKysely({
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_AI_HISTORY_SCHEMA,
         })
-      : createAiHistoryKysely(aiHistorySqlite);
+      : createAiHistoryKysely(aiHistorySqlite!);
   const automodDb =
     usePostgres
       ? createPostgresAutomoderationKysely({
           connectionString: config.DATABASE_URL!,
           schema: config.POSTGRES_AUTOMOD_SCHEMA,
         })
-      : createAutomoderationKysely(automodSqlite);
+      : createAutomoderationKysely(automodSqlite!);
   const messageLogPgPool = usePostgres
     ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MESSAGE_LOG_SCHEMA)
     : null;
@@ -230,24 +233,70 @@ async function main(): Promise<void> {
     ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MAIN_SCHEMA)
     : null;
   if (mainPgPool) {
-    await ensurePostgresGameDealSchema(mainPgPool, config.POSTGRES_MAIN_SCHEMA);
-    await ensurePostgresAiProviderSchema(mainPgPool, config.POSTGRES_MAIN_SCHEMA);
+    await applyPostgresMigrations(mainPgPool, [
+      { version: 1, name: "main_core_initial", apply: ensurePostgresMainSchema },
+      { version: 2, name: "game_deals_initial", apply: (pool) => ensurePostgresGameDealSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
+      { version: 3, name: "ai_provider_initial", apply: (pool) => ensurePostgresAiProviderSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
+      { version: 4, name: "senryu_initial", apply: ensurePostgresSenryuSchema },
+      { version: 5, name: "lol_watcher_initial", apply: ensurePostgresLolWatcherSchema },
+      { version: 6, name: "pacchi_initial", apply: ensurePostgresPacchiSchema },
+    ]);
+  }
+  if (usePostgres) {
+    await ensurePostgresSchemaWithTemporaryPool(
+      config.DATABASE_URL!,
+      config.POSTGRES_TICKET_SCHEMA,
+      [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }],
+    );
+    await ensurePostgresSchemaWithTemporaryPool(
+      config.DATABASE_URL!,
+      config.POSTGRES_AI_HISTORY_SCHEMA,
+      [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }],
+    );
+    await ensurePostgresSchemaWithTemporaryPool(
+      config.DATABASE_URL!,
+      config.POSTGRES_AUTOMOD_SCHEMA,
+      [{ version: 1, name: "automod_initial", apply: ensurePostgresAutomoderationSchema }],
+    );
+    await ensurePostgresSchemaWithTemporaryPool(
+      config.DATABASE_URL!,
+      config.POSTGRES_REMINDER_SCHEMA,
+      [{ version: 1, name: "reminder_initial", apply: ensurePostgresReminderSchema }],
+    );
   }
   const vcTimePgPool = usePostgres
     ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_VC_TIME_SCHEMA)
     : null;
+  if (vcTimePgPool) {
+    await applyPostgresMigrations(vcTimePgPool, [
+      { version: 1, name: "vc_time_sessions_initial", apply: ensurePostgresVcTimeSchema },
+      { version: 2, name: "vc_temp_initial", apply: ensurePostgresVcTempSchema },
+    ]);
+  }
   const messageAttachmentPgPool = usePostgres
     ? await createPgPool(config.DATABASE_URL!, config.POSTGRES_MESSAGE_ATTACHMENT_SCHEMA)
     : null;
+  if (messageLogPgPool) {
+    await applyPostgresMigrations(messageLogPgPool, [
+      { version: 1, name: "message_logs_initial", apply: ensurePostgresMessageLogsSchema },
+    ]);
+  }
+  if (messageAttachmentPgPool) {
+    await applyPostgresMigrations(messageAttachmentPgPool, [
+      { version: 1, name: "message_attachments_initial", apply: prepareMessageAttachmentStorePostgres },
+    ]);
+  }
 
   try {
-    sqlite.prepare("SELECT 1").get();
-    ticketSqlite.prepare("SELECT 1").get();
-    messageLogSqlite.prepare("SELECT 1").get();
-    messageAttachmentStoreSqlite.prepare("SELECT 1").get();
-    vcTimeSqlite.prepare("SELECT 1").get();
-    aiHistorySqlite.prepare("SELECT 1").get();
-    automodSqlite.prepare("SELECT 1").get();
+    if (!usePostgres) {
+      sqlite!.prepare("SELECT 1").get();
+      ticketSqlite!.prepare("SELECT 1").get();
+      messageLogSqlite!.prepare("SELECT 1").get();
+      messageAttachmentStoreSqlite!.prepare("SELECT 1").get();
+      vcTimeSqlite!.prepare("SELECT 1").get();
+      aiHistorySqlite!.prepare("SELECT 1").get();
+      automodSqlite!.prepare("SELECT 1").get();
+    }
     if (usePostgres) {
       await pingPostgresKysely("main", db as Kysely<unknown>, config.POSTGRES_MAIN_SCHEMA);
       await pingPostgresKysely("ticket", ticketDb as Kysely<unknown>, config.POSTGRES_TICKET_SCHEMA);
@@ -299,10 +348,10 @@ async function main(): Promise<void> {
       const applied = applyPendingSqliteMigrations(sqlite as DatabaseLib.Database, {
         beforeApplyVersion(version, mainDb) {
           if (version === 10) {
-            copyTicketDataFromMainToTicketDb(mainDb, ticketSqlite);
+            copyTicketDataFromMainToTicketDb(mainDb, ticketSqlite!);
           }
           if (version === 11) {
-            copyAiHistoryFromMainToDedicatedDb(mainDb, aiHistorySqlite);
+            copyAiHistoryFromMainToDedicatedDb(mainDb, aiHistorySqlite!);
           }
           if (version === 12) {
             const rs = createSqliteDatabase(config.REMINDER_DATABASE_PATH);
@@ -341,8 +390,14 @@ async function main(): Promise<void> {
     },
     "discord client created",
   );
-  const vcTemp = new VcTemporaryChannelManager(log, client, config, sqlite as DatabaseLib.Database);
-  bindSenryuRepository(sqlite as DatabaseLib.Database);
+  const vcTemp = new VcTemporaryChannelManager(
+    log,
+    client,
+    config,
+    vcTimePgPool ? createPostgresVcTempPersistence(vcTimePgPool) : createSqliteVcTempPersistence(sqlite as DatabaseLib.Database),
+  );
+  if (mainPgPool) bindPostgresSenryuRepository(mainPgPool);
+  else bindSenryuRepository(sqlite as DatabaseLib.Database);
 
   const ctx: BotContext = {
     config,
@@ -351,7 +406,9 @@ async function main(): Promise<void> {
     ticketDb,
     ticketSqlite,
     messageLogSqlite,
+    messageLogPgPool: messageLogPgPool ?? undefined,
     messageAttachmentStoreSqlite,
+    messageAttachmentPgPool: messageAttachmentPgPool ?? undefined,
     vcTimeSqlite,
     aiHistoryDb,
     aiHistorySqlite,
@@ -361,12 +418,16 @@ async function main(): Promise<void> {
     client,
     aiRouter,
     gameDealPgPool: mainPgPool ?? undefined,
-    vcRanking: new SqliteVcRankingRepository(vcTimeSqlite as DatabaseLib.Database, config.VC_TIME_RANKING_TIMEZONE),
+    vcRanking: vcTimePgPool
+      ? new PostgresVcRankingRepository(vcTimePgPool, config.VC_TIME_RANKING_TIMEZONE)
+      : new SqliteVcRankingRepository(vcTimeSqlite as DatabaseLib.Database, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
   };
   const utilitiesBundle = createUtilitiesMessageHandlers(ctx);
   log.info(
-    "repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db), AI history (AI_History.db), automoderation (Automoderation.db), reminders (reminder.db, on first use)",
+    config.DB_DRIVER === "postgres"
+      ? "repositories: PostgreSQL schemas selected for tickets, message log, attachments, VC, AI history, automoderation, reminders"
+      : "repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db), AI history (AI_History.db), automoderation (Automoderation.db), reminders (reminder.db, on first use)",
   );
 
   try {
@@ -436,7 +497,7 @@ async function main(): Promise<void> {
         if (vcTimePgPool) {
           await reconcileVcTimeSessionsAtReadyPostgres(client, vcTimePgPool, config.GUILD_ID);
         } else {
-          reconcileVcTimeSessionsAtReady(client, vcTimeSqlite, config.GUILD_ID);
+          reconcileVcTimeSessionsAtReady(client, vcTimeSqlite!, config.GUILD_ID);
         }
         log.info({ guildId: g.id }, "vc_time sessions reconciled at startup");
       } catch (err) {
@@ -462,7 +523,7 @@ async function main(): Promise<void> {
     presenceTimer = startPresenceRotation(client, log, config.BOT_VERSION);
     reminderTimer = startReminderScheduler(ctx);
     gameDealTimer = startGameDealWatcher(ctx);
-    lolWatcher = startLolWatcher(ctx);
+    lolWatcher = await startLolWatcher(ctx);
     log.info("startup tasks from clientReady finished (sync may still be in flight)");
   });
 
@@ -546,7 +607,7 @@ async function main(): Promise<void> {
         if (messageLogPgPool) {
           await ingestMessageCreatePostgres(messageLogPgPool, message, messageLogOptions);
         } else {
-          ingestMessageCreate(messageLogSqlite, message, messageLogOptions);
+          ingestMessageCreate(messageLogSqlite!, message, messageLogOptions);
         }
         if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
           if (messageAttachmentPgPool) {
@@ -597,7 +658,7 @@ async function main(): Promise<void> {
       if (messageLogPgPool) {
         await ingestMessageUpdatePostgres(messageLogPgPool, message, messageLogOptions);
       } else {
-        ingestMessageUpdate(messageLogSqlite, message, messageLogOptions);
+        ingestMessageUpdate(messageLogSqlite!, message, messageLogOptions);
       }
       if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
         if (messageAttachmentPgPool) {
@@ -636,7 +697,7 @@ async function main(): Promise<void> {
       if (messageLogPgPool) {
         await ingestMessageDeletePostgres(messageLogPgPool, target, messageLogOptions);
       } else {
-        ingestMessageDelete(messageLogSqlite, target, messageLogOptions);
+        ingestMessageDelete(messageLogSqlite!, target, messageLogOptions);
       }
       if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
         if (messageAttachmentPgPool) {
@@ -677,7 +738,7 @@ async function main(): Promise<void> {
           log.error({ err }, "voiceStateUpdate postgres tracking");
         });
       } else {
-        trackVoiceStateUpdate(vcTimeSqlite, oldS, newS, config.GUILD_ID);
+        trackVoiceStateUpdate(vcTimeSqlite!, oldS, newS, config.GUILD_ID);
       }
       ctx.vcTemp.onVoiceStateUpdate(oldS, newS);
     } catch (err) {
@@ -708,7 +769,7 @@ async function main(): Promise<void> {
       if (vcTimePgPool) {
         await endOpenVcSessionForMemberPostgres(vcTimePgPool, member.guild.id, member.id);
       } else {
-        endOpenVcSessionForMember(vcTimeSqlite, member.guild.id, member.id);
+        endOpenVcSessionForMember(vcTimeSqlite!, member.guild.id, member.id);
       }
       await sendMemberLeaveEmbed(ctx, member);
     } catch (err) {
@@ -773,12 +834,12 @@ async function main(): Promise<void> {
     await vcTimePgPool?.end();
     await messageAttachmentPgPool?.end();
     await destroyReminderDb();
-    messageLogSqlite.close();
-    messageAttachmentStoreSqlite.close();
-    vcTimeSqlite.close();
-    ticketSqlite.close();
-    aiHistorySqlite.close();
-    sqlite.close();
+    messageLogSqlite?.close();
+    messageAttachmentStoreSqlite?.close();
+    vcTimeSqlite?.close();
+    ticketSqlite?.close();
+    aiHistorySqlite?.close();
+    sqlite?.close();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());

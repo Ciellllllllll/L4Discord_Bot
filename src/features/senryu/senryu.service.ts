@@ -252,7 +252,7 @@ export async function runSenryuPipeline(
 
   if (config.SENRYU_SAVE_ENABLED) {
     try {
-      const rec = repo.saveSenryu({
+      const rec = await repo.saveSenryu({
         guildId: message.guild!.id,
         channelId: message.channel.id,
         messageId: message.id,
@@ -297,7 +297,7 @@ export async function runSenryuPipeline(
 
     if (savedId) {
       try {
-        repo.deleteSenryu(savedId);
+        await repo.deleteSenryu(savedId);
         log.info({ ...base, recordId: savedId }, "senryu rollback ok");
       } catch (rbErr) {
         log.error({ ...base, err: rbErr, recordId: savedId }, "senryu rollback failed");

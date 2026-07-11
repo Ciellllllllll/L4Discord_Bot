@@ -8,20 +8,17 @@ import type {
   ReminderDatabase,
   TicketDatabase,
 } from "./types.js";
+import { pgSearchPathOption } from "./postgres.js";
 
 export type PostgresKyselyOptions = {
   connectionString: string;
   schema: string;
 };
 
-function quotePgSearchPathIdent(name: string): string {
-  return `"${String(name).replace(/"/g, '""')}"`;
-}
-
 function createPostgresKysely<T>(options: PostgresKyselyOptions): Kysely<T> {
   const pool = new Pool({
     connectionString: options.connectionString,
-    options: `-c search_path=${quotePgSearchPathIdent(options.schema)},public`,
+    options: `-c search_path=${pgSearchPathOption(options.schema)},public`,
   });
   return new Kysely<T>({
     dialect: new PostgresDialect({ pool }),

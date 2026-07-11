@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import ts from "typescript";
@@ -10,7 +10,7 @@ const sourceFiles = execFileSync("git", ["ls-files", "src/**/*.ts"], {
   encoding: "utf8",
 })
   .split(/\r?\n/)
-  .filter((file) => file && !file.endsWith(".spec.ts"));
+  .filter((file) => file && existsSync(file) && !file.endsWith(".spec.ts"));
 
 const offenders: string[] = [];
 
