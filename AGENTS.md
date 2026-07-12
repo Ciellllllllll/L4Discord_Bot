@@ -60,6 +60,10 @@ Pull requests should describe the user-visible behavior change, list tests run, 
 
 Do not commit `.env`, bot tokens, database files, or generated runtime data. Use `.env.example` for documenting configuration. When adding Discord interactions, validate permissions in handlers even if slash command defaults restrict access.
 
+## Codex / Superpowers Generated Files
+
+Do not add, stage, or commit `.codex/`, `.superpowers/`, or `docs/superpowers/` artifacts. These paths are local Codex/Superpowers working state and implementation-planning output; keep them ignored even when inspecting or preparing commits.
+
 ## Database Development Policy
 
 New features that require persistent storage must be designed and implemented for PostgreSQL first. Do not add new SQLite-only schemas or repositories for new functionality. If legacy SQLite-compatible code must be touched, keep PostgreSQL runtime behavior, migrations, and data migration compatibility in scope.
