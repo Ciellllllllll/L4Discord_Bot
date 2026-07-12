@@ -161,6 +161,7 @@ async function run(): Promise<void> {
   assert.equal(extraMedia.tweet.media[1]?.kind, "photo");
 
   const payload = buildVxTwitterPreviewPayload(preview.tweet, "https://vxtwitter.com/main/status/123", {
+    model: "gpt-5.4-mini",
     main: {
       shouldTranslate: true,
       sourceLanguage: "en",
@@ -185,6 +186,7 @@ async function run(): Promise<void> {
   assert.doesNotMatch(text ?? "", /本文\nhttps:\/\/t\.co\/short/);
   assert.doesNotMatch(text ?? "", /### 本文/);
   assert.match(text ?? "", /本文の日本語訳です。/);
+  assert.match(text ?? "", /-# この投稿は gpt-5\.4-mini によって翻訳されました。Made by Ciel/);
   assert.doesNotMatch(text ?? "", /引用本文がここに入ります/);
   assert.match(text ?? "", /> 引用: @quote 引用文の日本語訳です。/);
   assert.match(text ?? "", /2026\/07\/07 \/ 💬 1 \/ 🔁 2 \/ ❤️ 10 \/ 👁️ 300/);
@@ -202,11 +204,14 @@ async function run(): Promise<void> {
     | APIActionRowComponent<APIButtonComponent>
     | undefined;
   const galleryIndex = container?.components.findIndex((component) => component.type === ComponentType.MediaGallery) ?? -1;
+  const attributionIndex = container?.components.findIndex(
+    (component) => component.type === ComponentType.TextDisplay && component.content.includes("Made by Ciel"),
+  ) ?? -1;
   const metaIndex = container?.components.findIndex(
     (component) => component.type === ComponentType.TextDisplay && component.content.includes("2026/07/07"),
   ) ?? -1;
   const rowIndex = container?.components.findIndex((component) => component.type === ComponentType.ActionRow) ?? -1;
-  assert.ok(galleryIndex >= 0 && metaIndex > galleryIndex && rowIndex > metaIndex);
+  assert.ok(attributionIndex > 0 && galleryIndex > attributionIndex && metaIndex > galleryIndex && rowIndex > metaIndex);
   assert.equal(row?.components.length, 2);
   assert.equal((row?.components[0] as { label?: string } | undefined)?.label, "Xで開く");
   assert.equal((row?.components[1] as { label?: string } | undefined)?.label, "原文を表示");

@@ -457,6 +457,11 @@ function buildMetaDisplay(tweet: TweetPreview): APITextDisplayComponent | null {
   };
 }
 
+function buildTranslationAttribution(translations: VxTwitterTextTranslations | undefined): APITextDisplayComponent | null {
+  if (!hasUsefulTranslation(translations) || !translations?.model) return null;
+  return { type: ComponentType.TextDisplay, content: `-# この投稿は ${translations.model.slice(0, 120)} によって翻訳されました。Made by Ciel` };
+}
+
 function mediaDisplayUrl(media: TweetMedia): string {
   return media.url;
 }
@@ -503,9 +508,11 @@ export function buildVxTwitterPreviewPayload(
 ): VxTwitterPreviewPayload {
   const body = buildBodyComponent(tweet, translations, displayMode);
   const gallery = buildMediaGallery(tweet);
+  const attribution = buildTranslationAttribution(translations);
   const meta = buildMetaDisplay(tweet);
   const components: APIComponentInContainer[] = [
     body,
+    ...(attribution ? [attribution] : []),
     ...(gallery ? [gallery] : []),
     ...(meta ? [meta] : []),
     buildLinkRow(tweet, translations, displayMode),
