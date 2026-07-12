@@ -8,15 +8,44 @@ import {
   nextPromptAfterAnswer,
   recordAnonymousSurveyAnswer,
   recordAnonymousSurveySkip,
+  parseAnonymousSurveySessionPayload,
+  getAnonymousSurveySession,
+  consumeAnonymousSurveySession,
 } from "./surveyService.js";
 
 function makeDb() {
   const sqlite = new Database(":memory:");
   ensureAnonymousSurveySchema(sqlite);
+  sqlite.exec("CREATE TABLE interaction_sessions (id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, domain TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL, executor_user_id TEXT, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)");
   return { sqlite, db: createKysely(sqlite) };
 }
 
 async function run(): Promise<void> {
+  assert.deepEqual(parseAnonymousSurveySessionPayload({
+    command: { commandName: "help", guildId: "guild", channelId: "channel", userId: "user", options: [] },
+  }), {
+    command: { commandName: "help", guildId: "guild", channelId: "channel", userId: "user", options: [] },
+  });
+  for (const invalid of ["{", null, [], {}, { command: { commandName: "help", guildId: "guild", channelId: "channel", userId: "user", options: [{ name: "bad", type: 3, value: {} }] } }]) {
+    assert.equal(parseAnonymousSurveySessionPayload(invalid), null);
+  }
+  {
+    const { sqlite, db } = makeDb();
+    try {
+      const insert = sqlite.prepare("INSERT INTO interaction_sessions (id, guild_id, domain, action, payload, executor_user_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+      insert.run("invalid-get", "guild", "anonymousSurvey", "slashGate", "{", "user", "2099-01-01T00:00:00.000Z", "now");
+      assert.equal(await getAnonymousSurveySession(db, "invalid-get"), null);
+      assert.equal(sqlite.prepare("SELECT 1 FROM interaction_sessions WHERE id = ?").get("invalid-get"), undefined);
+      insert.run("invalid-consume", "guild", "anonymousSurvey", "slashGate", "{}", "user", "2099-01-01T00:00:00.000Z", "now");
+      assert.equal(await consumeAnonymousSurveySession(db, "invalid-consume", "user"), null);
+      assert.equal(sqlite.prepare("SELECT 1 FROM interaction_sessions WHERE id = ?").get("invalid-consume"), undefined);
+      insert.run("mismatched-guild", "guild", "anonymousSurvey", "slashGate", JSON.stringify({ command: { commandName: "help", guildId: "other", channelId: "channel", userId: "user", options: [] } }), "user", "2099-01-01T00:00:00.000Z", "now");
+      assert.equal(await getAnonymousSurveySession(db, "mismatched-guild"), null);
+      assert.equal(sqlite.prepare("SELECT 1 FROM interaction_sessions WHERE id = ?").get("mismatched-guild"), undefined);
+    } finally {
+      await db.destroy();
+    }
+  }
   {
     const { sqlite, db } = makeDb();
     try {

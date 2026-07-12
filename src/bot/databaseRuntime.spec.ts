@@ -8,6 +8,7 @@ import pino from "pino";
 import { loadConfig } from "../core/config.js";
 import { createPgPool, quotePgIdent } from "../core/db/postgres.js";
 import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
+import { getGuildSettingsData, upsertGuildSettingsData } from "../core/guildSettings.js";
 import { getOptionalPostgresTestUrl } from "../test/postgresTestEnv.js";
 import { closeDatabaseRuntime, createDatabaseRuntime, createDatabaseRuntimeWithCleanup } from "./databaseRuntime.js";
 
@@ -49,6 +50,8 @@ test("createDatabaseRuntime initializes and closes every SQLite runtime database
     assert.ok(runtime.vcTimeSqlite);
     assert.ok(runtime.aiHistorySqlite);
     assert.ok(runtime.automodSqlite);
+    const settingsColumns = runtime.sqlite.prepare("PRAGMA table_info(guild_settings)").all() as Array<{ name: string }>;
+    assert.equal(settingsColumns.some((column) => column.name === "revision"), true);
     await closeDatabaseRuntime(runtime);
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -140,6 +143,16 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
       const result = await sql<{ schema: string | null }>`SELECT current_schema() AS schema`.execute(database);
       assert.equal(result.rows[0]?.schema, schema);
     }
+    await Promise.all([
+      upsertGuildSettingsData(runtime.db, "guild", { ai_thinking_enabled: true }),
+      upsertGuildSettingsData(runtime.db, "guild", { member_leave_channel_id: "channel" }),
+    ]);
+    assert.deepEqual(await getGuildSettingsData(runtime.db, "guild"), {
+      ai_thinking_enabled: true,
+      member_leave_channel_id: "channel",
+    });
+    const settingsRevision = await runtime.mainPgPool.query<{ revision: number }>("SELECT revision FROM guild_settings WHERE guild_id = $1", ["guild"]);
+    assert.equal(settingsRevision.rows[0]?.revision, 2);
     await closeDatabaseRuntime(runtime);
     await assert.rejects(runtime.mainPgPool!.query("SELECT 1"));
     await assert.rejects(sql`SELECT 1`.execute(runtime.db));
@@ -152,7 +165,7 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
   }
 });
 
-test("createDatabaseRuntime applies the v7 polls state revision migration to an existing main schema", async () => {
+test("createDatabaseRuntime applies pending polls and guild settings revision migrations", async () => {
   const connectionString = getOptionalPostgresTestUrl("TEST_DATABASE_URL", "databaseRuntime.spec.ts");
   if (!connectionString) return;
 
@@ -173,6 +186,7 @@ test("createDatabaseRuntime applies the v7 polls state revision migration to an 
   try {
     await adminPool.query(`CREATE SCHEMA ${quotePgIdent(schemas.main)}`);
     await adminPool.query(`CREATE TABLE ${quotePgIdent(schemas.main)}.polls (id text PRIMARY KEY)`);
+    await adminPool.query(`CREATE TABLE ${quotePgIdent(schemas.main)}.guild_settings (guild_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}'::jsonb, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
     await adminPool.query(`
       CREATE TABLE ${quotePgIdent(schemas.main)}.postgres_schema_migrations (
         version integer PRIMARY KEY,
@@ -207,6 +221,14 @@ test("createDatabaseRuntime applies the v7 polls state revision migration to an 
       [schemas.main],
     );
     assert.deepEqual(result.rows, [{ data_type: "bigint", version: 7 }]);
+    const guildSettingsRevision = await adminPool.query<{ data_type: string; version: number }>(
+      `SELECT columns.data_type, migrations.version
+       FROM information_schema.columns AS columns
+       JOIN ${quotePgIdent(schemas.main)}.postgres_schema_migrations AS migrations ON migrations.version = 8
+       WHERE columns.table_schema = $1 AND columns.table_name = 'guild_settings' AND columns.column_name = 'revision'`,
+      [schemas.main],
+    );
+    assert.deepEqual(guildSettingsRevision.rows, [{ data_type: "integer", version: 8 }]);
   } finally {
     if (runtime) await closeDatabaseRuntime(runtime);
     for (const schema of Object.values(schemas)) {

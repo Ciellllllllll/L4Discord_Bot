@@ -5,7 +5,8 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
     CREATE TABLE IF NOT EXISTS guild_settings (
       guild_id text PRIMARY KEY,
       data jsonb NOT NULL DEFAULT '{}'::jsonb,
-      updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      revision integer NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS interaction_sessions (

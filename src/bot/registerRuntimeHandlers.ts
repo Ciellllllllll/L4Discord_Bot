@@ -1,4 +1,4 @@
-import { MessageFlags } from "discord.js";
+import { MessageFlags, type RepliableInteraction } from "discord.js";
 import type { BotContext } from "./context.js";
 import { startPresenceRotation } from "./presence.js";
 import { syncGuildApplicationCommands } from "./syncCommands.js";
@@ -83,6 +83,27 @@ export function createRuntimeShutdown(options: RuntimeResources & RuntimeCoreRes
 export function shutdownModerationFlowRuntimes(): void {
   shutdownExecutionFlowRuntime();
   shutdownTimeoutExtendFlowRuntime();
+}
+
+export async function respondToInteractionError(
+  interaction: RepliableInteraction,
+  onFailure: (error: unknown, method: "reply" | "editReply" | "followUp") => void = () => undefined,
+): Promise<void> {
+  const content = "エラーが発生しました。";
+  if (!interaction.replied && !interaction.deferred) {
+    const replied = await interaction.reply({ content, flags: MessageFlags.Ephemeral })
+      .then(() => true)
+      .catch((error) => { onFailure(error, "reply"); return false; });
+    if (replied) return;
+  }
+  if (interaction.deferred && !interaction.replied) {
+    const edited = await interaction.editReply({ content })
+      .then(() => true)
+      .catch((error) => { onFailure(error, "editReply"); return false; });
+    if (edited) return;
+  }
+  await interaction.followUp({ content, flags: MessageFlags.Ephemeral })
+    .catch((error) => { onFailure(error, "followUp"); });
 }
 
 export function createRuntimeResourceLifecycle(options: {
@@ -376,10 +397,10 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
         { err, id: interaction.id, type: interaction.type },
         "interaction handler error",
       );
-      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-        await interaction
-          .reply({ content: "エラーが発生しました。", flags: MessageFlags.Ephemeral })
-          .catch(() => undefined);
+      if (interaction.isRepliable()) {
+        await respondToInteractionError(interaction, (error, method) => {
+          log.warn({ err: error, interactionId: interaction.id, method }, "interaction error response failed");
+        });
       }
     }
   });

@@ -15,7 +15,8 @@ function makeDb() {
     CREATE TABLE guild_settings (
       guild_id TEXT PRIMARY KEY NOT NULL,
       data TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      revision INTEGER NOT NULL DEFAULT 0
     );
   `);
   return createKysely(sqlite);

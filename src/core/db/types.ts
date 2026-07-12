@@ -4,6 +4,7 @@ export interface GuildSettingsRow {
   guild_id: string;
   data: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
   updated_at: Date;
+  revision: number;
 }
 
 export interface InteractionSessionsRow {

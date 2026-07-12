@@ -1,6 +1,40 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createRuntimeResourceLifecycle, createRuntimeShutdown, initializeJapaneseRuntime, shutdownModerationFlowRuntimes, startClientReadyBackgroundServices } from "./registerRuntimeHandlers.js";
+import { createRuntimeResourceLifecycle, createRuntimeShutdown, initializeJapaneseRuntime, respondToInteractionError, shutdownModerationFlowRuntimes, startClientReadyBackgroundServices } from "./registerRuntimeHandlers.js";
+
+test("interaction errors reply, edit deferred replies, and fall back to follow-up", async () => {
+  const calls: string[] = [];
+  await respondToInteractionError({
+    replied: false,
+    deferred: false,
+    reply: async () => { calls.push("reply"); },
+  } as never);
+  await respondToInteractionError({
+    replied: false,
+    deferred: true,
+    editReply: async () => { calls.push("edit"); },
+  } as never);
+  await respondToInteractionError({
+    replied: true,
+    deferred: false,
+    followUp: async () => { calls.push("followUp"); },
+  } as never);
+  await respondToInteractionError({
+    replied: false,
+    deferred: true,
+    editReply: async () => { calls.push("editFail"); throw new Error("edit failed"); },
+    followUp: async () => { calls.push("fallback"); },
+  } as never);
+  const failures: string[] = [];
+  await respondToInteractionError({
+    replied: false,
+    deferred: false,
+    reply: async () => { throw new Error("reply failed"); },
+    followUp: async () => { calls.push("replyFallback"); },
+  } as never, (_error, method) => { failures.push(method); });
+  assert.deepEqual(calls, ["reply", "edit", "followUp", "editFail", "fallback", "replyFallback"]);
+  assert.deepEqual(failures, ["reply"]);
+});
 
 test("runtime shutdown stops timers, watcher, worker, VC sweep, and Discord client", async () => {
   const calls: string[] = [];

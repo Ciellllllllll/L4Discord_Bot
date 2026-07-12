@@ -55,20 +55,40 @@ export async function upsertGuildSettingsData(
   guildId: string,
   patch: Partial<GuildSettingsData>,
 ): Promise<void> {
-  const existing = await getGuildSettingsData(db, guildId);
-  const next = { ...existing, ...patch };
-  await db
-    .insertInto("guild_settings")
-    .values({
-      guild_id: guildId,
-      data: JSON.stringify(next) as unknown as Record<string, unknown>,
-      updated_at: sqliteTimestamp() as unknown as Date,
-    })
-    .onConflict((oc) =>
-      oc.column("guild_id").doUpdateSet({
+  const maxAttempts = 5;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const existing = await db
+      .selectFrom("guild_settings")
+      .select(["data", "revision"])
+      .where("guild_id", "=", guildId)
+      .executeTakeFirst();
+    const next = { ...parseSettingsObject(existing?.data), ...patch };
+    const now = sqliteTimestamp() as unknown as Date;
+    if (!existing) {
+      const inserted = await db
+        .insertInto("guild_settings")
+        .values({
+          guild_id: guildId,
+          data: JSON.stringify(next) as unknown as Record<string, unknown>,
+          updated_at: now,
+          revision: 1,
+        })
+        .onConflict((oc) => oc.column("guild_id").doNothing())
+        .executeTakeFirst();
+      if (Number(inserted.numInsertedOrUpdatedRows ?? 0) === 1) return;
+      continue;
+    }
+    const updated = await db
+      .updateTable("guild_settings")
+      .set({
         data: JSON.stringify(next) as unknown as Record<string, unknown>,
-        updated_at: sqliteTimestamp() as unknown as Date,
-      }),
-    )
-    .execute();
+        updated_at: now,
+        revision: existing.revision + 1,
+      })
+      .where("guild_id", "=", guildId)
+      .where("revision", "=", existing.revision)
+      .executeTakeFirst();
+    if (Number(updated.numUpdatedRows ?? 0) === 1) return;
+  }
+  throw new Error(`guild settings concurrent update retry exhausted for guild ${guildId}`);
 }
