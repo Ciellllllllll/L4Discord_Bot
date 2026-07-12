@@ -86,7 +86,12 @@ export type VxTwitterPreviewPayload = {
   flags: MessageFlags.IsComponentsV2;
   components: APIMessageTopLevelComponent[];
   allowedMentions: { parse: []; repliedUser: false };
+  previewState?: { tweet: TweetPreview; translations: VxTwitterTextTranslations };
 };
+
+export type VxTwitterDisplayMode = "translation" | "original";
+export const VX_PREVIEW_SHOW_ORIGINAL_ID = "vxpreview:show-original";
+export const VX_PREVIEW_SHOW_TRANSLATION_ID = "vxpreview:show-translation";
 
 type LoggerLike = {
   warn: (obj: unknown, msg?: string) => void;
@@ -387,33 +392,39 @@ function formatDate(timestamp: number | undefined): string | null {
   return `${year}/${month}/${day}`;
 }
 
-function buildBodyText(tweet: TweetPreview, translations?: VxTwitterTextTranslations): string {
+function hasUsefulTranslation(translations?: VxTwitterTextTranslations): boolean {
+  return Boolean(translations?.main?.translatedText || translations?.quote?.translatedText);
+}
+
+function buildBodyText(
+  tweet: TweetPreview,
+  translations: VxTwitterTextTranslations | undefined,
+  displayMode: VxTwitterDisplayMode,
+): string {
   const lines: string[] = [];
   const authorName = tweet.author.name ? `${tweet.author.name} (@${tweet.author.screenName})` : `@${tweet.author.screenName}`;
   lines.push(`**${authorName}**`);
   if (tweet.text) {
     lines.push("");
-    lines.push(tweet.text.slice(0, 3000));
-    if (translations?.main?.translatedText) {
-      lines.push("");
-      lines.push(translations.main.translatedText.slice(0, 3000));
-    }
+    lines.push((displayMode === "translation" ? translations?.main?.translatedText : undefined)?.slice(0, 3000) ?? tweet.text.slice(0, 3000));
   }
   if (tweet.quote) {
     lines.push("");
-    lines.push(`> 引用: @${tweet.quote.author.screenName} ${compactText(tweet.quote.text, 180)}`);
+    const quoteText = displayMode === "translation" ? translations?.quote?.translatedText : undefined;
+    lines.push(`> 引用: @${tweet.quote.author.screenName} ${compactText(quoteText ?? tweet.quote.text, 180)}`);
     if (tweet.quote.url) lines.push(`> ${tweet.quote.url}`);
-    if (translations?.quote?.translatedText) {
-      lines.push(`> 日本語訳: ${compactText(translations.quote.translatedText, 180)}`);
-    }
   }
   return lines.join("\n").slice(0, 4000);
 }
 
-function buildBodyComponent(tweet: TweetPreview, translations?: VxTwitterTextTranslations): APITextDisplayComponent | APISectionComponent {
+function buildBodyComponent(
+  tweet: TweetPreview,
+  translations: VxTwitterTextTranslations | undefined,
+  displayMode: VxTwitterDisplayMode,
+): APITextDisplayComponent | APISectionComponent {
   const body: APITextDisplayComponent = {
     type: ComponentType.TextDisplay,
-    content: buildBodyText(tweet, translations),
+    content: buildBodyText(tweet, translations, displayMode),
   };
   if (!tweet.author.avatarUrl) return body;
   const authorName = tweet.author.name ? `${tweet.author.name} (@${tweet.author.screenName})` : `@${tweet.author.screenName}`;
@@ -465,11 +476,22 @@ function buildMediaGallery(tweet: TweetPreview): APIMediaGalleryComponent | null
   };
 }
 
-function buildLinkRow(tweet: TweetPreview): APIActionRowComponent<APIButtonComponent> {
-  return new ActionRowBuilder<ButtonBuilder>()
-    .addComponents(
-      new ButtonBuilder().setLabel("Xで開く").setStyle(ButtonStyle.Link).setURL(tweet.url),
-    )
+function buildLinkRow(
+  tweet: TweetPreview,
+  translations: VxTwitterTextTranslations | undefined,
+  displayMode: VxTwitterDisplayMode,
+): APIActionRowComponent<APIButtonComponent> {
+  const row = new ActionRowBuilder<ButtonBuilder>()
+    .addComponents(new ButtonBuilder().setLabel("Xで開く").setStyle(ButtonStyle.Link).setURL(tweet.url));
+  if (hasUsefulTranslation(translations)) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setLabel(displayMode === "translation" ? "原文を表示" : "翻訳を表示")
+        .setStyle(ButtonStyle.Secondary)
+        .setCustomId(displayMode === "translation" ? VX_PREVIEW_SHOW_ORIGINAL_ID : VX_PREVIEW_SHOW_TRANSLATION_ID),
+    );
+  }
+  return row
     .toJSON() as APIActionRowComponent<APIButtonComponent>;
 }
 
@@ -477,15 +499,16 @@ export function buildVxTwitterPreviewPayload(
   tweet: TweetPreview,
   _vxUrl: string,
   translations?: VxTwitterTextTranslations,
+  displayMode: VxTwitterDisplayMode = "translation",
 ): VxTwitterPreviewPayload {
-  const body = buildBodyComponent(tweet, translations);
+  const body = buildBodyComponent(tweet, translations, displayMode);
   const gallery = buildMediaGallery(tweet);
   const meta = buildMetaDisplay(tweet);
   const components: APIComponentInContainer[] = [
     body,
     ...(gallery ? [gallery] : []),
     ...(meta ? [meta] : []),
-    buildLinkRow(tweet),
+    buildLinkRow(tweet, translations, displayMode),
   ];
   const container: APIContainerComponent = {
     type: ComponentType.Container,
@@ -496,6 +519,7 @@ export function buildVxTwitterPreviewPayload(
     flags: MessageFlags.IsComponentsV2,
     components: [container],
     allowedMentions: { parse: [], repliedUser: false },
+    ...(hasUsefulTranslation(translations) ? { previewState: { tweet, translations: translations! } } : {}),
   };
 }
 

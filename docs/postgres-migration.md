@@ -1,7 +1,6 @@
 # PostgreSQL migration and production cutover
 
-This bot can run either with legacy SQLite files or with PostgreSQL schemas. PostgreSQL runtime keeps one database
-connection URL and separates domains by schema:
+The bot runtime requires PostgreSQL and keeps one database connection URL separated by schema:
 
 - `main`
 - `ticket`
