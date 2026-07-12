@@ -287,6 +287,7 @@ export async function scanSteamAppListChanges(ctx: BotContext, signal?: AbortSig
       excludedReasons: {},
     };
   } catch (err) {
+    if (signal?.aborted) throw err;
     if (err instanceof SteamAppListHttpError) {
       ctx.log.warn(
         { status: err.status, bodyPreview: err.bodyPreview, retryAfterSeconds: err.retryAfterSeconds },
