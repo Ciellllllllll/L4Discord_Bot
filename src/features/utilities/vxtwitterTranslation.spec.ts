@@ -94,7 +94,7 @@ async function run(): Promise<void> {
       },
     },
     {
-      name: "unknown は翻訳なし",
+      name: "unknown でも翻訳あり",
       input: { mainText: "mystery", quoteText: "" },
       response: {
         main: {
@@ -106,7 +106,7 @@ async function run(): Promise<void> {
       },
     },
     {
-      name: "und は翻訳なし",
+      name: "und でも翻訳あり",
       input: { mainText: "mystery", quoteText: "" },
       response: {
         main: {
@@ -118,7 +118,7 @@ async function run(): Promise<void> {
       },
     },
     {
-      name: "confidence < 0.75 は翻訳なし",
+      name: "低信頼の非日本語でも翻訳あり",
       input: { mainText: "Hello", quoteText: "" },
       response: {
         main: {
@@ -180,12 +180,24 @@ async function run(): Promise<void> {
         }),
       },
     );
-    if (testCase.name === "英語高信頼は翻訳あり") {
-      assert.equal(result.main?.translatedText, "こんにちは世界", testCase.name);
+    if (["英語高信頼は翻訳あり", "unknown でも翻訳あり", "und でも翻訳あり", "低信頼の非日本語でも翻訳あり"].includes(testCase.name)) {
+      assert.ok(result.main?.translatedText, testCase.name);
     } else {
       assert.equal(result.main, undefined, testCase.name);
     }
   }
+
+  const logs: Array<{ obj: unknown; message?: string }> = [];
+  const noDecision = await mod.translateVxTwitterTexts(
+    { mainText: "한국어", quoteText: "" },
+    {
+      config: { DEEPSEEK_API_KEY: "test-key" },
+      log: { warn() {}, info(obj: unknown, message?: string) { logs.push({ obj, message }); } },
+      chat: async () => ({ content: JSON.stringify({ main: { shouldTranslate: false, sourceLanguage: "ko", confidence: 0.99, translatedText: "" } }), ms: 1, model: "deepseek-test" }),
+    },
+  );
+  assert.equal(noDecision.main, undefined);
+  assert.equal(logs[0]?.message, "vxtwitter translation skipped");
 }
 
 run()
