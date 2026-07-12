@@ -43,6 +43,7 @@ import {
 } from "../features/lolWatcher/lolWatcher.commands.js";
 import { handleWerewolfCreate, handleWerewolfEnd } from "../features/werewolf/werewolfGame.js";
 import { maybePromptAnonymousSurvey, promptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js";
+import { handleAnonymousSurveyViewCommand } from "../features/anonymousSurvey/surveyView.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -107,6 +108,8 @@ export async function handleSlashCommand(
       return handleR18(interaction, ctx);
     case "ping":
       return handlePing(interaction, ctx);
+    case "view":
+      return handleAnonymousSurveyViewCommand(interaction, ctx, member);
     case "switch":
       return handleSwitch(interaction, ctx, member);
     case "pacchi_help":
