@@ -235,7 +235,7 @@ function applyProfileOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 const envSchema = z.object({
   BOT_PROFILE: z.enum(botProfiles).default("production"),
   DB_DRIVER: z.preprocess(
-    (v) => (v === "" || v === undefined ? "sqlite" : String(v).toLowerCase()),
+    (v) => (v === "" || v === undefined ? "postgres" : String(v).toLowerCase()),
     z.enum(["sqlite", "postgres"]).default("sqlite"),
   ),
   DATABASE_URL: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().url().optional()),
@@ -581,9 +581,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (data.OPENAI_FALLBACK_THRESHOLD > data.OPENAI_DAILY_TOKEN_LIMIT) {
     throw new Error("OPENAI_FALLBACK_THRESHOLD must be less than or equal to OPENAI_DAILY_TOKEN_LIMIT.");
   }
-  if (data.DB_DRIVER === "postgres" && !data.DATABASE_URL) {
-    throw new Error("DB_DRIVER=postgres requires DATABASE_URL.");
-  }
+  if (data.DB_DRIVER !== "postgres") throw new Error("DB_DRIVER=postgres is required; SQLite runtime is no longer supported.");
+  if (!data.DATABASE_URL) throw new Error("DATABASE_URL is required for the PostgreSQL runtime.");
   const discordToken = data.DISCORD_TOKEN.trim();
   const guildId = data.GUILD_ID.trim();
   const ownerId = data.OWNER_ID.trim();

@@ -18,6 +18,7 @@ function baseEnv(root: string, extra: Record<string, string | undefined> = {}): 
     ADMIN_ROLE_ID: "admin",
     PROFILE: "production",
     DATABASE_URL: "postgres://user:pass@127.0.0.1:5432/l4discord",
+    DB_DRIVER: "postgres",
     DATABASE_PATH: join(root, "l4discord.sqlite"),
     TICKET_DATABASE_PATH: join(root, "ticket.db"),
     MESSAGE_LOG_DB_PATH: join(root, "message.db"),
@@ -53,7 +54,7 @@ try {
 
   const envChecks = checkPostgresCutoverEnvironment(config);
   assert.equal(envChecks.find((check) => check.label === "DATABASE_URL")?.status, "ok");
-  assert.equal(envChecks.find((check) => check.label === "DB_DRIVER")?.status, "warn");
+  assert.equal(envChecks.find((check) => check.label === "DB_DRIVER")?.status, "ok");
 
   const duplicateSchemaConfig = loadConfig(baseEnv(root, {
     POSTGRES_MAIN_SCHEMA: "same_schema",

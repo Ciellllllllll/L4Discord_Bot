@@ -182,11 +182,11 @@ async function run(): Promise<void> {
   const text = collectContainerText(container);
   assert.match(text ?? "", /\*\*Main User \(@main\)\*\*/);
   assert.doesNotMatch(text ?? "", /## Main User \(@main\)/);
-  assert.match(text ?? "", /本文/);
+  assert.doesNotMatch(text ?? "", /本文\nhttps:\/\/t\.co\/short/);
   assert.doesNotMatch(text ?? "", /### 本文/);
   assert.match(text ?? "", /本文の日本語訳です。/);
-  assert.match(text ?? "", /引用: @quote/);
-  assert.match(text ?? "", /> 日本語訳: 引用文の日本語訳です。/);
+  assert.doesNotMatch(text ?? "", /引用本文がここに入ります/);
+  assert.match(text ?? "", /> 引用: @quote 引用文の日本語訳です。/);
   assert.match(text ?? "", /2026\/07\/07 \/ 💬 1 \/ 🔁 2 \/ ❤️ 10 \/ 👁️ 300/);
   assert.equal(text?.includes("https://vxtwitter.com/main/status/123"), false);
   const section = container?.components.find((component) => component.type === ComponentType.Section);
@@ -207,7 +207,34 @@ async function run(): Promise<void> {
   ) ?? -1;
   const rowIndex = container?.components.findIndex((component) => component.type === ComponentType.ActionRow) ?? -1;
   assert.ok(galleryIndex >= 0 && metaIndex > galleryIndex && rowIndex > metaIndex);
-  assert.equal(row?.components.length, 1);
+  assert.equal(row?.components.length, 2);
+  assert.equal((row?.components[0] as { label?: string } | undefined)?.label, "Xで開く");
+  assert.equal((row?.components[1] as { label?: string } | undefined)?.label, "原文を表示");
+  assert.equal((row?.components[1] as { custom_id?: string } | undefined)?.custom_id, "vxpreview:show-original");
+
+  const originalPayload = buildVxTwitterPreviewPayload(preview.tweet, "https://vxtwitter.com/main/status/123", {
+    main: {
+      shouldTranslate: true,
+      sourceLanguage: "en",
+      confidence: 0.98,
+      translatedText: "本文の日本語訳です。",
+    },
+    quote: {
+      shouldTranslate: true,
+      sourceLanguage: "en",
+      confidence: 0.97,
+      translatedText: "引用文の日本語訳です。",
+    },
+  }, "original");
+  const originalContainer = originalPayload.components[0] as APIContainerComponent | undefined;
+  const originalText = collectContainerText(originalContainer);
+  assert.match(originalText ?? "", /本文\nhttps:\/\/t\.co\/short/);
+  assert.match(originalText ?? "", /> 引用: @quote 引用本文がここに入ります/);
+  const originalRow = originalContainer?.components.find((component) => component.type === ComponentType.ActionRow) as
+    | APIActionRowComponent<APIButtonComponent>
+    | undefined;
+  assert.equal((originalRow?.components[1] as { label?: string } | undefined)?.label, "翻訳を表示");
+  assert.equal((originalRow?.components[1] as { custom_id?: string } | undefined)?.custom_id, "vxpreview:show-translation");
   assert.equal(row?.components[0]?.style, ButtonStyle.Link);
   assert.equal(row?.components[0]?.label, "Xで開く");
 
@@ -332,9 +359,9 @@ async function run(): Promise<void> {
   assert.equal(translationCalls, 1);
   const translatedContainer = translatedPayloads[0]?.components?.[0] as APIContainerComponent | undefined;
   const translatedText = collectContainerText(translatedContainer);
-  assert.match(translatedText ?? "", /Hello from abroad/);
+  assert.doesNotMatch(translatedText ?? "", /Hello from abroad/);
   assert.match(translatedText ?? "", /海外からのこんにちは/);
-  assert.match(translatedText ?? "", /> 日本語訳: 引用のこんにちは/);
+  assert.match(translatedText ?? "", /> 引用: @quoted 引用のこんにちは/);
 
   let fetchCalls = 0;
   const buildStatusResponse = (): Response =>

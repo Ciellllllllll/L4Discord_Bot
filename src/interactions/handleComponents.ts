@@ -59,6 +59,7 @@ import { handleWerewolfButton, handleWerewolfStringSelect } from "../features/we
 import { handleAnonymousSurveyButton } from "../features/anonymousSurvey/surveyHandlers.js";
 import { handleAnonymousSurveyViewButton } from "../features/anonymousSurvey/surveyView.js";
 import { parseCustomId } from "./parseCustomId.js";
+import { handleVxTwitterPreviewButton } from "../features/utilities/vxtwitterPreviewInteractions.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
   if (await handleSetupUiOpenButton(interaction, ctx)) return true;
@@ -120,6 +121,7 @@ export async function handleDetecterButton(
 }
 
 export async function routeButton(interaction: ButtonInteraction, ctx: BotContext): Promise<void> {
+  if (await handleVxTwitterPreviewButton(interaction, ctx)) return;
   if (await handleAnonymousSurveyViewButton(interaction, ctx)) return;
   if (await handleAnonymousSurveyButton(interaction, ctx)) return;
   if (await handleExecutionFlowButton(interaction, ctx)) return;

@@ -198,5 +198,18 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
       updated_at timestamptz NOT NULL,
       PRIMARY KEY (guild_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS vx_twitter_preview_states (
+      message_id text PRIMARY KEY,
+      guild_id text NOT NULL,
+      channel_id text NOT NULL,
+      tweet_url text NOT NULL,
+      tweet jsonb NOT NULL,
+      translations jsonb NOT NULL,
+      expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_vx_twitter_preview_states_expires ON vx_twitter_preview_states (expires_at);
   `);
 }

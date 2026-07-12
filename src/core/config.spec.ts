@@ -8,6 +8,8 @@ function baseEnv(extra: Record<string, string | undefined> = {}): NodeJS.Process
     GUILD_ID: "guild",
     OWNER_ID: "owner",
     ADMIN_ROLE_ID: "admin",
+    DB_DRIVER: "postgres",
+    DATABASE_URL: "postgres://user:pass@127.0.0.1:5432/l4discord_test",
     ...extra,
   };
 }

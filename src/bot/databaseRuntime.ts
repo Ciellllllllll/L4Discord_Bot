@@ -140,6 +140,14 @@ async function createDatabaseRuntimeUnsafe(
     { version: 6, name: "pacchi_initial", apply: ensurePostgresPacchiSchema },
     { version: 7, name: "polls_state_revision", apply: async (pool) => { await pool.query("ALTER TABLE polls ADD COLUMN IF NOT EXISTS state_revision bigint NOT NULL DEFAULT 0"); } },
     { version: 8, name: "guild_settings_revision", apply: async (pool) => { await pool.query("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 0"); } },
+    { version: 9, name: "vx_twitter_preview_states", apply: async (pool) => { await pool.query(`
+      CREATE TABLE IF NOT EXISTS vx_twitter_preview_states (
+        message_id text PRIMARY KEY, guild_id text NOT NULL, channel_id text NOT NULL, tweet_url text NOT NULL,
+        tweet jsonb NOT NULL, translations jsonb NOT NULL, expires_at timestamptz NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_vx_twitter_preview_states_expires ON vx_twitter_preview_states (expires_at);
+    `); } },
   ]);
   if (usePostgres) {
     await migrateTemporarySchema(config.DATABASE_URL!, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
