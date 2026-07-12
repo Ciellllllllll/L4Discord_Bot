@@ -2,8 +2,6 @@ import type { AppConfig } from "../../core/config.js";
 import { deepseekChat, type ChatMessage, type DeepSeekResult } from "../ai/deepseek.js";
 import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 
-const MIN_CONFIDENCE = 0.75;
-
 export type TranslationDecision = {
   shouldTranslate: boolean;
   sourceLanguage: string;
@@ -24,6 +22,7 @@ type TranslationInput = {
 
 type LoggerLike = {
   warn: (obj: unknown, msg?: string) => void;
+  info?: (obj: unknown, msg?: string) => void;
 };
 
 type MinimalTranslationConfig =
@@ -85,10 +84,6 @@ export function parseDeepSeekJsonResponse(text: string): Record<string, unknown>
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
-function isUnknownLanguage(language: string): boolean {
-  return language === "" || language === "und" || language === "unknown";
-}
-
 function isJapaneseLanguage(language: string): boolean {
   return language === "ja" || language.startsWith("ja-") || language === "japanese";
 }
@@ -96,8 +91,7 @@ function isJapaneseLanguage(language: string): boolean {
 function isTranslationUseful(originalText: string, translation: TranslationDecision | undefined): translation is TranslationDecision {
   if (!translation) return false;
   if (!translation.shouldTranslate) return false;
-  if (isJapaneseLanguage(translation.sourceLanguage) || isUnknownLanguage(translation.sourceLanguage)) return false;
-  if (translation.confidence < MIN_CONFIDENCE) return false;
+  if (isJapaneseLanguage(translation.sourceLanguage)) return false;
   if (!translation.translatedText) return false;
   const normalizedOriginal = stringValue(originalText).replace(/\s+/g, " ");
   const normalizedTranslated = translation.translatedText.replace(/\s+/g, " ");
@@ -123,9 +117,8 @@ function buildMessages(input: TranslationInput): ChatMessage[] {
       role: "user",
       content: JSON.stringify({
         instruction: [
-          "Translate only when the text is confidently non-Japanese and the Japanese audience would benefit.",
-          "Do not translate Japanese, unknown language, low-confidence text, empty text, or text that is effectively untranslated noise.",
-          "English is eligible when confidence is high.",
+          "Translate every non-Japanese text into Japanese, including Korean, English, mixed-language text, and text with uncertain language tags.",
+          "Do not translate only text that is Japanese, empty, or effectively untranslated noise.",
           "Keep URLs, hashtags, mentions, emoji, memes, and proper nouns natural in Japanese context.",
         ].join(" "),
         mainText: input.mainText,
@@ -162,9 +155,15 @@ export async function translateVxTwitterTexts(
       main: isTranslationUseful(input.mainText, main) ? main : undefined,
       quote: isTranslationUseful(input.quoteText ?? "", quote) ? quote : undefined,
     };
+    if (!translations.main && !translations.quote) {
+      deps.log?.info?.({
+        main: main ? { shouldTranslate: main.shouldTranslate, sourceLanguage: main.sourceLanguage, confidence: main.confidence, hasTranslatedText: Boolean(main.translatedText) } : null,
+        quote: quote ? { shouldTranslate: quote.shouldTranslate, sourceLanguage: quote.sourceLanguage, confidence: quote.confidence, hasTranslatedText: Boolean(quote.translatedText) } : null,
+      }, "vxtwitter translation skipped");
+    }
     return (translations.main || translations.quote) ? { ...translations, model: result.model } : translations;
   } catch (err) {
-    deps.log?.warn({ err: String(err) }, "vxtwitter translation skipped");
+    deps.log?.warn({ reason: "request_or_response_error", err: String(err) }, "vxtwitter translation skipped");
     return {};
   }
 }
