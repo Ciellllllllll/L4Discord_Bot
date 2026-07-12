@@ -18,6 +18,11 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
       .toJSON(),
     new SlashCommandBuilder().setName("ping").setDescription("応答時間計測用コマンド(DEBUG用です)").toJSON(),
     new SlashCommandBuilder()
+      .setName("view")
+      .setDescription("匿名アンケート結果を閲覧します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName("switch")
       .setDescription("サーバー全体のAIプロバイダーを切り替えます")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

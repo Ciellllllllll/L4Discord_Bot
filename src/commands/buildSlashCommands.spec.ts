@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ApplicationCommandType } from "discord.js";
+import { ApplicationCommandType, PermissionFlagsBits } from "discord.js";
 import { buildSlashCommands } from "./buildSlashCommands.js";
 
 function chatInputCommand(name: string, botProfile?: Parameters<typeof buildSlashCommands>[0]) {
@@ -17,6 +17,10 @@ async function run(): Promise<void> {
   const survey = chatInputCommand("survey", "debug");
   assert.ok(survey);
   assert.equal("description" in survey ? survey.description : undefined, "Anonymous Surveyを手動で表示します(DEBUG用)");
+
+  const view = chatInputCommand("view");
+  assert.ok(view);
+  assert.equal(view.default_member_permissions, PermissionFlagsBits.Administrator.toString());
 }
 
 void run()
