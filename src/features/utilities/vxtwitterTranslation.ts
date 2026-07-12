@@ -12,6 +12,7 @@ export type TranslationDecision = {
 };
 
 export type VxTwitterTextTranslations = {
+  model?: string;
   main?: TranslationDecision;
   quote?: TranslationDecision;
 };
@@ -157,10 +158,11 @@ export async function translateVxTwitterTexts(
     const parsed = parseDeepSeekJsonResponse(content);
     const main = normalizeTranslationDecision(parsed.main);
     const quote = normalizeTranslationDecision(parsed.quote);
-    return {
+    const translations = {
       main: isTranslationUseful(input.mainText, main) ? main : undefined,
       quote: isTranslationUseful(input.quoteText ?? "", quote) ? quote : undefined,
     };
+    return (translations.main || translations.quote) ? { ...translations, model: result.model } : translations;
   } catch (err) {
     deps.log?.warn({ err: String(err) }, "vxtwitter translation skipped");
     return {};
