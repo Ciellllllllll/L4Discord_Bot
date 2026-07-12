@@ -294,6 +294,18 @@ export interface AnonymousSurveyUserStateRow {
   updated_at: Date;
 }
 
+export interface VxTwitterPreviewStatesRow {
+  message_id: string;
+  guild_id: string;
+  channel_id: string;
+  tweet_url: string;
+  tweet: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  translations: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  expires_at: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface PollsRow {
   id: string;
   guild_id: string;
@@ -364,4 +376,5 @@ export interface Database {
   ai_r18_user_settings: AiR18UserSettingsRow;
   anonymous_survey_responses: AnonymousSurveyResponsesRow;
   anonymous_survey_user_state: AnonymousSurveyUserStateRow;
+  vx_twitter_preview_states: VxTwitterPreviewStatesRow;
 }

@@ -6,8 +6,9 @@ import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 import { COLD_LAUGH_KEYWORD } from "./coldLaughConstants.js";
-import { buildVxTwitterReplyPayloads, collectVxTwitterReplyTargets } from "./vxtwitterPreview.js";
+import { buildVxTwitterReplyPayloads, collectVxTwitterReplyTargets, type VxTwitterPreviewPayload } from "./vxtwitterPreview.js";
 import { buildYouTubeReplyPayloads, collectYouTubeReplyTargets } from "./youtubePreview.js";
+import { saveVxTwitterPreviewState } from "./vxtwitterPreviewState.js";
 
 const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
 const YOUTUBE_DOMAINS = new Set([
@@ -284,7 +285,19 @@ export class LinkAndColdLaugh {
     });
     for (const payload of replyPayloads) {
       try {
-        await message.reply(payload);
+        const previewState = (payload as VxTwitterPreviewPayload).previewState;
+        const { previewState: _previewState, ...replyPayload } = payload as VxTwitterPreviewPayload;
+        const reply = await message.reply(replyPayload);
+        if (previewState) {
+          await saveVxTwitterPreviewState(this.ctx.db, {
+            messageId: reply.id,
+            guildId: message.guildId!,
+            channelId: message.channelId,
+            tweetUrl: previewState.tweet.url,
+            tweet: previewState.tweet,
+            translations: previewState.translations,
+          }).catch((err) => this.ctx.log.warn({ err: String(err), messageId: reply.id }, "vxtwitter preview state save failed"));
+        }
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "vxtwitter reply error");
       }

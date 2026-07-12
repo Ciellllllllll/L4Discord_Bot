@@ -38,24 +38,11 @@ function runtimePaths(root: string): NodeJS.ProcessEnv {
   };
 }
 
-test("createDatabaseRuntime initializes and closes every SQLite runtime database", async () => {
-  const root = mkdtempSync(join(tmpdir(), "l4-runtime-sqlite-"));
-  try {
-    const runtime = await createDatabaseRuntime(runtimeConfig({ DB_DRIVER: "sqlite", ...runtimePaths(root) }), silentLogger);
-    assert.equal(runtime.usePostgres, false);
-    assert.ok(runtime.sqlite);
-    assert.ok(runtime.ticketSqlite);
-    assert.ok(runtime.messageLogSqlite);
-    assert.ok(runtime.messageAttachmentStoreSqlite);
-    assert.ok(runtime.vcTimeSqlite);
-    assert.ok(runtime.aiHistorySqlite);
-    assert.ok(runtime.automodSqlite);
-    const settingsColumns = runtime.sqlite.prepare("PRAGMA table_info(guild_settings)").all() as Array<{ name: string }>;
-    assert.equal(settingsColumns.some((column) => column.name === "revision"), true);
-    await closeDatabaseRuntime(runtime);
-  } finally {
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  }
+test("runtime configuration rejects SQLite", () => {
+  assert.throws(
+    () => runtimeConfig({ DB_DRIVER: "sqlite", DATABASE_URL: "postgres://user:pass@127.0.0.1:5432/l4discord_test" }),
+    /DB_DRIVER=postgres is required/,
+  );
 });
 
 test("ensurePostgresMainSchema creates polls with a bigint state revision", async () => {

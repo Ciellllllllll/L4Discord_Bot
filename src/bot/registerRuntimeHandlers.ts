@@ -32,12 +32,14 @@ import { handlePrefixMessage } from "../message/prefixHandlers.js";
 import { handleAiChatMonitorMessage } from "../features/ai/aiQueryService.js";
 import { hydrateMessageIfPartial, ingestMessageCreate, ingestMessageCreatePostgres, ingestMessageDelete, ingestMessageDeletePostgres, ingestMessageUpdate, ingestMessageUpdatePostgres } from "../features/messageLog/index.js";
 import { scheduleArchiveMessageAttachments, scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
+import { deleteExpiredVxTwitterPreviewStates } from "../features/utilities/vxtwitterPreviewState.js";
 
 export type RuntimeHandlerHandle = { shutdown(): Promise<void> };
 
 type RuntimeResources = {
   presenceTimer?: NodeJS.Timeout;
   reminderTimer?: NodeJS.Timeout;
+  vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
   gameDealWatcher?: GameDealWatcherController;
   clearInterval?: (timer: NodeJS.Timeout) => void;
   clearTimeout?: (timer: NodeJS.Timeout) => void;
@@ -64,6 +66,7 @@ async function stopRuntimeResources(
   for (const timer of options.deferredTimers ?? []) await stop(() => clearDeferred(timer));
   if (options.presenceTimer) await stop(() => clear(options.presenceTimer!));
   if (options.reminderTimer) await stop(() => clear(options.reminderTimer!));
+  if (options.vxTwitterPreviewCleanupTimer) await stop(() => clear(options.vxTwitterPreviewCleanupTimer!));
   if (options.gameDealWatcher) await stop(() => options.gameDealWatcher!.stop());
   if (options.lolWatcher) await stop(() => options.lolWatcher!.stop());
   if (options.japaneseWorker) await stop(() => options.japaneseWorker!.stop());
@@ -117,6 +120,7 @@ export function createRuntimeResourceLifecycle(options: {
   setClientReadyResources(resources: {
     presenceTimer?: NodeJS.Timeout;
     reminderTimer?: NodeJS.Timeout;
+    vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
     gameDealWatcher?: GameDealWatcherController;
     lolWatcher?: { stop(): void | Promise<void> } | null;
   }): Promise<void>;
@@ -127,6 +131,7 @@ export function createRuntimeResourceLifecycle(options: {
 } {
   let presenceTimer: NodeJS.Timeout | undefined;
   let reminderTimer: NodeJS.Timeout | undefined;
+  let vxTwitterPreviewCleanupTimer: NodeJS.Timeout | undefined;
   let gameDealWatcher: GameDealWatcherController | undefined;
   let lolWatcher: { stop(): void | Promise<void> } | null = null;
   let japaneseWorker: { stop(): Promise<void> } | null = null;
@@ -141,6 +146,7 @@ export function createRuntimeResourceLifecycle(options: {
       }
       presenceTimer = resources.presenceTimer;
       reminderTimer = resources.reminderTimer;
+      vxTwitterPreviewCleanupTimer = resources.vxTwitterPreviewCleanupTimer;
       gameDealWatcher = resources.gameDealWatcher;
       lolWatcher = resources.lolWatcher ?? null;
     },
@@ -152,9 +158,10 @@ export function createRuntimeResourceLifecycle(options: {
       japaneseWorker = worker;
     },
     async stopClientReadyResources() {
-      const resources = { presenceTimer, reminderTimer, gameDealWatcher, lolWatcher, clearInterval: options.clearInterval };
+      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, clearInterval: options.clearInterval };
       presenceTimer = undefined;
       reminderTimer = undefined;
+      vxTwitterPreviewCleanupTimer = undefined;
       gameDealWatcher = undefined;
       lolWatcher = null;
       await stopRuntimeResources(resources);
@@ -174,7 +181,7 @@ export function createRuntimeResourceLifecycle(options: {
       closed = true;
       try {
         await createRuntimeShutdown({
-          presenceTimer, reminderTimer, gameDealWatcher, lolWatcher, japaneseWorker,
+          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, japaneseWorker,
           vcTemp: options.vcTemp, client: options.client, clearInterval: options.clearInterval,
           clearTimeout: options.clearTimeout, deferredTimers, shutdownModerationFlows: options.shutdownModerationFlows,
         })();
@@ -189,6 +196,7 @@ export async function startClientReadyBackgroundServices(options: {
   lifecycle: ReturnType<typeof createRuntimeResourceLifecycle>;
   startPresence(): NodeJS.Timeout;
   startReminder(): NodeJS.Timeout;
+  startVxTwitterPreviewCleanup?(): NodeJS.Timeout;
   startGameDeal(): GameDealWatcherController;
   startLolWatcher(): Promise<{ stop(): void | Promise<void> } | null>;
   logError(error: unknown, message: string): void;
@@ -196,12 +204,13 @@ export async function startClientReadyBackgroundServices(options: {
   if (options.lifecycle.isClosed()) return false;
   const presenceTimer = options.startPresence();
   const reminderTimer = options.startReminder();
+  const vxTwitterPreviewCleanupTimer = options.startVxTwitterPreviewCleanup?.();
   const gameDealWatcher = options.startGameDeal();
-  await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, gameDealWatcher });
+  await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher });
   if (options.lifecycle.isClosed()) return false;
   try {
     const lolWatcher = await options.startLolWatcher();
-    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, gameDealWatcher, lolWatcher });
+    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher });
     if (options.lifecycle.isClosed()) return false;
     return true;
   } catch (error) {
@@ -333,6 +342,10 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
       lifecycle,
       startPresence: () => startPresenceRotation(client, log, config.BOT_VERSION),
       startReminder: () => startReminderScheduler(ctx),
+      startVxTwitterPreviewCleanup: () => {
+        void deleteExpiredVxTwitterPreviewStates(ctx.db).catch((err) => log.warn({ err }, "vxtwitter preview state cleanup failed"));
+        return setInterval(() => void deleteExpiredVxTwitterPreviewStates(ctx.db).catch((err) => log.warn({ err }, "vxtwitter preview state cleanup failed")), 60 * 60 * 1000);
+      },
       startGameDeal: () => startGameDealWatcher(ctx),
       startLolWatcher: () => startLolWatcher(ctx),
       logError: (err, message) => log.error({ err, guildId: config.GUILD_ID }, message),
