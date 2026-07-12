@@ -15,6 +15,71 @@ export type AnonymousSurveySessionPayload = {
   command: StoredSlashCommand;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseStoredOption(value: unknown, depth: number): StoredSlashCommand["options"][number] | null {
+  if (!isRecord(value) || depth > 10 || typeof value.name !== "string" || !value.name || typeof value.type !== "number" || !Number.isInteger(value.type)) return null;
+  if (value.value !== undefined && typeof value.value !== "string" && typeof value.value !== "number" && typeof value.value !== "boolean") return null;
+  let user: StoredSlashCommand["options"][number]["user"];
+  if (value.user !== undefined) {
+    if (!isRecord(value.user) || typeof value.user.id !== "string" || typeof value.user.username !== "string" || typeof value.user.tag !== "string") return null;
+    user = { id: value.user.id, username: value.user.username, tag: value.user.tag };
+  }
+  let options: StoredSlashCommand["options"] | undefined;
+  if (value.options !== undefined) {
+    if (!Array.isArray(value.options)) return null;
+    options = [];
+    for (const child of value.options) {
+      const parsed = parseStoredOption(child, depth + 1);
+      if (!parsed) return null;
+      options.push(parsed);
+    }
+  }
+  return {
+    name: value.name,
+    type: value.type,
+    ...(value.value !== undefined ? { value: value.value as string | number | boolean } : {}),
+    ...(user ? { user } : {}),
+    ...(options ? { options } : {}),
+  };
+}
+
+export function parseAnonymousSurveySessionPayload(raw: unknown): AnonymousSurveySessionPayload | null {
+  let value = raw;
+  if (typeof raw === "string") {
+    try { value = JSON.parse(raw) as unknown; } catch { return null; }
+  }
+  if (!isRecord(value) || !isRecord(value.command)) return null;
+  const command = value.command;
+  if (typeof command.commandName !== "string" || !command.commandName || typeof command.guildId !== "string" || !command.guildId || typeof command.channelId !== "string" || !command.channelId || typeof command.userId !== "string" || !command.userId || !Array.isArray(command.options)) return null;
+  const options: StoredSlashCommand["options"] = [];
+  for (const option of command.options) {
+    const parsed = parseStoredOption(option, 0);
+    if (!parsed) return null;
+    options.push(parsed);
+  }
+  return { command: { commandName: command.commandName, guildId: command.guildId, channelId: command.channelId, userId: command.userId, options } };
+}
+
+async function deleteAnonymousSurveySession(db: Kysely<Database>, sessionId: string): Promise<void> {
+  await db
+    .deleteFrom("interaction_sessions")
+    .where("id", "=", sessionId)
+    .where("domain", "=", "anonymousSurvey")
+    .where("action", "=", "slashGate")
+    .execute();
+}
+
+function payloadMatchesSession(
+  payload: AnonymousSurveySessionPayload,
+  guildId: string,
+  executorUserId: string | null,
+): boolean {
+  return payload.command.guildId === guildId && (!executorUserId || payload.command.userId === executorUserId);
+}
+
 function iso(date: Date): string {
   return date.toISOString();
 }
@@ -176,9 +241,19 @@ export async function getAnonymousSurveySession(
   db: Kysely<Database>,
   sessionId: string,
 ): Promise<AnonymousSurveySessionPayload & { guildId: string; executorUserId: string | null } | null> {
-  const session = await getSession(db, sessionId);
+  let session: Awaited<ReturnType<typeof getSession>>;
+  try {
+    session = await getSession(db, sessionId);
+  } catch {
+    await deleteAnonymousSurveySession(db, sessionId).catch(() => undefined);
+    return null;
+  }
   if (!session || session.domain !== "anonymousSurvey" || session.action !== "slashGate") return null;
-  const payload = session.payload as unknown as AnonymousSurveySessionPayload;
+  const payload = parseAnonymousSurveySessionPayload(session.payload);
+  if (!payload || !payloadMatchesSession(payload, session.guild_id, session.executor_user_id)) {
+    await deleteAnonymousSurveySession(db, sessionId).catch(() => undefined);
+    return null;
+  }
   return {
     ...payload,
     guildId: session.guild_id,
@@ -192,9 +267,9 @@ function parseAnonymousSurveySessionRow(
     guild_id: string;
     executor_user_id: string | null;
   },
-): AnonymousSurveySessionPayload & { guildId: string; executorUserId: string | null } {
-  const p = row.payload;
-  const payload = typeof p === "string" ? (JSON.parse(p) as AnonymousSurveySessionPayload) : (p as unknown as AnonymousSurveySessionPayload);
+): AnonymousSurveySessionPayload & { guildId: string; executorUserId: string | null } | null {
+  const payload = parseAnonymousSurveySessionPayload(row.payload);
+  if (!payload || !payloadMatchesSession(payload, row.guild_id, row.executor_user_id)) return null;
   return {
     ...payload,
     guildId: row.guild_id,

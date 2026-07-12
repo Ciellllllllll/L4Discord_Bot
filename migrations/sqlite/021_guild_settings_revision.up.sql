@@ -1,0 +1,1 @@
+ALTER TABLE guild_settings ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;

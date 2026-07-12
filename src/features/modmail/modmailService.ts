@@ -345,9 +345,28 @@ export async function closeModmailTicketInDb(
   return { ok: true, closedAt: merged.closed_at as string };
 }
 
-type StaffThreadResult = { threadId: string; summaryMessageId: string };
+type StaffThreadResult = { threadId: string; summaryMessageId: string; thread: ThreadChannel };
 
-async function createStaffThread(
+async function compensateStaffThread(
+  ctx: BotContext,
+  thread: { id: string; delete(reason?: string): Promise<unknown> },
+): Promise<void> {
+  await thread.delete("modmail ticket creation failed; compensation cleanup").catch((err) => {
+    ctx.log.warn({ err, threadId: thread.id }, "modmail staff thread compensation delete failed");
+  });
+}
+
+export async function deleteModmailSkeletonBestEffort(
+  ctx: BotContext,
+  modmailId: string,
+  threadId?: string,
+): Promise<void> {
+  await deleteModmailById(ctx, modmailId).catch((err) => {
+    ctx.log.warn({ err, modmailId, threadId }, "modmail DB skeleton compensation delete failed");
+  });
+}
+
+export async function createStaffThread(
   ctx: BotContext,
   guild: Guild,
   row: ModmailThreadRow,
@@ -388,9 +407,15 @@ async function createStaffThread(
       })
       .catch(() => null);
     await seed.delete().catch(() => undefined);
-    if (!thread?.isTextBased()) return null;
+    if (!thread?.isTextBased()) {
+      if (thread) await compensateStaffThread(ctx, thread);
+      return null;
+    }
     const summaryMessage = await (thread as RelayChannel).send(summaryPayload).catch(() => null);
-    if (!summaryMessage) return null;
+    if (!summaryMessage) {
+      await compensateStaffThread(ctx, thread);
+      return null;
+    }
 
     const noticePayload: ComponentCardsPayload & {
       allowedMentions: { parse: [] };
@@ -407,7 +432,7 @@ async function createStaffThread(
     await parent.send(noticePayload).catch(() => undefined);
     if (adminRoleId) await forceAddRoleMembersToThread(guild, thread.id, adminRoleId);
 
-    return { threadId: thread.id, summaryMessageId: summaryMessage.id };
+    return { threadId: thread.id, summaryMessageId: summaryMessage.id, thread };
   }
 
   if (parent.type === ChannelType.GuildForum) {
@@ -419,9 +444,15 @@ async function createStaffThread(
         message: summaryPayload,
       })
       .catch(() => null);
-    if (!thread?.isTextBased()) return null;
+    if (!thread?.isTextBased()) {
+      if (thread) await compensateStaffThread(ctx, thread);
+      return null;
+    }
     const starter = await thread.fetchStarterMessage().catch(() => null);
-    if (!starter) return null;
+    if (!starter) {
+      await compensateStaffThread(ctx, thread);
+      return null;
+    }
     if (adminRoleId) {
       await thread
         .send({
@@ -431,7 +462,7 @@ async function createStaffThread(
         .catch(() => undefined);
       await forceAddRoleMembersToThread(guild, thread.id, adminRoleId);
     }
-    return { threadId: thread.id, summaryMessageId: starter.id };
+    return { threadId: thread.id, summaryMessageId: starter.id, thread };
   }
 
   return null;
@@ -582,13 +613,13 @@ export async function createTicketFromIntakeForm(
 
   const row = await fetchModmailRow(ctx, mmId);
   if (!row) {
-    await deleteModmailById(ctx, mmId);
+    await deleteModmailSkeletonBestEffort(ctx, mmId);
     return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
   }
 
   const created = await createStaffThread(ctx, guild, row).catch(() => null);
   if (!created) {
-    await deleteModmailById(ctx, mmId);
+    await deleteModmailSkeletonBestEffort(ctx, mmId);
     void logModmailEvent(ctx, "ERROR", {
       ticket_id: mmId,
       guild_id: gid,
@@ -599,22 +630,22 @@ export async function createTicketFromIntakeForm(
     return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
   }
 
-  const parentId = resolveModmailParentChannelId(ctx.config);
-  if (!parentId) {
-    await deleteModmailById(ctx, mmId);
-    return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
-  }
-
-  await updateModmailThreadMeta(ctx, mmId, parentId, created.threadId, {
-    panel_message_id: created.summaryMessageId,
-    info_message_id: created.summaryMessageId,
-    body: normalizedBody,
-    subject: normalizedTitle,
-  });
-
-  const full = await fetchModmailRow(ctx, mmId);
-  if (!full) {
-    await deleteModmailById(ctx, mmId);
+  let full: ModmailThreadRow | null = null;
+  try {
+    const parentId = resolveModmailParentChannelId(ctx.config);
+    if (!parentId) throw new Error("modmail parent channel is not configured");
+    await updateModmailThreadMeta(ctx, mmId, parentId, created.threadId, {
+      panel_message_id: created.summaryMessageId,
+      info_message_id: created.summaryMessageId,
+      body: normalizedBody,
+      subject: normalizedTitle,
+    });
+    full = (await fetchModmailRow(ctx, mmId)) ?? null;
+    if (!full) throw new Error("modmail row missing after staff thread metadata update");
+  } catch (err) {
+    await compensateStaffThread(ctx, created.thread);
+    await deleteModmailSkeletonBestEffort(ctx, mmId, created.threadId);
+    ctx.log.warn({ err, modmailId: mmId, threadId: created.threadId }, "modmail ticket persistence failed after staff thread creation");
     return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
   }
 
