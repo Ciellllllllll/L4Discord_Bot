@@ -34,8 +34,20 @@ export async function getGuildSettingsData(
     .executeTakeFirst();
   if (!row) return {};
   const d = row.data;
-  const raw = typeof d === "string" ? (JSON.parse(d) as Record<string, unknown>) : (d as Record<string, unknown>);
+  const raw = parseSettingsObject(d);
   return raw as GuildSettingsData;
+}
+
+function parseSettingsObject(value: unknown): Record<string, unknown> {
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value) as unknown;
+    } catch {
+      return {};
+    }
+  }
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
 }
 
 export async function upsertGuildSettingsData(

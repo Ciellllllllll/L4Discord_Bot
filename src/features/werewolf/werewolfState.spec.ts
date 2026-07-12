@@ -39,6 +39,9 @@ const state: WerewolfState = {
 const parsed = parseWerewolfState(JSON.stringify(state));
 assert.equal(parsed?.rolePrivateThreadIds.werewolf, "thread-wolf");
 assert.deepEqual(parsed?.roleThreadMembersByRole.seer, ["seer1"]);
+assert.equal(parseWerewolfState("{"), null);
+assert.equal(parseWerewolfState("[]"), null);
+assert.equal(parseWerewolfState(null), null);
 
 assert.equal(
   canUseRoleThreadAction({
