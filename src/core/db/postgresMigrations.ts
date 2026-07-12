@@ -26,11 +26,18 @@ export async function applyPostgresMigrations(pool: Pool, migrations: PostgresMi
     for (const migration of [...migrations].sort((a, b) => a.version - b.version)) {
       const existing = await client.query("SELECT 1 FROM postgres_schema_migrations WHERE version = $1", [migration.version]);
       if ((existing.rowCount ?? 0) > 0) continue;
-      await migration.apply(client);
-      await client.query(
-        "INSERT INTO postgres_schema_migrations (version, name) VALUES ($1, $2)",
-        [migration.version, migration.name],
-      );
+      await client.query("BEGIN");
+      try {
+        await migration.apply(client);
+        await client.query(
+          "INSERT INTO postgres_schema_migrations (version, name) VALUES ($1, $2)",
+          [migration.version, migration.name],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      }
     }
   } catch (error) {
     migrationError = error;

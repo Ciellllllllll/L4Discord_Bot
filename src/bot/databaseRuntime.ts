@@ -139,6 +139,7 @@ async function createDatabaseRuntimeUnsafe(
     { version: 5, name: "lol_watcher_initial", apply: ensurePostgresLolWatcherSchema },
     { version: 6, name: "pacchi_initial", apply: ensurePostgresPacchiSchema },
     { version: 7, name: "polls_state_revision", apply: async (pool) => { await pool.query("ALTER TABLE polls ADD COLUMN IF NOT EXISTS state_revision bigint NOT NULL DEFAULT 0"); } },
+    { version: 8, name: "guild_settings_revision", apply: async (pool) => { await pool.query("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 0"); } },
   ]);
   if (usePostgres) {
     await migrateTemporarySchema(config.DATABASE_URL!, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);

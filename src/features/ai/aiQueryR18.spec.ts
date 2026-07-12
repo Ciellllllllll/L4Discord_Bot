@@ -38,7 +38,8 @@ function makeDb(): {
     CREATE TABLE guild_settings (
       guild_id TEXT PRIMARY KEY NOT NULL,
       data TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0
     );
   `);
   ensureAiR18UserSettingsSchema(sqlite);

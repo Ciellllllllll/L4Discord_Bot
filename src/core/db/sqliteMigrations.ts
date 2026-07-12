@@ -106,6 +106,11 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/020_polls_state_revision.up.sql"),
     down: join(repoRoot, "migrations/sqlite/020_polls_state_revision.down.sql"),
   },
+  {
+    version: 21,
+    up: join(repoRoot, "migrations/sqlite/021_guild_settings_revision.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/021_guild_settings_revision.down.sql"),
+  },
   // ticket.db 側の appeals / modmail_replies 列追加はメイン DB マイグレーションに含めない（ensureTicketDatabaseSchema で列追加）。
 ];
 
