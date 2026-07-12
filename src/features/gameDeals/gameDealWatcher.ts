@@ -3,7 +3,7 @@ import { MessageFlags } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { componentCardsPayload } from "../panels/componentCard.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
-import { checkSubscription, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
+import { checkSubscriptions, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
 import { createGameDealRepository, GAME_DEALS_POSTGRES_DISABLED_MESSAGE } from "./postgresGameDealRepository.js";
 import { processSteamVerifyQueue, scanSteamAppListChanges, scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealSubscriptionHit } from "./gameDealTypes.js";
@@ -129,6 +129,10 @@ type SubscriptionNotifyGroup = {
   subscriptionIds: string[];
 };
 
+type SubscriptionSeenRepository = {
+  updateSubscriptionSeen(hit: GameDealSubscriptionHit): Promise<{ shouldNotify: boolean }>;
+};
+
 function subscriptionNotifyKey(hit: GameDealSubscriptionHit): string {
   return [
     hit.subscription.guildId,
@@ -137,6 +141,33 @@ function subscriptionNotifyKey(hit: GameDealSubscriptionHit): string {
     hit.subscription.targetId,
     hit.stateKey,
   ].join(":");
+}
+
+export async function groupSubscriptionNotificationHits(
+  hits: GameDealSubscriptionHit[],
+  repo: SubscriptionSeenRepository,
+  signal?: AbortSignal,
+): Promise<{ detectedCount: number; groups: Map<string, SubscriptionNotifyGroup> }> {
+  const groups = new Map<string, SubscriptionNotifyGroup>();
+  let detectedCount = 0;
+  for (const hit of hits) {
+    throwIfAborted(signal);
+    detectedCount += 1;
+    if (!(await repo.updateSubscriptionSeen(hit)).shouldNotify) continue;
+    const key = subscriptionNotifyKey(hit);
+    const group = groups.get(key);
+    if (group) {
+      group.userIds.add(hit.subscription.userId);
+      group.subscriptionIds.push(hit.subscription.id);
+    } else {
+      groups.set(key, {
+        hit,
+        userIds: new Set([hit.subscription.userId]),
+        subscriptionIds: [hit.subscription.id],
+      });
+    }
+  }
+  return { detectedCount, groups };
 }
 
 export async function scanAndNotifyGameDeals(ctx: BotContext): Promise<void> {
@@ -248,31 +279,16 @@ async function scanAndNotifySubscriptions(ctx: BotContext, signal?: AbortSignal)
     return 0;
   }
 
-  const subNotifyGroups = new Map<string, SubscriptionNotifyGroup>();
-  for (const sub of await repo.listActiveSubscriptions()) {
-    throwIfAborted(signal);
-    const hit = await checkSubscription(ctx, sub, { signal }).catch((err) => {
-      if (!signal?.aborted) ctx.log.warn({ err, subscriptionId: sub.id }, "game deal subscription check failed");
-      return null;
-    });
-    if (!hit) continue;
-    detectedCount += 1;
-    if (!(await repo.updateSubscriptionSeen(hit)).shouldNotify) continue;
-    const key = subscriptionNotifyKey(hit);
-    const group = subNotifyGroups.get(key);
-    if (group) {
-      group.userIds.add(sub.userId);
-      group.subscriptionIds.push(sub.id);
-    } else {
-      subNotifyGroups.set(key, {
-        hit,
-        userIds: new Set([sub.userId]),
-        subscriptionIds: [sub.id],
-      });
-    }
-  }
+  const subscriptions = await repo.listActiveSubscriptions();
+  const hits = await checkSubscriptions(ctx, subscriptions, { signal }).catch((err) => {
+    if (signal?.aborted) throw err;
+    ctx.log.warn({ err }, "game deal subscription check failed");
+    return [] as GameDealSubscriptionHit[];
+  });
+  const grouped = await groupSubscriptionNotificationHits(hits, repo, signal);
+  detectedCount = grouped.detectedCount;
 
-  for (const group of subNotifyGroups.values()) {
+  for (const group of grouped.groups.values()) {
     throwIfAborted(signal);
     const { hit } = group;
     if (!configuredChannelId) {

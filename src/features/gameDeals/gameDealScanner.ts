@@ -119,29 +119,62 @@ function steamPriceHit(sub: GameDealSubscription, details: SteamAppDetails): Gam
 }
 
 export async function checkSubscription(ctx: BotContext, sub: GameDealSubscription, options: { signal?: AbortSignal } = {}): Promise<GameDealSubscriptionHit | null> {
-  if (sub.platform === "steam") {
-    const details = await new SteamStoreClient(ctx.log).fetchAppDetails([sub.targetId], options);
-    const detail = details.get(sub.targetId);
-    return detail ? steamPriceHit(sub, detail) : null;
+  return (await checkSubscriptions(ctx, [sub], options))[0] ?? null;
+}
+
+export async function checkSubscriptions(
+  ctx: BotContext,
+  subscriptions: GameDealSubscription[],
+  options: { signal?: AbortSignal } = {},
+): Promise<GameDealSubscriptionHit[]> {
+  const groups = new Map<string, GameDealSubscription[]>();
+  for (const sub of subscriptions) {
+    const key = `${sub.platform}:${sub.targetId}`;
+    const group = groups.get(key);
+    if (group) group.push(sub);
+    else groups.set(key, [sub]);
   }
-  const offers = await new EpicStoreClient(ctx.log).fetchFreePromotions(options);
-  const candidates = detectEpicFreeCandidates(offers).filter((candidate) => candidate.detectedType === "current_free_game");
-  const target = sub.targetId.toLowerCase();
-  const matched = candidates.find((candidate) =>
-    [candidate.productSlug, candidate.url, candidate.title].some((value) => value?.toLowerCase().includes(target)),
-  );
-  if (!matched) return null;
-  return {
-    subscription: sub,
-    title: matched.title,
-    url: matched.url,
-    imageUrl: matched.imageUrl,
-    originalPrice: matched.originalPrice,
-    currentPrice: matched.discountPrice,
-    discountPercent: matched.originalPrice && matched.discountPrice !== null
-      ? Math.round((1 - matched.discountPrice / matched.originalPrice) * 100)
-      : 100,
-    stateKey: `epic:${matched.dedupeKey}`,
-    platform: "epic",
-  };
+
+  const hits: GameDealSubscriptionHit[] = [];
+  const steamGroups = [...groups.values()].filter((group) => group[0]!.platform === "steam");
+  if (steamGroups.length > 0) {
+    const details = await new SteamStoreClient(ctx.log).fetchAppDetails(steamGroups.map((group) => group[0]!.targetId), options);
+    for (const group of steamGroups) {
+      const detail = details.get(group[0]!.targetId);
+      if (!detail) continue;
+      for (const sub of group) {
+        const hit = steamPriceHit(sub, detail);
+        if (hit) hits.push(hit);
+      }
+    }
+  }
+
+  const epicGroups = [...groups.values()].filter((group) => group[0]!.platform === "epic");
+  if (epicGroups.length > 0) {
+    const candidates = detectEpicFreeCandidates(await new EpicStoreClient(ctx.log).fetchFreePromotions(options))
+      .filter((candidate) => candidate.detectedType === "current_free_game");
+    for (const group of epicGroups) {
+      const target = group[0]!.targetId.toLowerCase();
+      const matched = candidates.find((candidate) =>
+        [candidate.productSlug, candidate.url, candidate.title].some((value) => value?.toLowerCase().includes(target)),
+      );
+      if (!matched) continue;
+      for (const sub of group) {
+        hits.push({
+          subscription: sub,
+          title: matched.title,
+          url: matched.url,
+          imageUrl: matched.imageUrl,
+          originalPrice: matched.originalPrice,
+          currentPrice: matched.discountPrice,
+          discountPercent: matched.originalPrice && matched.discountPrice !== null
+            ? Math.round((1 - matched.discountPrice / matched.originalPrice) * 100)
+            : 100,
+          stateKey: `epic:${matched.dedupeKey}`,
+          platform: "epic",
+        });
+      }
+    }
+  }
+  return hits;
 }

@@ -260,12 +260,24 @@ export class VcTemporaryChannelManager {
         createdAtMs,
         userEverJoined: false,
       });
-      await this.persistence.insertTracked({
-        channelId: vc.id,
-        guildId: guild.id,
-        createdAtMs,
-        userEverJoined: false,
-      });
+      try {
+        await this.persistence.insertTracked({
+          channelId: vc.id,
+          guildId: guild.id,
+          createdAtMs,
+          userEverJoined: false,
+        });
+      } catch (err) {
+        this.activeVcs.delete(vc.id);
+        await vc.delete("一時VC 追跡保存失敗のため補償削除").catch((deleteErr) => {
+          this.log.error({ err: deleteErr, channelId: vc.id }, "temporary VC compensation delete failed");
+        });
+        await this.persistence.deleteTracked(vc.id).catch((deleteErr) => {
+          this.log.error({ err: deleteErr, channelId: vc.id }, "temporary VC compensation tracking delete failed");
+        });
+        this.log.warn({ err, channelId: vc.id }, "temporary VC tracking persist failed; compensated created channel");
+        return { ok: false, error: "api_error" };
+      }
 
       return { ok: true, channelId: vc.id, name: vcName };
     } catch (err) {
