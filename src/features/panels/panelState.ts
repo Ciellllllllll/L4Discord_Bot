@@ -8,10 +8,7 @@ export type PanelMessageState = {
 };
 
 export function parsePanelState(raw: unknown): PanelMessageState {
-  const o =
-    typeof raw === "string"
-      ? (JSON.parse(raw) as Record<string, unknown>)
-      : (raw as Record<string, unknown> | null) ?? {};
+  const o = parsePanelStateObject(raw);
   const ui =
     typeof o.ui_version === "string"
       ? o.ui_version
@@ -24,6 +21,18 @@ export function parsePanelState(raw: unknown): PanelMessageState {
     last_error: typeof o.last_error === "string" ? o.last_error : undefined,
     last_sent_at: typeof o.last_sent_at === "string" ? o.last_sent_at : undefined,
   };
+}
+
+function parsePanelStateObject(raw: unknown): Record<string, unknown> {
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      return {};
+    }
+  }
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
 }
 
 export function serializePanelState(s: PanelMessageState): Record<string, unknown> {

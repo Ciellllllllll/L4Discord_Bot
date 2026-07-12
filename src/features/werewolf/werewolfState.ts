@@ -66,8 +66,15 @@ export function createInitialWerewolfState(input: {
 }
 
 export function parseWerewolfState(raw: unknown): WerewolfState | null {
-  const obj = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
-  if (!obj || typeof obj !== "object") return null;
+  let obj = raw;
+  if (typeof raw === "string") {
+    try {
+      obj = JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
   const rec = obj as Record<string, unknown>;
   if (!Array.isArray(rec.participants)) return null;
   if (!Array.isArray(rec.players)) return null;
