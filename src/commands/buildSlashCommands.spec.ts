@@ -21,6 +21,11 @@ async function run(): Promise<void> {
   const view = chatInputCommand("view");
   assert.ok(view);
   assert.equal(view.default_member_permissions, PermissionFlagsBits.Administrator.toString());
+
+  const adhd = chatInputCommand("adhd");
+  assert.ok(adhd);
+  assert.equal(adhd.default_member_permissions, PermissionFlagsBits.Administrator.toString());
+  assert.deepEqual(adhd.options?.map((option) => option.name), ["add", "remove", "list", "scan_now"]);
 }
 
 void run()
