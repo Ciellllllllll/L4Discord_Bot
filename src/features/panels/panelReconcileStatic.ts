@@ -14,7 +14,7 @@ export async function reconcileStaticPanelMessage(
   fingerprint: (message: Message, botUserId: string) => boolean,
   buildPayload: () => MessageCreateOptions,
   logTag: string,
-): Promise<void> {
+): Promise<boolean> {
   const codeVer = getPermanentUiVersion(panelKind);
   let row = await ensurePanelMessageRow(ctx, guild.id, panelKind, channelId);
 
@@ -34,7 +34,7 @@ export async function reconcileStaticPanelMessage(
       last_error: "channel_missing",
     });
     ctx.log.warn({ channelId, logTag }, "static panel channel missing or not text");
-    return;
+    return false;
   }
 
   const payload = buildPayload();
@@ -45,7 +45,7 @@ export async function reconcileStaticPanelMessage(
     const msg = await ch.messages.fetch(row.message_id).catch(() => null);
     if (msg && fingerprint(msg, botId)) {
       if (row.data.ui_version === codeVer) {
-        return;
+        return true;
       }
       try {
         await msg.edit(editOpt);
@@ -55,9 +55,10 @@ export async function reconcileStaticPanelMessage(
           last_sent_at: new Date().toISOString(),
         });
       } catch (e) {
-        ctx.log.error({ err: e, panelKind, logTag }, "static panel edit failed");
+        ctx.log.error({ err: e, guildId: guild.id, panelKind, logTag }, "static panel edit failed");
+        return false;
       }
-      return;
+      return true;
     }
   }
 
@@ -75,10 +76,11 @@ export async function reconcileStaticPanelMessage(
           last_sent_at: new Date().toISOString(),
         });
       } catch (e) {
-        ctx.log.error({ err: e, logTag }, "static panel reconnect edit failed");
+        ctx.log.error({ err: e, guildId: guild.id, panelKind, logTag }, "static panel reconnect edit failed");
+        return false;
       }
-      ctx.log.info({ messageId: existing.id, logTag }, "static panel reconnected via scan");
-      return;
+      ctx.log.debug({ messageId: existing.id, logTag }, "static panel reconnected via scan");
+      return true;
     }
   }
 
@@ -89,7 +91,8 @@ export async function reconcileStaticPanelMessage(
       status: "sent",
       last_sent_at: new Date().toISOString(),
     });
-    ctx.log.info({ messageId: sent.id, logTag }, "static panel sent");
+    ctx.log.debug({ messageId: sent.id, logTag }, "static panel sent");
+    return true;
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
@@ -97,6 +100,7 @@ export async function reconcileStaticPanelMessage(
       status: "error",
       last_error: err.slice(0, 500),
     });
-    ctx.log.error({ err: e, logTag }, "static panel send failed");
+    ctx.log.error({ err: e, guildId: guild.id, panelKind, logTag }, "static panel send failed");
+    return false;
   }
 }

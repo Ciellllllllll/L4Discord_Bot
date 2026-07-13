@@ -119,7 +119,7 @@ async function cleanupLegacyHubRows(ctx: BotContext, guild: Guild): Promise<void
 
 export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string): Promise<void> {
   const guild = await ctx.client.guilds.fetch(guildId).catch(() => null);
-  if (!guild) return;
+  if (!guild) throw new Error(`target guild unavailable for panel reconciliation: ${guildId}`);
 
   await cleanupLegacyHubRows(ctx, guild);
 
@@ -141,13 +141,23 @@ export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string):
     await deletePanelMessageRow(ctx, row.id);
   }
 
+  const failedPanels: string[] = [];
+  const reconcilePanel = async (kind: string, operation: () => Promise<boolean>): Promise<void> => {
+    try {
+      if (!await operation()) failedPanels.push(kind);
+    } catch (err) {
+      failedPanels.push(kind);
+      ctx.log.error({ err, guildId, panelKind: kind }, "panel reconciliation failed");
+    }
+  };
+
   for (const exp of expected) {
     if (exp.kind === PANEL_KIND_VC_CREATOR) {
-      await reconcileVcCreatorPanel(ctx, guild, exp.channelId);
+      await reconcilePanel(exp.kind, () => reconcileVcCreatorPanel(ctx, guild, exp.channelId));
     } else if (exp.kind === PANEL_KIND_REACTION_ROLE_ADMIN) {
-      await reconcileReactionRoleAdminPanel(ctx, guild, exp.channelId);
+      await reconcilePanel(exp.kind, () => reconcileReactionRoleAdminPanel(ctx, guild, exp.channelId));
     } else if (exp.kind === PANEL_KIND_MESSAGE_LOG_PANEL) {
-      await reconcileStaticPanelMessage(
+      await reconcilePanel(exp.kind, () => reconcileStaticPanelMessage(
         ctx,
         guild,
         exp.channelId,
@@ -155,11 +165,11 @@ export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string):
         messageLogPanelMessageMatches,
         buildMessageLogPanelPayload,
         "message_log_panel",
-      );
+      ));
     } else if (exp.kind === PANEL_KIND_AI_QUERY_HISTORY) {
-      await reconcileAiHistoryAdminPanel(ctx, guild, exp.channelId);
+      await reconcilePanel(exp.kind, () => reconcileAiHistoryAdminPanel(ctx, guild, exp.channelId));
     } else if (exp.kind === PANEL_KIND_REMINDER_HUB) {
-      await reconcileStaticPanelMessage(
+      await reconcilePanel(exp.kind, () => reconcileStaticPanelMessage(
         ctx,
         guild,
         exp.channelId,
@@ -167,11 +177,11 @@ export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string):
         reminderHubPanelMessageMatches,
         buildReminderHubPanelPayload,
         "reminder_hub",
-      );
+      ));
     } else if (exp.kind === PANEL_KIND_AUTOMOD) {
-      await reconcileAutoModPanel(ctx, guild, exp.channelId);
+      await reconcilePanel(exp.kind, () => reconcileAutoModPanel(ctx, guild, exp.channelId));
     } else if (exp.kind === PANEL_KIND_USER_CONTACT_PANEL) {
-      await reconcileStaticPanelMessage(
+      await reconcilePanel(exp.kind, () => reconcileStaticPanelMessage(
         ctx,
         guild,
         exp.channelId,
@@ -179,11 +189,15 @@ export async function reconcilePanelsForGuild(ctx: BotContext, guildId: string):
         userContactPanelMessageMatches,
         buildUserContactPanelPayload,
         "user_contact_panel",
-      );
+      ));
     }
   }
 
-  await reconcileReactionRoleEntriesOnly(ctx, guild);
+  failedPanels.push(...await reconcileReactionRoleEntriesOnly(ctx, guild));
+  if (failedPanels.length > 0) {
+    const err = Object.assign(new Error("one or more panels failed to reconcile"), { failedComponents: failedPanels });
+    throw err;
+  }
 }
 
 // 現在の guild_settings を読み、Discord 上の常設パネル投稿を削除して DB を pending に戻したうえで reconcile。

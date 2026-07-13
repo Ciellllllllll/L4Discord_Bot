@@ -230,6 +230,7 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
 
   let channel = guild.channels.cache.get(channelId) ?? (await guild.channels.fetch(channelId).catch(() => null));
   if (!channel?.isTextBased()) {
+    ctx.log.warn({ channelId, guildId, panelKind: PANEL_KIND_AI_QUERY_HISTORY }, "AI history panel channel missing or not text");
     return false;
   }
 
@@ -252,7 +253,12 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
   if (row.message_id && botId) {
     const oldMsg = await channel.messages.fetch(row.message_id).catch(() => null);
     if (oldMsg?.author?.id === botId) {
-      await oldMsg.edit(editPayload).catch(() => undefined);
+      try {
+        await oldMsg.edit(editPayload);
+      } catch (err) {
+        ctx.log.error({ err, channelId, guildId, panelKind: PANEL_KIND_AI_QUERY_HISTORY }, "AI history panel edit failed");
+        return false;
+      }
       await savePanelMessageRow(ctx, row.id, channelId, oldMsg.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,
@@ -267,7 +273,12 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
   if (recent && botId) {
     const existing = recent.find((m) => m.author?.id === botId && messageHasAnyCustomId(m, customIds));
     if (existing) {
-      await existing.edit(editPayload).catch(() => undefined);
+      try {
+        await existing.edit(editPayload);
+      } catch (err) {
+        ctx.log.error({ err, channelId, guildId, panelKind: PANEL_KIND_AI_QUERY_HISTORY }, "AI history panel reconnect edit failed");
+        return false;
+      }
       await savePanelMessageRow(ctx, row.id, channelId, existing.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,

@@ -413,7 +413,7 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
       ctx.log.warn({ err }, "game deal watcher tick failed");
     }
   };
-  ctx.log.info(
+  ctx.log.debug(
     {
       intervalMs,
       botProfile: ctx.config.BOT_PROFILE,

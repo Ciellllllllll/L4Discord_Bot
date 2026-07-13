@@ -1,6 +1,7 @@
 import { MessageFlags, type RepliableInteraction } from "discord.js";
 import type { BotContext } from "./context.js";
 import { startPresenceRotation } from "./presence.js";
+import { StartupReport } from "./startupReport.js";
 import { syncGuildApplicationCommands } from "./syncCommands.js";
 import { handleSlashCommand } from "../commands/slashHandlers.js";
 import { getGuildSettingsData } from "../core/guildSettings.js";
@@ -273,67 +274,36 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
       }
     } else {
       log.info({ guildId: g.id, guildName: g.name }, "target guild resolved");
-      try {
-        await reconcilePanelsForGuild(ctx, g.id);
-        log.info({ guildId: g.id }, "panel reconcile on startup completed");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "panel reconcile on startup failed");
-      }
+      const startupReport = new StartupReport(log, g.id);
+      await startupReport.run("panel reconciliation", () => reconcilePanelsForGuild(ctx, g.id));
       if (lifecycle.isClosed()) return;
-      try {
-        await restoreModmailUiState(ctx);
-        log.info({ guildId: g.id }, "modmail UI restore on startup completed");
-      } catch (err) {
-        log.warn({ err, guildId: g.id }, "modmail UI restore on startup failed");
-      }
+      await startupReport.run("modmail UI restore", () => restoreModmailUiState(ctx));
       if (lifecycle.isClosed()) return;
-      try {
-        await reconcileExecutionFlows(ctx);
-        log.info({ guildId: g.id }, "execution flows reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "execution flow reconcile at startup failed");
-      }
+      await startupReport.run("execution flow reconciliation", () => reconcileExecutionFlows(ctx));
       if (lifecycle.isClosed()) return;
-      try {
-        await reconcileTimeoutExtendFlows(ctx);
-        log.info({ guildId: g.id }, "timeout-extend flows reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "timeout-extend flow reconcile at startup failed");
-      }
+      await startupReport.run("timeout-extend flow reconciliation", () => reconcileTimeoutExtendFlows(ctx));
       if (lifecycle.isClosed()) return;
-      try {
-        await reconcileWerewolfGames(ctx);
-        log.info({ guildId: g.id }, "werewolf games reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "werewolf reconcile at startup failed");
-      }
+      await startupReport.run("werewolf game reconciliation", () => reconcileWerewolfGames(ctx));
       if (lifecycle.isClosed()) return;
-      try {
+      await startupReport.run("VC session reconciliation", async () => {
         if (vcTimePgPool) {
           await reconcileVcTimeSessionsAtReadyPostgres(client, vcTimePgPool, config.GUILD_ID);
         } else {
           reconcileVcTimeSessionsAtReady(client, vcTimeSqlite!, config.GUILD_ID);
         }
-        log.info({ guildId: g.id }, "vc_time sessions reconciled at startup");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "vc_time reconcile at startup failed");
-      }
+      });
       if (lifecycle.isClosed()) return;
-      try {
-        await ctx.vcTemp.restoreFromDatabase(g.id);
-        log.info({ guildId: g.id }, "temporary VC tracking restored from database");
-      } catch (err) {
-        log.error({ err, guildId: g.id }, "temporary VC restore from database failed");
-      }
+      await startupReport.run("temporary VC tracking restore", () => ctx.vcTemp.restoreFromDatabase(g.id));
       if (lifecycle.isClosed()) return;
       ctx.vcTemp.startSweep();
+      startupReport.logSummary();
     }
     if (lifecycle.isClosed()) return;
     const runSync = () => {
       void syncGuildApplicationCommands(config, log);
     };
     if (debounceMs > 0) {
-      log.info({ debounceMs }, "guild slash command sync scheduled");
+      log.debug({ debounceMs }, "guild slash command sync scheduled");
       lifecycle.scheduleTimeout(runSync, debounceMs);
     } else {
       void runSync();
@@ -351,7 +321,7 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
       logError: (err, message) => log.error({ err, guildId: config.GUILD_ID }, message),
     });
     if (!started) return;
-    log.info("startup tasks from clientReady finished (sync may still be in flight)");
+    log.info("Background services started successfully.");
   });
 
   client.on("interactionCreate", async (interaction) => {
@@ -613,7 +583,7 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
     logError: (error, message) => log.error({ err: error }, message),
   });
 
-  log.info(
+  log.debug(
     {
       events: [
         "interactionCreate",
