@@ -459,7 +459,7 @@ export async function startLolWatcher(ctx: BotContext): Promise<LolWatcherContro
   };
 
   currentController = controller;
-  ctx.log.info({ intervalMs: ctx.config.DEEPLOL_POLL_INTERVAL_MS }, "lol watcher started");
+  ctx.log.debug({ intervalMs: ctx.config.DEEPLOL_POLL_INTERVAL_MS }, "lol watcher started");
   schedule(STARTUP_SCAN_DELAY_MS);
   return controller;
 }

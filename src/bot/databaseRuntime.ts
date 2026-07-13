@@ -168,7 +168,7 @@ async function createDatabaseRuntimeUnsafe(
   } else {
     for (const handle of [sqlite!, ticketSqlite!, messageLogSqlite!, messageAttachmentStoreSqlite!, vcTimeSqlite!, aiHistorySqlite!, automodSqlite!]) handle.prepare("SELECT 1").get();
   }
-  log.info({ main: config.DATABASE_PATH, ticket: config.TICKET_DATABASE_PATH, messageLog: config.MESSAGE_LOG_DB_PATH, messageAttachmentStore: config.MESSAGE_ATTACHMENT_STORE_DB_PATH, vcTime: config.VC_TIME_DATABASE_PATH, aiHistory: config.AI_HISTORY_DATABASE_PATH, automoderation: config.AUTOMODERATION_DATABASE_PATH, reminderLazy: config.REMINDER_DATABASE_PATH }, usePostgres ? "database connection ok (postgres runtime)" : "sqlite connection ok");
+  log.debug({ main: config.DATABASE_PATH, ticket: config.TICKET_DATABASE_PATH, messageLog: config.MESSAGE_LOG_DB_PATH, messageAttachmentStore: config.MESSAGE_ATTACHMENT_STORE_DB_PATH, vcTime: config.VC_TIME_DATABASE_PATH, aiHistory: config.AI_HISTORY_DATABASE_PATH, automoderation: config.AUTOMODERATION_DATABASE_PATH, reminderLazy: config.REMINDER_DATABASE_PATH }, usePostgres ? "database connection ok (postgres runtime)" : "sqlite connection ok");
   if (!usePostgres) {
     ensureSqliteAiProviderSchema(sqlite!);
     const beforeV = getSqliteUserVersion(sqlite!);
@@ -178,9 +178,10 @@ async function createDatabaseRuntimeUnsafe(
       if (version === 12) { const reminder = createSqliteDatabase(config.REMINDER_DATABASE_PATH); try { copyRemindersFromMainToReminderDb(mainDb, reminder); } finally { reminder.close(); } }
     }});
     const afterV = getSqliteUserVersion(sqlite!);
-    log.info(applied.length ? { applied, userVersion: afterV, previousVersion: beforeV, dbDriver: config.DB_DRIVER } : { userVersion: afterV, dbDriver: config.DB_DRIVER }, applied.length ? "sqlite migrations applied" : "sqlite schema up to date (no pending migrations)");
-  } else log.info({ mainSchema: config.POSTGRES_MAIN_SCHEMA, ticketSchema: config.POSTGRES_TICKET_SCHEMA, messageLogSchema: config.POSTGRES_MESSAGE_LOG_SCHEMA, vcTimeSchema: config.POSTGRES_VC_TIME_SCHEMA }, "sqlite migrations skipped because runtime databases are postgres");
+    log.debug(applied.length ? { applied, userVersion: afterV, previousVersion: beforeV, dbDriver: config.DB_DRIVER } : { userVersion: afterV, dbDriver: config.DB_DRIVER }, applied.length ? "sqlite migrations applied" : "sqlite schema up to date (no pending migrations)");
+  } else log.debug({ mainSchema: config.POSTGRES_MAIN_SCHEMA, ticketSchema: config.POSTGRES_TICKET_SCHEMA, messageLogSchema: config.POSTGRES_MESSAGE_LOG_SCHEMA, vcTimeSchema: config.POSTGRES_VC_TIME_SCHEMA }, "sqlite migrations skipped because runtime databases are postgres");
   const aiRouter = new AiProviderRouter(config, mainPgPool ? new PostgresAiProviderSettingsRepository(mainPgPool) : new SqliteAiProviderSettingsRepository(sqlite!), mainPgPool ? new PostgresAiProviderBudgetRepository(mainPgPool) : new SqliteAiProviderBudgetRepository(sqlite!));
+  log.info("Database runtime initialized successfully.");
   return { usePostgres, sqlite, ticketSqlite, messageLogSqlite, messageAttachmentStoreSqlite, vcTimeSqlite, aiHistorySqlite, automodSqlite, db, ticketDb, aiHistoryDb, automodDb, messageLogPgPool, mainPgPool, vcTimePgPool, messageAttachmentPgPool, aiRouter };
 }
 

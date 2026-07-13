@@ -80,6 +80,7 @@ export async function reconcileAutoModPanel(ctx: BotContext, guild: Guild, chann
 
   const channel = guild.channels.cache.get(channelId) ?? (await guild.channels.fetch(channelId).catch(() => null));
   if (!channel?.isTextBased()) {
+    ctx.log.warn({ channelId, guildId, panelKind: PANEL_KIND_AUTOMOD }, "automod panel channel missing or not text");
     return false;
   }
 
@@ -97,7 +98,12 @@ export async function reconcileAutoModPanel(ctx: BotContext, guild: Guild, chann
   if (row.message_id && botId) {
     const oldMsg = await channel.messages.fetch(row.message_id).catch(() => null);
     if (oldMsg?.author?.id === botId && automodPanelMessageMatches(oldMsg, botId, guildId)) {
-      await oldMsg.edit(editPayload).catch(() => undefined);
+      try {
+        await oldMsg.edit(editPayload);
+      } catch (err) {
+        ctx.log.error({ err, channelId, guildId, panelKind: PANEL_KIND_AUTOMOD }, "automod panel edit failed");
+        return false;
+      }
       await savePanelMessageRow(ctx, row.id, channelId, oldMsg.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,
@@ -112,14 +118,19 @@ export async function reconcileAutoModPanel(ctx: BotContext, guild: Guild, chann
   if (recent && botId) {
     const existing = recent.find((m) => m.author?.id === botId && automodPanelMessageMatches(m, botId, guildId));
     if (existing) {
-      await existing.edit(editPayload).catch(() => undefined);
+      try {
+        await existing.edit(editPayload);
+      } catch (err) {
+        ctx.log.error({ err, channelId, guildId, panelKind: PANEL_KIND_AUTOMOD }, "automod panel reconnect edit failed");
+        return false;
+      }
       await savePanelMessageRow(ctx, row.id, channelId, existing.id, {
         ...parsePanelState(row.data),
         ui_version: codeVer,
         status: "sent",
         last_sent_at: new Date().toISOString(),
       });
-      ctx.log.info({ messageId: existing.id }, "automod panel reconnected via scan");
+      ctx.log.debug({ messageId: existing.id }, "automod panel reconnected via scan");
       return true;
     }
   }
@@ -131,6 +142,6 @@ export async function reconcileAutoModPanel(ctx: BotContext, guild: Guild, chann
     status: "sent",
     last_sent_at: new Date().toISOString(),
   });
-  ctx.log.info({ messageId: sent.id }, "automod panel sent");
+  ctx.log.debug({ messageId: sent.id }, "automod panel sent");
   return true;
 }

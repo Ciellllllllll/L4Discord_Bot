@@ -3,7 +3,7 @@ import { applyDispatchResult, fetchDuePending } from "./reminderHubRepo.js";
 import { sendReminderHubMessage } from "./reminderHubSend.js";
 
 export function startReminderScheduler(ctx: BotContext, intervalMs = 30_000): NodeJS.Timeout {
-  ctx.log.info({ intervalMs }, "reminder scheduler started");
+  ctx.log.debug({ intervalMs }, "reminder scheduler started");
   return setInterval(() => {
     void (async () => {
       const now = new Date().toISOString();
