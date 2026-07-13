@@ -373,7 +373,7 @@ export function vcPanelMessageHasOpenButton(message: Message<boolean>): boolean 
   return messageComponentsHaveCustomId(message.components, new Set(["open_vc_modal"]));
 }
 
-export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<void> {
+export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<boolean> {
   const kind = PANEL_KIND_VC_CREATOR;
   const codeVer = getPermanentUiVersion(kind);
   let row = await ensurePanelMessageRow(ctx, guild.id, kind, channelId);
@@ -388,13 +388,13 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
 
   const ch = await guild.channels.fetch(channelId).catch(() => null);
   if (!ch?.isTextBased()) {
-    ctx.log.warn({ channelId }, "USER panel channel missing or not text (VC creator panel)");
+    ctx.log.warn({ channelId, guildId: guild.id, panelKind: kind }, "USER panel channel missing or not text (VC creator panel)");
     await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
       ...row.data,
       status: "error",
       last_error: "channel_missing",
     });
-    return;
+    return false;
   }
 
   const payload = buildVcCreatorMainPayload();
@@ -405,7 +405,7 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
     const msg = await ch.messages.fetch(row.message_id).catch(() => null);
     if (msg && msg.author?.id === botId && vcPanelMessageHasOpenButton(msg)) {
       if (row.data.ui_version === codeVer) {
-        return;
+        return true;
       }
       try {
         await msg.edit(editPayload);
@@ -415,9 +415,10 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
           last_sent_at: new Date().toISOString(),
         });
       } catch (e) {
-        ctx.log.error({ err: e, kind }, "VC creator panel edit failed");
+        ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "VC creator panel edit failed");
+        return false;
       }
-      return;
+      return true;
     }
   }
 
@@ -435,10 +436,11 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
           last_sent_at: new Date().toISOString(),
         });
       } catch (e) {
-        ctx.log.error({ err: e }, "VC creator panel reconnect edit failed");
+        ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "VC creator panel reconnect edit failed");
+        return false;
       }
-      ctx.log.info({ messageId: existing.id }, "VC creator UI reconnected via scan");
-      return;
+      ctx.log.debug({ messageId: existing.id }, "VC creator UI reconnected via scan");
+      return true;
     }
   }
 
@@ -449,7 +451,7 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
       status: "sent",
       last_sent_at: new Date().toISOString(),
     });
-    ctx.log.info({ messageId: sent.id }, "VC creator UI sent");
+    ctx.log.debug({ messageId: sent.id }, "VC creator UI sent");
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
@@ -457,6 +459,8 @@ export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, cha
       status: "error",
       last_error: err.slice(0, 500),
     });
-    ctx.log.error({ err: e }, "VC creator UI send failed");
+    ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "VC creator UI send failed");
+    return false;
   }
+  return true;
 }

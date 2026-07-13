@@ -418,7 +418,7 @@ export async function reconcileReactionRoleAdminPanel(
   ctx: BotContext,
   guild: Guild,
   channelId: string,
-): Promise<void> {
+): Promise<boolean> {
   const kind = PANEL_KIND_REACTION_ROLE_ADMIN;
   const codeVer = getPermanentUiVersion(kind);
   let row = await ensurePanelMessageRow(ctx, guild.id, kind, channelId);
@@ -433,13 +433,13 @@ export async function reconcileReactionRoleAdminPanel(
 
   const ch = await guild.channels.fetch(channelId).catch(() => null);
   if (!ch?.isTextBased()) {
-    ctx.log.warn({ channelId }, "reaction role admin channel missing or not text");
+    ctx.log.warn({ channelId, guildId: guild.id, panelKind: kind }, "reaction role admin channel missing or not text");
     await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
       ...row.data,
       status: "error",
       last_error: "channel_missing",
     });
-    return;
+    return false;
   }
 
   const payload = buildReactionRoleAdminPanelPayload(`<#${channelId}>`);
@@ -450,7 +450,7 @@ export async function reconcileReactionRoleAdminPanel(
     const msg = await ch.messages.fetch(row.message_id).catch(() => null);
     if (msg && msg.author?.id === botId && messageHasCustomId(msg, ADMIN_CREATE_BUTTON_ID)) {
       if (row.data.ui_version === codeVer) {
-        return;
+        return true;
       }
       try {
         await msg.edit(editPayload);
@@ -460,9 +460,10 @@ export async function reconcileReactionRoleAdminPanel(
           last_sent_at: new Date().toISOString(),
         });
       } catch (e) {
-        ctx.log.error({ err: e, kind }, "reaction role admin panel edit failed");
+        ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "reaction role admin panel edit failed");
+        return false;
       }
-      return;
+      return true;
     }
   }
 
@@ -482,10 +483,11 @@ export async function reconcileReactionRoleAdminPanel(
           last_sent_at: new Date().toISOString(),
         });
       } catch (e) {
-        ctx.log.error({ err: e }, "reaction role admin panel reconnect edit failed");
+        ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "reaction role admin panel reconnect edit failed");
+        return false;
       }
-      ctx.log.info({ messageId: existing.id }, "reaction role admin UI reconnected via scan");
-      return;
+      ctx.log.debug({ messageId: existing.id }, "reaction role admin UI reconnected via scan");
+      return true;
     }
   }
 
@@ -496,7 +498,7 @@ export async function reconcileReactionRoleAdminPanel(
       status: "sent",
       last_sent_at: new Date().toISOString(),
     });
-    ctx.log.info({ messageId: sent.id }, "reaction role admin UI sent");
+    ctx.log.debug({ messageId: sent.id }, "reaction role admin UI sent");
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
@@ -504,14 +506,17 @@ export async function reconcileReactionRoleAdminPanel(
       status: "error",
       last_error: err.slice(0, 500),
     });
-    ctx.log.error({ err: e }, "reaction role admin UI send failed");
+    ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "reaction role admin UI send failed");
+    return false;
   }
+  return true;
 }
 
 let entriesReconcileRunning = false;
 
-export async function reconcileReactionRoleEntriesOnly(ctx: BotContext, guild: Guild): Promise<void> {
-  if (entriesReconcileRunning) return;
+export async function reconcileReactionRoleEntriesOnly(ctx: BotContext, guild: Guild): Promise<string[]> {
+  if (entriesReconcileRunning) return [];
+  const failedEntries: string[] = [];
   entriesReconcileRunning = true;
   try {
     const entries = await loadEntriesForGuild(ctx.db, guild.id);
@@ -523,10 +528,12 @@ export async function reconcileReactionRoleEntriesOnly(ctx: BotContext, guild: G
           await setEntryMessageId(ctx.db, guild.id, e.entryId, messageId, e.channelId);
         }
       } catch (err) {
-        ctx.log.warn({ err, entryId: e.entryId }, "reaction role entry reconnect failed");
+        failedEntries.push(`reaction_role_entry:${e.entryId}`);
+        ctx.log.warn({ err, entryId: e.entryId, guildId: guild.id, panelKind: PANEL_KIND_REACTION_ROLE_ADMIN }, "reaction role entry reconnect failed");
       }
     }
   } finally {
     entriesReconcileRunning = false;
   }
+  return failedEntries;
 }

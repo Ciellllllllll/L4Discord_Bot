@@ -6,7 +6,7 @@ const ROTATE_MS = 15_000;
 export function startPresenceRotation(client: Client, log: pino.Logger, version: string): NodeJS.Timeout {
   let i = 0;
   const lines = ["Discord Bot", "運営Bot稼働中", `Ver${version}`];
-  log.info({ intervalMs: ROTATE_MS, lines }, "presence rotation started");
+  log.debug({ intervalMs: ROTATE_MS, lines }, "presence rotation started");
   const tick = () => {
     const name = lines[i % lines.length] ?? "Discord Bot";
     i += 1;

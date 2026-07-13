@@ -35,7 +35,7 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
   const log = createLogger(config);
-  log.info(
+  log.debug(
     {
       botProfile: config.BOT_PROFILE,
       dbDriver: config.DB_DRIVER,
@@ -58,6 +58,7 @@ async function main(): Promise<void> {
     },
     "config loaded (BOT_VERSION = code default or env override; release bundle from TypeScript)",
   );
+  log.info("Configuration loaded successfully.");
 
   const runtime = await createDatabaseRuntime(config, log);
   const {
@@ -67,7 +68,7 @@ async function main(): Promise<void> {
   } = runtime;
 
   const client = createDiscordClient();
-  log.info(
+  log.debug(
     {
       intents: [
         "Guilds",
@@ -81,6 +82,7 @@ async function main(): Promise<void> {
     },
     "discord client created",
   );
+  log.info("Discord client created successfully.");
   const vcTemp = new VcTemporaryChannelManager(
     log,
     client,
@@ -114,7 +116,7 @@ async function main(): Promise<void> {
       : new SqliteVcRankingRepository(vcTimeSqlite!, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
   };
-  log.info(
+  log.debug(
     config.DB_DRIVER === "postgres"
       ? "repositories: PostgreSQL schemas selected for tickets, message log, attachments, VC, AI history, automoderation, reminders"
       : "repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db), AI history (AI_History.db), automoderation (Automoderation.db), reminders (reminder.db, on first use)",

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { AppConfig } from "../../core/config.js";
 
 type WorkerProcessLog = {
+  debug?: (obj: Record<string, unknown>, message: string) => void;
   info: (obj: Record<string, unknown>, message: string) => void;
   warn: (obj: Record<string, unknown>, message: string) => void;
   error: (obj: Record<string, unknown>, message: string) => void;
@@ -104,7 +105,7 @@ export async function startJapaneseWorkerIfEnabled(
 
   const healthTimeoutMs = Math.min(config.JAPANESE_WORKER_TIMEOUT_MS, 2_000);
   if (await isWorkerHealthy(config.JAPANESE_WORKER_URL, healthTimeoutMs)) {
-    log.info(
+    log.debug?.(
       { workerUrl: config.JAPANESE_WORKER_URL },
       "japanese worker already healthy; bot will not manage external worker process",
     );
@@ -119,7 +120,7 @@ export async function startJapaneseWorkerIfEnabled(
     JAPANESE_WORKER_ADDR: workerAddr,
   };
 
-  log.info({ command, args, cwd, workerAddr }, "starting japanese worker process");
+  log.debug?.({ command, args, cwd, workerAddr }, "starting japanese worker process");
   const child = spawn(command, args, {
     cwd: isAbsolute(cwd) ? cwd : join(repoRoot, cwd),
     env,
@@ -144,7 +145,7 @@ export async function startJapaneseWorkerIfEnabled(
       throw new Error(`Japanese worker exited before becoming healthy (code=${child.exitCode}, signal=${child.signalCode})`);
     }
     if (await isWorkerHealthy(config.JAPANESE_WORKER_URL, healthTimeoutMs)) {
-      log.info({ workerUrl: config.JAPANESE_WORKER_URL }, "japanese worker process is healthy");
+      log.debug?.({ workerUrl: config.JAPANESE_WORKER_URL }, "japanese worker process is healthy");
       return {
         started: true,
         stop: async () => {
