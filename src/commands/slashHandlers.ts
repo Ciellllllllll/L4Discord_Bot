@@ -41,6 +41,7 @@ import {
   handleLolAdminRemoveCommand,
   handleLolWatchCommand,
 } from "../features/lolWatcher/lolWatcher.commands.js";
+import { handleAdhdCommand } from "../features/youtubeWatcher/youtubeWatcher.commands.js";
 import { handleWerewolfCreate, handleWerewolfEnd } from "../features/werewolf/werewolfGame.js";
 import { maybePromptAnonymousSurvey, promptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js";
 import { handleAnonymousSurveyViewCommand } from "../features/anonymousSurvey/surveyView.js";
@@ -154,6 +155,8 @@ export async function handleSlashCommand(
       return handleLolAdminAddCommand(interaction, ctx, member);
     case "lol_remove":
       return handleLolAdminRemoveCommand(interaction, ctx, member);
+    case "adhd":
+      return handleAdhdCommand(interaction, ctx, member);
     default:
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
