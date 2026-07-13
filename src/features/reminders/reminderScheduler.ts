@@ -1,30 +1,16 @@
-import { ChannelType } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { applyDispatchResult, fetchDuePending } from "./reminderHubRepo.js";
+import { sendReminderHubMessage } from "./reminderHubSend.js";
 
-export function startReminderScheduler(ctx: BotContext, intervalMs = 60_000): NodeJS.Timeout {
-  ctx.log.info({ intervalMs }, "reminder scheduler started");
+export function startReminderScheduler(ctx: BotContext, intervalMs = 30_000): NodeJS.Timeout {
+  ctx.log.debug({ intervalMs }, "reminder scheduler started");
   return setInterval(() => {
     void (async () => {
       const now = new Date().toISOString();
-      const rows = await ctx.db
-        .selectFrom("reminders")
-        .selectAll()
-        .where("status", "=", "pending")
-        .where("fire_at", "<=", now)
-        .limit(15)
-        .execute();
+      const rows = await fetchDuePending(ctx, now, 50);
       for (const r of rows) {
-        const ch = await ctx.client.channels.fetch(r.channel_id).catch(() => null);
-        if (
-          ch &&
-          (ch.type === ChannelType.GuildText ||
-            ch.type === ChannelType.GuildAnnouncement ||
-            ch.type === ChannelType.PublicThread ||
-            ch.type === ChannelType.PrivateThread)
-        ) {
-          await ch.send(`🔔 <@${r.author_id}> ${r.body}`.slice(0, 2000)).catch(() => undefined);
-        }
-        await ctx.db.updateTable("reminders").set({ status: "fired" }).where("id", "=", r.id).execute();
+        await sendReminderHubMessage(ctx, r);
+        await applyDispatchResult(ctx, r, false);
       }
       if (rows.length > 0) {
         ctx.log.info({ count: rows.length }, "reminders delivered");

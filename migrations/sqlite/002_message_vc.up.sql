@@ -8,9 +8,10 @@ CREATE TABLE message_logs (
   content TEXT,
   edited_at TEXT,
   deleted_at TEXT,
-  time TEXT,
-  attachments TEXT DEFAULT ''
+  time TEXT
 );
+
+ALTER TABLE message_logs ADD COLUMN attachments TEXT DEFAULT '';
 
 CREATE INDEX idx_mlogs_guild ON message_logs(guild_id);
 CREATE INDEX idx_mlogs_channel ON message_logs(channel_id);
@@ -45,18 +46,3 @@ CREATE TRIGGER message_logs_ad_fts
     INSERT INTO message_logs_fts(message_logs_fts, rowid, content)
     VALUES('delete', old.id, old.content);
   END;
-
-CREATE TABLE sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  guild_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  channel_id INTEGER NOT NULL,
-  started_at TEXT NOT NULL,
-  ended_at TEXT,
-  duration_sec INTEGER
-);
-
-CREATE INDEX idx_sessions_guild_user_open ON sessions(guild_id, user_id, ended_at);
-CREATE INDEX idx_sessions_open ON sessions(guild_id, user_id, ended_at);
-CREATE INDEX idx_sessions_channel ON sessions(channel_id);
-CREATE INDEX idx_sessions_time ON sessions(started_at);

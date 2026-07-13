@@ -1,51 +1,67 @@
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelSelectMenuBuilder,
   ChannelType,
+  MessageFlags,
   type ButtonInteraction,
   type ChannelSelectMenuInteraction,
 } from "discord.js";
 import { ulid } from "ulid";
 import type { BotContext } from "../../bot/context.js";
 import { createSession, deleteSession, getSession, mergeSessionPayload } from "../../core/interactionSessions.js";
-import { isAdmin } from "../../core/permission.js";
-import { savePanelChannelTargets } from "./panelService.js";
+import { isOwner } from "../../core/permission.js";
+import { savePanelChannelsAndReconcile } from "./panelService.js";
 
-export async function handleSetupHubButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+function parseSetupChannelSelectId(id: string): { sid: string; step: "admin" | "vc" | "modmail" } | null {
+  if (id.startsWith("panels:chAdm:")) {
+    return { sid: id.slice("panels:chAdm:".length), step: "admin" };
+  }
+  if (id.startsWith("panels:chVc:")) {
+    return { sid: id.slice("panels:chVc:".length), step: "vc" };
+  }
+  if (id.startsWith("panels:chMm:")) {
+    return { sid: id.slice("panels:chMm:".length), step: "modmail" };
+  }
+  return null;
+}
+
+export async function handleSetupUiOpenButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
   const parsed = interaction.customId.split(":");
-  if (parsed.length < 3 || parsed[0] !== "panels" || parsed[1] !== "setupHub") return false;
-  const step = parsed[2];
-  if (step !== "main") return false;
-  const member = interaction.member && "roles" in interaction.member ? interaction.member : null;
-  if (!isAdmin(member as never, ctx.config)) {
-    await interaction.reply({ content: "権限がありません。", ephemeral: true });
-    return true;
+  if (parsed.length < 3 || parsed[0] !== "panels" || parsed[1] !== "setupUi" || parsed[2] !== "open") {
+    return false;
   }
   if (!interaction.guildId) {
-    await interaction.reply({ content: "ギルド内でのみ実行できます。", ephemeral: true });
+    await interaction.reply({ content: "ギルド内でのみ実行できます。", flags: MessageFlags.Ephemeral });
     return true;
   }
-  await interaction.deferReply({ ephemeral: true });
+  if (!isOwner(interaction.user.id, ctx.config)) {
+    await interaction.reply({ content: "OWNER 専用です。", flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sid = ulid();
   await createSession(ctx.db, {
     id: sid,
     guildId: interaction.guildId,
     domain: "panels",
-    action: "setupWizard",
+    action: "panelChannelSetup",
     payload: { step: "pick_admin" },
     executorUserId: interaction.user.id,
     ttlHours: 1,
   });
   const row = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
     new ChannelSelectMenuBuilder()
-      .setCustomId(`panels:chA:${sid}`)
-      .setPlaceholder("ADMIN用パネルを置くテキストチャンネル")
+      .setCustomId(`panels:chAdm:${sid}`)
+      .setPlaceholder("ADMIN用パネル（ログ・リアクションロール管理等）を置くチャンネル")
       .setMinValues(1)
       .setMaxValues(1)
       .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
   );
   await interaction.editReply({
-    content: "**ADMIN** 用パネルを設置するチャンネルを選んでください。",
+    content:
+      "**1/3** **ADMIN 用**パネルを設置するテキストチャンネルを選んでください（メッセージログ・リアクションロール管理パネルなど）。",
     components: [row],
   });
   return true;
@@ -55,12 +71,10 @@ export async function handleSetupChannelSelect(
   interaction: ChannelSelectMenuInteraction,
   ctx: BotContext,
 ): Promise<boolean> {
-  const id = interaction.customId;
-  if (!id.startsWith("panels:chA:") && !id.startsWith("panels:chU:")) return false;
-  const isAdminPick = id.startsWith("panels:chA:");
-  const sid = id.slice(isAdminPick ? "panels:chA:".length : "panels:chU:".length);
-  // deferUpdate は別プロセスと競合すると 10062 になり得る。先に update で ACK する。
-  // エフェメラルは Message#edit（チャンネル PATCH）では 10008 になるため、editReply（@original）で更新する。
+  const parsedId = parseSetupChannelSelectId(interaction.customId);
+  if (!parsedId) return false;
+  const { sid, step } = parsedId;
+
   await interaction.update({
     content: "処理しています…",
     components: [],
@@ -75,9 +89,8 @@ export async function handleSetupChannelSelect(
     await editWizard("セッションが無効です。", []);
     return true;
   }
-  const member = interaction.member && "roles" in interaction.member ? interaction.member : null;
-  if (!isAdmin(member as never, ctx.config)) {
-    await editWizard("権限がありません。", []);
+  if (!isOwner(interaction.user.id, ctx.config)) {
+    await editWizard("OWNER 専用です。", []);
     return true;
   }
   const chId = interaction.values[0];
@@ -85,29 +98,53 @@ export async function handleSetupChannelSelect(
     await editWizard("チャンネルを選んでください。", []);
     return true;
   }
-  if (isAdminPick) {
-    await mergeSessionPayload(ctx.db, sid, { admin_channel_id: chId, step: "pick_user" });
+
+  if (step === "admin") {
+    await mergeSessionPayload(ctx.db, sid, { admin_channel_id: chId, step: "pick_vc" });
     const row = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
       new ChannelSelectMenuBuilder()
-        .setCustomId(`panels:chU:${sid}`)
-        .setPlaceholder("USER用パネルを置くテキストチャンネル")
+        .setCustomId(`panels:chVc:${sid}`)
+        .setPlaceholder("VC 仮チャンネル作成パネルを置くチャンネル")
         .setMinValues(1)
         .setMaxValues(1)
         .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
     );
-    await editWizard("**USER** 用パネルを設置するチャンネルを選んでください。", [row]);
+    await editWizard("**2/3** **VC 用**パネルを設置するテキストチャンネルを選んでください。", [row]);
     return true;
   }
+
+  if (step === "vc") {
+    await mergeSessionPayload(ctx.db, sid, { vc_channel_id: chId, step: "pick_modmail" });
+    const row = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
+      new ChannelSelectMenuBuilder()
+        .setCustomId(`panels:chMm:${sid}`)
+        .setPlaceholder("Modmail / お問い合わせパネルを置くチャンネル")
+        .setMinValues(1)
+        .setMaxValues(1)
+        .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
+    );
+    await editWizard("**3/3** **Modmail 用**パネルを設置するテキストチャンネルを選んでください。", [row]);
+    return true;
+  }
+
   const adminId = session.payload.admin_channel_id as string | undefined;
-  if (!adminId) {
+  const vcId = session.payload.vc_channel_id as string | undefined;
+  if (!adminId || !vcId) {
     await editWizard("セッションが壊れています。最初からやり直してください。", []);
     return true;
   }
-  await savePanelChannelTargets(ctx, interaction.guildId, adminId, chId);
+
+  await savePanelChannelsAndReconcile(ctx, interaction.guildId, adminId, vcId, chId);
   await deleteSession(ctx.db, sid);
-  await editWizard(
-    "パネル設置チャンネルを保存し、パネルを送信しました（権限とBOT_VERSIONにより保留の場合は起動時に再試行されます）。",
-    [],
-  );
+  await editWizard("送信先を保存し、常設パネルを同期しました（未送信のみ送信・既存メッセージは再利用します）。", []);
   return true;
+}
+
+export function buildSetupEntryButtonRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("panels:setupUi:open")
+      .setLabel("送信先を設定")
+      .setStyle(ButtonStyle.Primary),
+  );
 }

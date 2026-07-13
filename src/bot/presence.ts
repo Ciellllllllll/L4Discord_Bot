@@ -1,15 +1,14 @@
 import { ActivityType, type Client } from "discord.js";
 import type pino from "pino";
 
-const ROTATE_MS = 60_000;
-const DEFAULT_LINES = ["L4Discord", "/q で質問", "運営Bot稼働中"];
+const ROTATE_MS = 15_000;
 
 export function startPresenceRotation(client: Client, log: pino.Logger, version: string): NodeJS.Timeout {
   let i = 0;
-  const lines = [...DEFAULT_LINES, `v${version}`];
-  log.info({ intervalMs: ROTATE_MS, lines }, "presence rotation started");
+  const lines = ["Discord Bot", "運営Bot稼働中", `Ver${version}`];
+  log.debug({ intervalMs: ROTATE_MS, lines }, "presence rotation started");
   const tick = () => {
-    const name = lines[i % lines.length] ?? "L4";
+    const name = lines[i % lines.length] ?? "Discord Bot";
     i += 1;
     const u = client.user;
     if (!u) return;
@@ -26,9 +25,7 @@ export function startPresenceRotation(client: Client, log: pino.Logger, version:
             activities: [{ name: "接続エラー", type: ActivityType.Playing }],
             status: "idle",
           });
-        } catch {
-          /* ignore */
-        }
+        } catch {}
       }
     })();
   };

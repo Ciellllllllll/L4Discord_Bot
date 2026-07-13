@@ -1,0 +1,9 @@
+DROP INDEX IF EXISTS idx_pacchi_sentence_patterns_guild_count;
+DROP INDEX IF EXISTS idx_pacchi_senryu_submissions_guild_created;
+DROP TABLE IF EXISTS pacchi_senryu_submissions;
+DROP INDEX IF EXISTS idx_pacchi_cooccurrences_guild_count;
+DROP INDEX IF EXISTS idx_pacchi_lexicon_guild_count;
+DROP TABLE IF EXISTS pacchi_sentence_patterns;
+DROP TABLE IF EXISTS pacchi_user_dictionary_entries;
+DROP TABLE IF EXISTS pacchi_cooccurrences;
+DROP TABLE IF EXISTS pacchi_lexicon;

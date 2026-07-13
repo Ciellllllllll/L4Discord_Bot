@@ -21,6 +21,97 @@ export const SQLITE_MIGRATIONS: { version: number; up: string; down: string }[] 
     up: join(repoRoot, "migrations/sqlite/003_panels_domain.up.sql"),
     down: join(repoRoot, "migrations/sqlite/003_panels_domain.down.sql"),
   },
+  {
+    version: 4,
+    up: join(repoRoot, "migrations/sqlite/004_message_logs_to_message_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/004_message_logs_to_message_db.down.sql"),
+  },
+  {
+    version: 5,
+    up: join(repoRoot, "migrations/sqlite/005_sessions_to_vc_time_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/005_sessions_to_vc_time_db.down.sql"),
+  },
+  {
+    version: 6,
+    up: join(repoRoot, "migrations/sqlite/006_reaction_role_entries.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/006_reaction_role_entries.down.sql"),
+  },
+  {
+    version: 7,
+    up: join(repoRoot, "migrations/sqlite/007_modmail_intakes.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/007_modmail_intakes.down.sql"),
+  },
+  {
+    version: 8,
+    up: join(repoRoot, "migrations/sqlite/008_appeals.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/008_appeals.down.sql"),
+  },
+  {
+    version: 9,
+    up: join(repoRoot, "migrations/sqlite/009_modmail_replies_events.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/009_modmail_replies_events.down.sql"),
+  },
+  {
+    version: 10,
+    up: join(repoRoot, "migrations/sqlite/010_ticket_tables_to_ticket_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/010_ticket_tables_to_ticket_db.down.sql"),
+  },
+  {
+    version: 11,
+    up: join(repoRoot, "migrations/sqlite/011_ai_history_to_own_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/011_ai_history_to_own_db.down.sql"),
+  },
+  {
+    version: 12,
+    up: join(repoRoot, "migrations/sqlite/012_reminder_to_own_db.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/012_reminder_to_own_db.down.sql"),
+  },
+  {
+    version: 13,
+    up: join(repoRoot, "migrations/sqlite/013_senryu.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/013_senryu.down.sql"),
+  },
+  {
+    version: 14,
+    up: join(repoRoot, "migrations/sqlite/014_vc_temp_tracked_channels.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/014_vc_temp_tracked_channels.down.sql"),
+  },
+  {
+    version: 15,
+    up: join(repoRoot, "migrations/sqlite/015_steam_free.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/015_steam_free.down.sql"),
+  },
+  {
+    version: 16,
+    up: join(repoRoot, "migrations/sqlite/016_epic_free.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/016_epic_free.down.sql"),
+  },
+  {
+    version: 17,
+    up: join(repoRoot, "migrations/sqlite/017_game_deals.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/017_game_deals.down.sql"),
+  },
+  {
+    version: 18,
+    up: join(repoRoot, "migrations/sqlite/018_game_deals_steam_source_status.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/018_game_deals_steam_source_status.down.sql"),
+  },
+  {
+    version: 19,
+    up: join(repoRoot, "migrations/sqlite/019_cheapshark_deals.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/019_cheapshark_deals.down.sql"),
+  },
+  {
+    version: 20,
+    up: join(repoRoot, "migrations/sqlite/020_polls_state_revision.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/020_polls_state_revision.down.sql"),
+  },
+  {
+    version: 21,
+    up: join(repoRoot, "migrations/sqlite/021_guild_settings_revision.up.sql"),
+    down: join(repoRoot, "migrations/sqlite/021_guild_settings_revision.down.sql"),
+  },
+  // ticket.db 側の appeals / modmail_replies 列追加はメイン DB マイグレーションに含めない（ensureTicketDatabaseSchema で列追加）。
 ];
 
 export function getSqliteUserVersion(db: DatabaseLib.Database): number {
@@ -32,13 +123,45 @@ function setSqliteUserVersion(db: DatabaseLib.Database, v: number): void {
   db.pragma(`user_version = ${v}`);
 }
 
-/** Applies pending migrations in order. Returns applied version numbers. */
-export function applyPendingSqliteMigrations(db: DatabaseLib.Database): number[] {
+export type SqliteMigrationHooks = {
+    // 該当バージョンの up を実行する直前（例: v10 で ticket.db へデータコピー）
+
+  beforeApplyVersion?: (version: number, mainDb: DatabaseLib.Database) => void;
+};
+
+function isDuplicateColumnError(err: unknown): boolean {
+  return err instanceof Error && /duplicate column name/i.test(err.message);
+}
+
+function executeMigrationSql(db: DatabaseLib.Database, sql: string): void {
+  try {
+    db.exec(sql);
+    return;
+  } catch (err) {
+    if (!isDuplicateColumnError(err)) throw err;
+  }
+
+  for (const statement of sql.split(";").map((part) => part.trim()).filter(Boolean)) {
+    try {
+      db.exec(statement);
+    } catch (err) {
+      if (!isDuplicateColumnError(err)) throw err;
+    }
+  }
+}
+
+// Applies pending migrations in order. Returns applied version numbers.
+
+export function applyPendingSqliteMigrations(
+  db: DatabaseLib.Database,
+  hooks?: SqliteMigrationHooks,
+): number[] {
   const applied: number[] = [];
   let v = getSqliteUserVersion(db);
   for (const m of SQLITE_MIGRATIONS) {
     if (v < m.version) {
-      db.exec(readFileSync(m.up, "utf8"));
+      hooks?.beforeApplyVersion?.(m.version, db);
+      executeMigrationSql(db, readFileSync(m.up, "utf8"));
       setSqliteUserVersion(db, m.version);
       v = m.version;
       applied.push(m.version);
@@ -47,7 +170,8 @@ export function applyPendingSqliteMigrations(db: DatabaseLib.Database): number[]
   return applied;
 }
 
-/** Reverts migrations from current version down (same semantics as migrate script `down`). */
+// Reverts migrations from current version down (same semantics as migrate script `down`).
+
 export function revertSqliteMigrations(db: DatabaseLib.Database): number[] {
   const reverted: number[] = [];
   let v = getSqliteUserVersion(db);

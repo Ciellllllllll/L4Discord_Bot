@@ -1,10 +1,18 @@
-/** Discord Snowflake を参照DB互換の SQLite INTEGER として扱う（64bit、JS Number は不可） */
+// Discord Snowflake を参照DB互換の SQLite INTEGER として扱う（64bit、JS Number は不可）
+
 
 export function snowflakeToBigInt(id: string): bigint {
   return BigInt(id);
 }
 
-export function bigIntToSnowflake(v: bigint | number | null | undefined): string {
+export function bigIntToSnowflake(v: bigint | number | string | null | undefined): string {
   if (v === null || v === undefined) return "";
-  return typeof v === "bigint" ? v.toString() : BigInt(Math.trunc(v)).toString();
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!/^\d+$/.test(s)) return "";
+    return s;
+  }
+  if (!Number.isSafeInteger(v)) return "";
+  return BigInt(Math.trunc(v)).toString();
 }

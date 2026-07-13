@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import { ApplicationCommandType, PermissionFlagsBits } from "discord.js";
+import { buildSlashCommands } from "./buildSlashCommands.js";
+
+function chatInputCommand(name: string, botProfile?: Parameters<typeof buildSlashCommands>[0]) {
+  const command = buildSlashCommands(botProfile).find((candidate) => candidate.name === name);
+  if (!command || command.type === ApplicationCommandType.User || command.type === ApplicationCommandType.Message) {
+    return null;
+  }
+  return command;
+}
+
+async function run(): Promise<void> {
+  assert.equal(chatInputCommand("survey"), null);
+  assert.equal(chatInputCommand("survey", "production"), null);
+
+  const survey = chatInputCommand("survey", "debug");
+  assert.ok(survey);
+  assert.equal("description" in survey ? survey.description : undefined, "Anonymous Surveyを手動で表示します(DEBUG用)");
+
+  const view = chatInputCommand("view");
+  assert.ok(view);
+  assert.equal(view.default_member_permissions, PermissionFlagsBits.Administrator.toString());
+
+  const adhd = chatInputCommand("adhd");
+  assert.ok(adhd);
+  assert.equal(adhd.default_member_permissions, PermissionFlagsBits.Administrator.toString());
+  assert.deepEqual(adhd.options?.map((option) => option.name), ["add", "remove", "list", "scan_now"]);
+}
+
+void run()
+  .then(() => {
+    console.log("buildSlashCommands.spec.ts: all assertions passed");
+  })
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });

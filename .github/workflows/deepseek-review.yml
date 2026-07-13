@@ -1,0 +1,77 @@
+name: DeepSeek Code Review
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+concurrency:
+  group: deepseek-review-${{ github.event_name }}-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  deepseek-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve review target
+        id: target
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let headSha = context.sha;
+            let beforeSha = context.payload.before || "";
+            let prNumber = "";
+            let prHtmlUrl = "";
+            let shouldRun = true;
+
+            core.setOutput("head-sha", headSha);
+            core.setOutput("before-sha", beforeSha);
+            core.setOutput("pr-number", prNumber);
+            core.setOutput("pr-html-url", prHtmlUrl);
+            core.setOutput("should-run", String(shouldRun));
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.target.outputs.head-sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run DeepSeek review
+        if: steps.target.outputs.should-run == 'true'
+        run: node scripts/deepseek-review.mjs
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: deepseek-v4-pro
+          DEEPSEEK_REASONING_EFFORT: high
+
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+
+          PR_NUMBER: ${{ steps.target.outputs.pr-number }}
+          PR_HTML_URL: ${{ steps.target.outputs.pr-html-url }}
+
+          BEFORE_SHA: ${{ steps.target.outputs.before-sha }}
+          HEAD_SHA: ${{ steps.target.outputs.head-sha }}
+
+          DISCORD_REVIEW_WEBHOOK_URL: ${{ secrets.DISCORD_REVIEW_WEBHOOK_URL }}
+
+          MAX_DIFF_CHARS: 180000
+          MAX_REPOSITORY_CHARS: 350000
+          MAX_REVIEW_COMMENTS: 80
+          MAX_DEEPSEEK_TOKENS: 12000
+          SKIP_PUSH_REVIEW_IF_OPEN_PR: true

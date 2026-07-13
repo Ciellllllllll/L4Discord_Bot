@@ -1,40 +1,82 @@
 import {
+  PermissionFlagsBits,
   SlashCommandBuilder,
   type RESTPostAPIApplicationCommandsJSONBody,
 } from "discord.js";
+import type { AppConfig } from "../core/config.js";
 
-export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
-  return [
+type BotProfile = AppConfig["BOT_PROFILE"];
+
+export function buildSlashCommands(botProfile: BotProfile = "production"): RESTPostAPIApplicationCommandsJSONBody[] {
+  const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
     new SlashCommandBuilder()
       .setName("q")
-      .setDescription("BOTに質問（DeepSeek）")
+      .setDescription("BOTとおしゃべり")
       .addStringOption((o) =>
         o.setName("text").setDescription("質問").setRequired(true).setMaxLength(2000),
       )
       .toJSON(),
-    new SlashCommandBuilder().setName("ping").setDescription("AI応答時間計測").toJSON(),
+    new SlashCommandBuilder().setName("ping").setDescription("応答時間計測用コマンド(DEBUG用です)").toJSON(),
     new SlashCommandBuilder()
-      .setName("member_count_setup")
-      .setDescription("Member Count用カテゴリ・ボイスチャンネル設置")
+      .setName("view")
+      .setDescription("匿名アンケート結果を閲覧します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName("switch")
+      .setDescription("サーバー全体のAIプロバイダーを切り替えます")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((o) => o
+        .setName("provider")
+        .setDescription("優先するAIプロバイダー")
+        .setRequired(true)
+        .addChoices(
+          { name: "GPT-5.6 Terra", value: "openai_gpt56" },
+          { name: "GPT-5.4 mini", value: "openai_gpt54_mini" },
+          { name: "DeepSeek", value: "deepseek" },
+        ))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("pacchi_help")
+      .setDescription("ぱっちぃ機能の使い方を表示します")
+      .toJSON(),
+
+    new SlashCommandBuilder()
       .setName("vc_rank")
-      .setDescription("VC滞在ランキング")
+      .setDescription("VCの接続ランキングを閲覧できます")
       .addStringOption((o) =>
         o
           .setName("period")
-          .setDescription("期間")
+          .setDescription("集計範囲を選んでください。")
           .setRequired(true)
           .addChoices(
-            { name: "今日", value: "day" },
-            { name: "週間", value: "week" },
-            { name: "月間", value: "month" },
-            { name: "全期間", value: "all" },
+            { name: "今日（その日0時〜）", value: "day" },
+            { name: "週間（月曜0時〜）", value: "week" },
+            { name: "月間（1日0時〜）", value: "month" },
+            { name: "全期間（累計）", value: "all" },
           ),
       )
       .toJSON(),
-    new SlashCommandBuilder().setName("create_werewolfgame").setDescription("人狼募集開始").toJSON(),
-    new SlashCommandBuilder().setName("end_werewolfgame").setDescription("人狼募集終了").toJSON(),
+    new SlashCommandBuilder()
+      .setName("afk")
+      .setDescription("同じVCにいる寝落ちユーザーを確認付きで切断します")
+      .addUserOption((o) => o.setName("target").setDescription("切断対象の寝落ちユーザー").setRequired(true))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("member_count_setup")
+      .setDescription("メンバー数表示用のカテゴリとVCチャンネルを作成します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("create_werewolf")
+      .setDescription("人狼募集開始")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("end_werewolf")
+      .setDescription("人狼募集終了")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
     new SlashCommandBuilder()
       .setName("処刑")
       .setDescription("処刑投票フローを開始")
@@ -43,22 +85,163 @@ export function buildSlashCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     new SlashCommandBuilder()
       .setName("タイムアウト延長")
       .setDescription("タイムアウト延長の投票フロー")
+      .addUserOption((o) => o.setName("target").setDescription("対象（タイムアウト中のユーザー）").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("disable_emoji")
       .setDescription("対象ユーザーの絵文字利用を制限")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("user").setDescription("対象").setRequired(true))
       .toJSON(),
     new SlashCommandBuilder()
       .setName("enable_emoji")
       .setDescription("絵文字制限を解除")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addUserOption((o) => o.setName("user").setDescription("対象").setRequired(true))
       .toJSON(),
+
+    new SlashCommandBuilder().setName("stamp_rank").setDescription("スタンプランキング").toJSON(),
+
     new SlashCommandBuilder()
-      .setName("stamp_count")
-      .setDescription("スタンプ利用回数")
-      .addUserOption((o) => o.setName("user").setDescription("対象（省略時は自分）"))
+      .setName("ticket_users")
+      .setDescription("Ticket 利用者を既存データから集計します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addIntegerOption((o) =>
+        o
+          .setName("limit")
+          .setDescription("表示件数")
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(25),
+      )
       .toJSON(),
-    new SlashCommandBuilder().setName("stamp_ranking").setDescription("スタンプランキング").toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("change_prompt")
+      .setDescription("自分用の AI システムプロンプトを書き換えます")
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("create_prompt")
+      .setDescription("条件から /q 用の AI システムプロンプトを作成します")
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("show_prompt")
+      .setDescription("自分が /q で使用している AI システムプロンプトを表示します")
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("thinking")
+      .setDescription("自分、または管理者が指定ユーザーの Thinking を切り替えます")
+      .addBooleanOption((o) =>
+        o.setName("enabled").setDescription("Thinking を有効にするか").setRequired(true),
+      )
+      .addUserOption((o) =>
+        o.setName("user").setDescription("対象ユーザー（管理者のみ指定可）").setRequired(false),
+      )
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("r18")
+      .setDescription("自分のR18モードを切り替えます")
+      .addBooleanOption((o) =>
+        o.setName("enabled").setDescription("R18モードを有効にするか").setRequired(true),
+      )
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("mute")
+      .setDescription("このチャンネル・スレッドでの川柳機能をオフにします")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+
+    new SlashCommandBuilder()
+      .setName("game_on")
+      .setDescription("このチャンネルでSteam/Epicの無料検知通知を有効化します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("game_now")
+      .setDescription("Steamの100%割引商品を即時取得して投稿します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("game_off")
+      .setDescription("Steam/Epicの無料検知通知を無効化します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("sub")
+      .setDescription("Steam/Epicゲームの割引・無料化監視を登録します")
+      .addStringOption((o) =>
+        o
+          .setName("link")
+          .setDescription("Steam または Epic Games Store のゲームURL")
+          .setRequired(true)
+          .setMaxLength(500),
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("sub_list")
+      .setDescription("自分の割引・無料化監視リストを表示します")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("lol_watch")
+      .setDescription("LoL試合監視を管理します")
+      .addSubcommand((sub) =>
+        sub
+          .setName("add")
+          .setDescription("監視対象アカウントを追加します")
+          .addStringOption((o) =>
+            o.setName("key").setDescription("Riot ID（例: name#tag）").setRequired(true).setMaxLength(200),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName("remove")
+          .setDescription("自分の監視対象アカウントを無効化します"),
+      )
+      .addSubcommand((sub) => sub.setName("list").setDescription("監視対象と最新statusを表示します"))
+      .addSubcommand((sub) => sub.setName("scan_now").setDescription("LoL試合監視を即時scanします"))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("lol_add")
+      .setDescription("管理者用: LoL監視対象アカウントを追加します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((o) =>
+        o.setName("key").setDescription("Riot ID（例: name#tag）").setRequired(true).setMaxLength(200),
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("lol_remove")
+      .setDescription("管理者用: LoL監視対象アカウントを無効化します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addStringOption((o) =>
+        o.setName("key").setDescription("Riot ID（例: name#tag）").setRequired(true).setMaxLength(200),
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("adhd")
+      .setDescription("YouTube新着通知を管理します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addSubcommand((sub) => sub.setName("add").setDescription("この場所にYouTube新着通知を登録します")
+        .addStringOption((o) => o.setName("url").setDescription("https://www.youtube.com/channel/UC… 形式のURL").setRequired(true).setMaxLength(300)))
+      .addSubcommand((sub) => sub.setName("remove").setDescription("この場所のYouTube通知を停止します")
+        .addStringOption((o) => o.setName("url").setDescription("登録したYouTubeチャンネルURL").setRequired(true).setMaxLength(300)))
+      .addSubcommand((sub) => sub.setName("list").setDescription("YouTube監視の一覧を表示します"))
+      .addSubcommand((sub) => sub.setName("scan_now").setDescription("YouTube監視を今すぐ実行します"))
+      .toJSON(),
   ];
+
+  if (botProfile === "debug") {
+    commands.push(
+      new SlashCommandBuilder()
+        .setName("survey")
+        .setDescription("Anonymous Surveyを手動で表示します(DEBUG用)")
+        .toJSON(),
+    );
+  }
+
+  return commands;
 }
