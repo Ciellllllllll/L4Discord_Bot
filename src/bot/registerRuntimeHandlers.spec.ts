@@ -148,6 +148,7 @@ test("closed lifecycle prevents clientReady background services from starting", 
     startReminder: () => { calls.push("reminder"); return {} as NodeJS.Timeout; },
     startGameDeal: () => { calls.push("deals"); return { stop: async () => undefined }; },
     startLolWatcher: async () => { calls.push("lol"); return null; },
+    startYouTubeWatcher: () => { calls.push("youtube"); return null; },
     logError: () => undefined,
   });
 
@@ -170,6 +171,7 @@ test("Lol watcher startup failure stops already registered clientReady timers", 
     startReminder: () => ({ marker: "reminder" } as unknown as NodeJS.Timeout),
     startGameDeal: () => ({ stop: async () => { calls.push("deals"); } }),
     startLolWatcher: async () => { throw new Error("Lol startup failed"); },
+    startYouTubeWatcher: () => ({ stop: () => { calls.push("youtube"); } }),
     logError: (error) => { errors.push(error); },
   });
 

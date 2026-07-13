@@ -11,6 +11,7 @@ import { reconcileTimeoutExtendFlows, shutdownTimeoutExtendFlowRuntime } from ".
 import { startGameDealWatcher, type GameDealWatcherController } from "../features/gameDeals/gameDealWatcher.js";
 import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "../features/japaneseAnalysis/japaneseWorkerProcess.js";
 import { startLolWatcher } from "../features/lolWatcher/lolWatcher.watcher.js";
+import { startYouTubeWatcher } from "../features/youtubeWatcher/youtubeWatcher.watcher.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "../features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "../features/modmail/modmailService.js";
 import { restoreModmailUiState } from "../features/modmail/modmailRestore.js";
@@ -46,6 +47,7 @@ type RuntimeResources = {
   clearTimeout?: (timer: NodeJS.Timeout) => void;
   deferredTimers?: Iterable<NodeJS.Timeout>;
   lolWatcher?: { stop(): void | Promise<void> } | null;
+  youtubeWatcher?: { stop(): void | Promise<void> } | null;
   japaneseWorker?: { stop(): Promise<void> } | null;
   shutdownModerationFlows?: () => void | Promise<void>;
 };
@@ -70,6 +72,7 @@ async function stopRuntimeResources(
   if (options.vxTwitterPreviewCleanupTimer) await stop(() => clear(options.vxTwitterPreviewCleanupTimer!));
   if (options.gameDealWatcher) await stop(() => options.gameDealWatcher!.stop());
   if (options.lolWatcher) await stop(() => options.lolWatcher!.stop());
+  if (options.youtubeWatcher) await stop(() => options.youtubeWatcher!.stop());
   if (options.japaneseWorker) await stop(() => options.japaneseWorker!.stop());
   if (options.shutdownModerationFlows) await stop(() => options.shutdownModerationFlows!());
   if (options.vcTemp) await stop(() => options.vcTemp!.stopSweep());
@@ -123,7 +126,8 @@ export function createRuntimeResourceLifecycle(options: {
     reminderTimer?: NodeJS.Timeout;
     vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
     gameDealWatcher?: GameDealWatcherController;
-    lolWatcher?: { stop(): void | Promise<void> } | null;
+  lolWatcher?: { stop(): void | Promise<void> } | null;
+  youtubeWatcher?: { stop(): void | Promise<void> } | null;
   }): Promise<void>;
   setJapaneseWorker(worker: { stop(): Promise<void> } | null): Promise<void>;
   stopClientReadyResources(): Promise<void>;
@@ -135,6 +139,7 @@ export function createRuntimeResourceLifecycle(options: {
   let vxTwitterPreviewCleanupTimer: NodeJS.Timeout | undefined;
   let gameDealWatcher: GameDealWatcherController | undefined;
   let lolWatcher: { stop(): void | Promise<void> } | null = null;
+  let youtubeWatcher: { stop(): void | Promise<void> } | null = null;
   let japaneseWorker: { stop(): Promise<void> } | null = null;
   let closed = false;
   let shutdownPromise: Promise<void> | undefined;
@@ -150,6 +155,7 @@ export function createRuntimeResourceLifecycle(options: {
       vxTwitterPreviewCleanupTimer = resources.vxTwitterPreviewCleanupTimer;
       gameDealWatcher = resources.gameDealWatcher;
       lolWatcher = resources.lolWatcher ?? null;
+      youtubeWatcher = resources.youtubeWatcher ?? null;
     },
     async setJapaneseWorker(worker) {
       if (closed) {
@@ -159,12 +165,13 @@ export function createRuntimeResourceLifecycle(options: {
       japaneseWorker = worker;
     },
     async stopClientReadyResources() {
-      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, clearInterval: options.clearInterval };
+      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeWatcher, clearInterval: options.clearInterval };
       presenceTimer = undefined;
       reminderTimer = undefined;
       vxTwitterPreviewCleanupTimer = undefined;
       gameDealWatcher = undefined;
       lolWatcher = null;
+      youtubeWatcher = null;
       await stopRuntimeResources(resources);
     },
     isClosed: () => closed,
@@ -182,7 +189,7 @@ export function createRuntimeResourceLifecycle(options: {
       closed = true;
       try {
         await createRuntimeShutdown({
-          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, japaneseWorker,
+          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeWatcher, japaneseWorker,
           vcTemp: options.vcTemp, client: options.client, clearInterval: options.clearInterval,
           clearTimeout: options.clearTimeout, deferredTimers, shutdownModerationFlows: options.shutdownModerationFlows,
         })();
@@ -200,6 +207,7 @@ export async function startClientReadyBackgroundServices(options: {
   startVxTwitterPreviewCleanup?(): NodeJS.Timeout;
   startGameDeal(): GameDealWatcherController;
   startLolWatcher(): Promise<{ stop(): void | Promise<void> } | null>;
+  startYouTubeWatcher(): { stop(): void | Promise<void> } | null;
   logError(error: unknown, message: string): void;
 }): Promise<boolean> {
   if (options.lifecycle.isClosed()) return false;
@@ -211,7 +219,8 @@ export async function startClientReadyBackgroundServices(options: {
   if (options.lifecycle.isClosed()) return false;
   try {
     const lolWatcher = await options.startLolWatcher();
-    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher });
+    const youtubeWatcher = options.startYouTubeWatcher();
+    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeWatcher });
     if (options.lifecycle.isClosed()) return false;
     return true;
   } catch (error) {
@@ -318,6 +327,7 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
       },
       startGameDeal: () => startGameDealWatcher(ctx),
       startLolWatcher: () => startLolWatcher(ctx),
+      startYouTubeWatcher: () => startYouTubeWatcher(ctx),
       logError: (err, message) => log.error({ err, guildId: config.GUILD_ID }, message),
     });
     if (!started) return;

@@ -20,6 +20,7 @@ import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
 import { ensureSqliteAiProviderSchema, SqliteAiProviderBudgetRepository, SqliteAiProviderSettingsRepository } from "../features/ai/aiProviderRepository.js";
 import { ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
+import { ensurePostgresYouTubeWatcherSchema } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
 import { prepareMessageAttachmentStore, prepareMessageAttachmentStorePostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { prepareMessageLogsDatabase } from "../features/messageLog/index.js";
 import { ensurePostgresMessageLogsSchema } from "../features/messageLog/messageLogsSchema.js";
@@ -148,6 +149,7 @@ async function createDatabaseRuntimeUnsafe(
       );
       CREATE INDEX IF NOT EXISTS idx_vx_twitter_preview_states_expires ON vx_twitter_preview_states (expires_at);
     `); } },
+    { version: 10, name: "youtube_watcher_initial", apply: ensurePostgresYouTubeWatcherSchema },
   ]);
   if (usePostgres) {
     await migrateTemporarySchema(config.DATABASE_URL!, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);

@@ -221,6 +221,17 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
         o.setName("key").setDescription("Riot ID（例: name#tag）").setRequired(true).setMaxLength(200),
       )
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName("adhd")
+      .setDescription("YouTube新着通知を管理します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addSubcommand((sub) => sub.setName("add").setDescription("この場所にYouTube新着通知を登録します")
+        .addStringOption((o) => o.setName("url").setDescription("https://www.youtube.com/channel/UC… 形式のURL").setRequired(true).setMaxLength(300)))
+      .addSubcommand((sub) => sub.setName("remove").setDescription("この場所のYouTube通知を停止します")
+        .addStringOption((o) => o.setName("url").setDescription("登録したYouTubeチャンネルURL").setRequired(true).setMaxLength(300)))
+      .addSubcommand((sub) => sub.setName("list").setDescription("YouTube監視の一覧を表示します"))
+      .addSubcommand((sub) => sub.setName("scan_now").setDescription("YouTube監視を今すぐ実行します"))
+      .toJSON(),
   ];
 
   if (botProfile === "debug") {
