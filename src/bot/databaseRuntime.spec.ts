@@ -9,6 +9,7 @@ import { loadConfig } from "../core/config.js";
 import { createPgPool, quotePgIdent } from "../core/db/postgres.js";
 import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
 import { getGuildSettingsData, upsertGuildSettingsData } from "../core/guildSettings.js";
+import { PostgresPacchiRepository } from "../features/pacchi/postgresPacchiRepository.js";
 import { getOptionalPostgresTestUrl } from "../test/postgresTestEnv.js";
 import { closeDatabaseRuntime, createDatabaseRuntime, createDatabaseRuntimeWithCleanup } from "./databaseRuntime.js";
 
@@ -216,6 +217,114 @@ test("createDatabaseRuntime applies pending polls and guild settings revision mi
       [schemas.main],
     );
     assert.deepEqual(guildSettingsRevision.rows, [{ data_type: "integer", version: 8 }]);
+  } finally {
+    if (runtime) await closeDatabaseRuntime(runtime);
+    for (const schema of Object.values(schemas)) {
+      await adminPool.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(schema)} CASCADE`);
+    }
+    await adminPool.end();
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test("createDatabaseRuntime repairs legacy Pacchi bigint flags through migration v11", async () => {
+  const connectionString = getOptionalPostgresTestUrl("TEST_DATABASE_URL", "databaseRuntime.spec.ts");
+  if (!connectionString) return;
+
+  const root = mkdtempSync(join(tmpdir(), "l4-runtime-pacchi-v11-"));
+  const suffix = `${process.pid}_${Date.now()}`;
+  const schemas = {
+    main: `runtime_main_pacchi_v11_${suffix}`,
+    ticket: `runtime_ticket_pacchi_v11_${suffix}`,
+    messageLog: `runtime_message_log_pacchi_v11_${suffix}`,
+    messageAttachment: `runtime_message_attachment_pacchi_v11_${suffix}`,
+    vcTime: `runtime_vc_time_pacchi_v11_${suffix}`,
+    aiHistory: `runtime_ai_history_pacchi_v11_${suffix}`,
+    automod: `runtime_automod_pacchi_v11_${suffix}`,
+    reminder: `runtime_reminder_pacchi_v11_${suffix}`,
+  };
+  const adminPool = await createPgPool(connectionString);
+  let runtime: Awaited<ReturnType<typeof createDatabaseRuntime>> | undefined;
+  try {
+    await adminPool.query(`
+      CREATE SCHEMA ${quotePgIdent(schemas.main)};
+      CREATE TABLE ${quotePgIdent(schemas.main)}.pacchi_settings (
+        guild_id text PRIMARY KEY,
+        enabled bigint NOT NULL DEFAULT 1,
+        default_talk_enabled bigint NOT NULL DEFAULT 1,
+        default_learn_enabled bigint NOT NULL DEFAULT 1,
+        speak_rate text NOT NULL DEFAULT 'normal',
+        cooldown_seconds integer NOT NULL DEFAULT 60,
+        last_spoke_at text,
+        last_learned_at text,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      );
+      CREATE TABLE ${quotePgIdent(schemas.main)}.pacchi_channel_settings (
+        guild_id text NOT NULL,
+        channel_id text NOT NULL,
+        talk_enabled bigint NOT NULL DEFAULT 1,
+        learn_enabled bigint NOT NULL DEFAULT 1,
+        created_at text NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (guild_id, channel_id)
+      );
+      INSERT INTO ${quotePgIdent(schemas.main)}.pacchi_settings (guild_id, enabled, default_talk_enabled, default_learn_enabled, created_at, updated_at)
+      VALUES ('guild-legacy', 0, 1, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      INSERT INTO ${quotePgIdent(schemas.main)}.pacchi_channel_settings (guild_id, channel_id, talk_enabled, learn_enabled, created_at, updated_at)
+      VALUES ('guild-legacy', 'channel-legacy', 0, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      CREATE TABLE ${quotePgIdent(schemas.main)}.postgres_schema_migrations (
+        version integer PRIMARY KEY,
+        name text NOT NULL,
+        applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO ${quotePgIdent(schemas.main)}.postgres_schema_migrations (version, name)
+      SELECT version, 'pre-v11' FROM generate_series(1, 10) AS version;
+    `);
+
+    runtime = await createDatabaseRuntime(runtimeConfig({
+      DB_DRIVER: "postgres",
+      DATABASE_URL: connectionString,
+      ...runtimePaths(root),
+      POSTGRES_MAIN_SCHEMA: schemas.main,
+      POSTGRES_TICKET_SCHEMA: schemas.ticket,
+      POSTGRES_MESSAGE_LOG_SCHEMA: schemas.messageLog,
+      POSTGRES_MESSAGE_ATTACHMENT_SCHEMA: schemas.messageAttachment,
+      POSTGRES_VC_TIME_SCHEMA: schemas.vcTime,
+      POSTGRES_AI_HISTORY_SCHEMA: schemas.aiHistory,
+      POSTGRES_AUTOMOD_SCHEMA: schemas.automod,
+      POSTGRES_REMINDER_SCHEMA: schemas.reminder,
+    }), silentLogger);
+
+    const columns = await runtime.mainPgPool!.query<{ data_type: string }>(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_schema = current_schema() AND (table_name, column_name) IN (
+         ('pacchi_settings', 'enabled'), ('pacchi_settings', 'default_talk_enabled'), ('pacchi_settings', 'default_learn_enabled'),
+         ('pacchi_channel_settings', 'talk_enabled'), ('pacchi_channel_settings', 'learn_enabled')
+       )`,
+    );
+    assert.deepEqual(columns.rows.map((row) => row.data_type).sort(), ["boolean", "boolean", "boolean", "boolean", "boolean"]);
+    assert.equal(Number((await runtime.mainPgPool!.query("SELECT COUNT(*) AS count FROM postgres_schema_migrations WHERE version = 11")).rows[0]?.count), 1);
+
+    const pacchi = new PostgresPacchiRepository(runtime.mainPgPool!);
+    assert.deepEqual(await pacchi.getSettings("guild-legacy"), {
+      guildId: "guild-legacy",
+      enabled: false,
+      defaultTalkEnabled: true,
+      defaultLearnEnabled: false,
+      speakRate: "normal",
+      cooldownSeconds: 60,
+      lastSpokeAt: null,
+      lastLearnedAt: null,
+    });
+    await pacchi.setRate("guild-legacy", "high");
+    await pacchi.setChannelSettings("guild-legacy", "channel-legacy", true, false);
+    assert.deepEqual(await pacchi.getChannelSettings("guild-legacy", "channel-legacy"), {
+      guildId: "guild-legacy",
+      channelId: "channel-legacy",
+      talkEnabled: true,
+      learnEnabled: false,
+    });
   } finally {
     if (runtime) await closeDatabaseRuntime(runtime);
     for (const schema of Object.values(schemas)) {

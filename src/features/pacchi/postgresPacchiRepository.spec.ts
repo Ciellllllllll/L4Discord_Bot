@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
 import { PostgresPacchiRepository } from "./postgresPacchiRepository.js";
-import { ensurePostgresPacchiSchema } from "./pacchi.schema.js";
+import { ensurePostgresPacchiSchema, migratePostgresPacchiBooleanColumns } from "./pacchi.schema.js";
 import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
 
 type CapturingPool = { queries: string[]; query: (sql: string) => Promise<{ rows: unknown[] }> };
@@ -86,9 +86,77 @@ async function assertIntegration(): Promise<void> {
   }
 }
 
+async function assertLegacyBooleanMigration(): Promise<void> {
+  const connectionString = getOptionalPostgresTestUrl("TEST_DATABASE_URL", "postgresPacchiRepository.spec.ts");
+  if (!connectionString) return;
+  const schemaName = `pacchi_boolean_migration_${process.pid}_${Date.now()}`;
+  const pool = await createPgPool(connectionString, schemaName);
+  try {
+    await pool.query(`
+      CREATE TABLE pacchi_settings (
+        guild_id text PRIMARY KEY,
+        enabled bigint NOT NULL DEFAULT 1,
+        default_talk_enabled bigint NOT NULL DEFAULT 1,
+        default_learn_enabled bigint NOT NULL DEFAULT 1,
+        speak_rate text NOT NULL DEFAULT 'normal',
+        cooldown_seconds integer NOT NULL DEFAULT 60,
+        last_spoke_at text,
+        last_learned_at text,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      );
+      CREATE TABLE pacchi_channel_settings (
+        guild_id text NOT NULL,
+        channel_id text NOT NULL,
+        talk_enabled bigint NOT NULL DEFAULT 1,
+        learn_enabled bigint NOT NULL DEFAULT 1,
+        created_at text NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (guild_id, channel_id)
+      );
+      INSERT INTO pacchi_settings (guild_id, enabled, default_talk_enabled, default_learn_enabled, created_at, updated_at)
+      VALUES ('guild-legacy', 0, 1, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      INSERT INTO pacchi_channel_settings (guild_id, channel_id, talk_enabled, learn_enabled, created_at, updated_at)
+      VALUES ('guild-legacy', 'channel-legacy', 0, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    `);
+
+    await migratePostgresPacchiBooleanColumns(pool);
+    await migratePostgresPacchiBooleanColumns(pool);
+
+    const columns = await pool.query<{ table_name: string; column_name: string; data_type: string; column_default: string | null }>(
+      `SELECT table_name, column_name, data_type, column_default
+       FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND (table_name, column_name) IN (
+           ('pacchi_settings', 'enabled'),
+           ('pacchi_settings', 'default_talk_enabled'),
+           ('pacchi_settings', 'default_learn_enabled'),
+           ('pacchi_channel_settings', 'talk_enabled'),
+           ('pacchi_channel_settings', 'learn_enabled')
+         )
+       ORDER BY table_name, column_name`,
+    );
+    assert.deepEqual(columns.rows.map((row) => row.data_type), ["boolean", "boolean", "boolean", "boolean", "boolean"]);
+    assert.equal(columns.rows.every((row) => row.column_default === "true"), true);
+
+    const settings = await pool.query<{ enabled: boolean; default_talk_enabled: boolean; default_learn_enabled: boolean }>(
+      "SELECT enabled, default_talk_enabled, default_learn_enabled FROM pacchi_settings WHERE guild_id = 'guild-legacy'",
+    );
+    assert.deepEqual(settings.rows, [{ enabled: false, default_talk_enabled: true, default_learn_enabled: false }]);
+    const channel = await pool.query<{ talk_enabled: boolean; learn_enabled: boolean }>(
+      "SELECT talk_enabled, learn_enabled FROM pacchi_channel_settings WHERE guild_id = 'guild-legacy' AND channel_id = 'channel-legacy'",
+    );
+    assert.deepEqual(channel.rows, [{ talk_enabled: false, learn_enabled: true }]);
+  } finally {
+    await pool.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
+    await pool.end();
+  }
+}
+
 async function run(): Promise<void> {
   await assertDdl();
   await assertIntegration();
+  await assertLegacyBooleanMigration();
 }
 
 void run()

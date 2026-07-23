@@ -25,7 +25,7 @@ import { prepareMessageAttachmentStore, prepareMessageAttachmentStorePostgres } 
 import { prepareMessageLogsDatabase } from "../features/messageLog/index.js";
 import { ensurePostgresMessageLogsSchema } from "../features/messageLog/messageLogsSchema.js";
 import { ensureAutomoderationSchema, ensurePostgresAutomoderationSchema } from "../features/moderation/automodSchema.js";
-import { ensurePacchiSchemaOnce, ensurePostgresPacchiSchema } from "../features/pacchi/pacchi.schema.js";
+import { ensurePacchiSchemaOnce, ensurePostgresPacchiSchema, migratePostgresPacchiBooleanColumns } from "../features/pacchi/pacchi.schema.js";
 import { copyRemindersFromMainToReminderDb } from "../features/reminders/copyRemindersFromMain.js";
 import { destroyReminderDb } from "../features/reminders/reminderDb.js";
 import { ensurePostgresReminderSchema } from "../features/reminders/reminderDbSchema.js";
@@ -150,6 +150,7 @@ async function createDatabaseRuntimeUnsafe(
       CREATE INDEX IF NOT EXISTS idx_vx_twitter_preview_states_expires ON vx_twitter_preview_states (expires_at);
     `); } },
     { version: 10, name: "youtube_watcher_initial", apply: ensurePostgresYouTubeWatcherSchema },
+    { version: 11, name: "pacchi_boolean_columns", apply: migratePostgresPacchiBooleanColumns },
   ]);
   if (usePostgres) {
     await migrateTemporarySchema(config.DATABASE_URL!, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);

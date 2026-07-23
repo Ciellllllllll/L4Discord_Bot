@@ -340,6 +340,10 @@ async function run(): Promise<void> {
     const verifyChild = runPostgresDataVerification(childEnv);
     assert.equal(verifyChild.status, 0, `${verifyChild.stdout}\n${verifyChild.stderr}`);
     await assertMigrationHistory(adminPool, schemas);
+    const mainMigrationVersions = await adminPool.query<{ version: number }>(
+      `SELECT version FROM ${quotePgIdent(schemas.main)}.postgres_schema_migrations ORDER BY version`,
+    );
+    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 11 }, (_, index) => index + 1));
     await assertPollsStateRevisionSchema(adminPool, schemas.main);
     await assertKyselySchema(
       "main",
@@ -378,6 +382,27 @@ async function run(): Promise<void> {
       assert.equal(settings.enabled, false);
       assert.equal(settings.defaultTalkEnabled, true);
       assert.equal(settings.defaultLearnEnabled, false);
+      const pacchiBooleanColumns = await mainPool.query<{ data_type: string }>(
+        `SELECT data_type
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND (table_name, column_name) IN (
+             ('pacchi_settings', 'enabled'),
+             ('pacchi_settings', 'default_talk_enabled'),
+             ('pacchi_settings', 'default_learn_enabled'),
+             ('pacchi_channel_settings', 'talk_enabled'),
+             ('pacchi_channel_settings', 'learn_enabled')
+           )`,
+      );
+      assert.deepEqual(pacchiBooleanColumns.rows.map((row) => row.data_type).sort(), ["boolean", "boolean", "boolean", "boolean", "boolean"]);
+      await pacchi.setRate("987654321098765432", "normal");
+      await pacchi.setChannelSettings("987654321098765432", "987654321098765433", true, false);
+      assert.deepEqual(await pacchi.getChannelSettings("987654321098765432", "987654321098765433"), {
+        guildId: "987654321098765432",
+        channelId: "987654321098765433",
+        talkEnabled: true,
+        learnEnabled: false,
+      });
       assert.equal((await pacchi.topWords("987654321098765432", 1))[0]?.word, "移行語");
       assert.equal(await pacchi.startSleep("987654321098765432", "987654321098765435"), "2026-01-01T01:00:00.000Z");
       assert.ok(await pacchi.endSleep("987654321098765432", "987654321098765435"));
