@@ -20,7 +20,9 @@ type InteractionRecorder = {
   replies: ReplyPayload[];
 };
 
-function makeInteraction(): InteractionRecorder {
+const BOKETE_THREAD_ID = "1530637445765398578";
+
+function makeInteraction(channelId = BOKETE_THREAD_ID): InteractionRecorder {
   const replies: ReplyPayload[] = [];
   const followUps: ReplyPayload[] = [];
   let deferred = false;
@@ -28,6 +30,8 @@ function makeInteraction(): InteractionRecorder {
   let deleted = false;
   return {
     interaction: {
+      channelId,
+      reply: async (payload: ReplyPayload) => { replies.push(payload); },
       deferReply: async (payload?: { flags?: number }) => {
         deferred = true;
         deferFlags = payload?.flags;
@@ -55,6 +59,17 @@ function makeContext(): BotContext {
 }
 
 async function run(): Promise<void> {
+  const restricted = makeInteraction("1397231823968272607");
+  await handleBoketeSlash(restricted.interaction, makeContext(), {
+    fetcher: async () => {
+      throw new Error("指定外のチャンネルでは API を呼び出してはいけません。");
+    },
+  });
+  assert.equal(restricted.deferred, false);
+  assert.equal(restricted.replies.length, 1);
+  assert.equal(restricted.replies[0]?.content, "このコマンドは指定スレッドでのみ利用できます。");
+  assert.equal(restricted.replies[0]?.flags, MessageFlags.Ephemeral);
+
   const success = makeInteraction();
   await handleBoketeSlash(success.interaction, makeContext(), {
     fetcher: async (input) => String(input).includes("/posts?")

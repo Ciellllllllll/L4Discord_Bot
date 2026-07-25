@@ -1,15 +1,22 @@
-import { AttachmentBuilder, type ChatInputCommandInteraction } from "discord.js";
+import { AttachmentBuilder, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import { fetchBoketePost, type FetchBoketePostOptions } from "./boketeClient.js";
 
 const FETCH_FAILED_MESSAGE = "投稿の取得に失敗しました。しばらくしてから再度お試しください。";
+const BOKETE_THREAD_ID = "1530637445765398578";
+const RESTRICTED_CHANNEL_MESSAGE = "このコマンドは指定スレッドでのみ利用できます。";
 
 export async function handleBoketeSlash(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
   options: Pick<FetchBoketePostOptions, "fetcher"> = {},
 ): Promise<void> {
+  if (interaction.channelId !== BOKETE_THREAD_ID) {
+    await interaction.reply({ content: RESTRICTED_CHANNEL_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
   await interaction.deferReply();
   try {
     const result = await fetchBoketePost({
