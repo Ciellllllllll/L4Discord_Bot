@@ -21,7 +21,7 @@ test("skipped slash command synchronization emits a concise info summary", async
 
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.message, "Slash command synchronization skipped.");
-  assert.deepEqual(entries[0]?.bindings, { commandCount: 32, guildId: "guild", reason: "SKIP_COMMAND_SYNC" });
+  assert.deepEqual(entries[0]?.bindings, { commandCount: 33, guildId: "guild", reason: "SKIP_COMMAND_SYNC" });
 });
 
 test("successful slash command synchronization emits one concise info summary", async () => {
@@ -49,7 +49,7 @@ test("successful slash command synchronization emits one concise info summary", 
   assert.equal(calls.length, 1);
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.message, "Slash commands synchronized successfully.");
-  assert.deepEqual(entries[0]?.bindings, { commandCount: 32, guildId: "guild" });
+  assert.deepEqual(entries[0]?.bindings, { commandCount: 33, guildId: "guild" });
 });
 
 test("failed slash command synchronization logs the guild and command count", async () => {
@@ -73,7 +73,7 @@ test("failed slash command synchronization logs the guild and command count", as
   });
 
   assert.deepEqual(errors, [{
-    bindings: { commandCount: 32, err: failure, guildId: "guild" },
+    bindings: { commandCount: 33, err: failure, guildId: "guild" },
     message: "guild slash command sync failed",
   }]);
 });

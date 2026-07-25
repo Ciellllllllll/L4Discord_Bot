@@ -28,6 +28,7 @@ import { muteChannelForSenryuPersisted } from "../features/senryu/senryu.filters
 import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.js";
 import { startAfkDisconnectCommand } from "../features/vc/afkDisconnect.js";
 import { handlePacchiHelp } from "../features/pacchi/pacchi.slash.js";
+import { handleBoketeSlash } from "../features/bokete/bokete.slash.js";
 import { checkJapaneseWorkerHealth } from "../features/japaneseAnalysis/japaneseAnalysisClient.js";
 import {
   handleGameNow,
@@ -115,6 +116,8 @@ export async function handleSlashCommand(
       return handleSwitch(interaction, ctx, member);
     case "pacchi_help":
       return handlePacchiHelp(interaction, ctx);
+    case "bokete":
+      return handleBoketeSlash(interaction, ctx);
     case "member_count_setup":
       return handleMemberCountSetup(interaction, ctx, member);
     case "vc_rank":
