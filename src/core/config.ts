@@ -144,6 +144,8 @@ const profileOverridableKeys = [
   "DOGCEO_ENABLED",
   "DOGCEO_IMAGE_RANDOM_URL",
   "DOGCEO_REQUEST_TIMEOUT_MS",
+  "BOKETE_API_BASE_URL",
+  "BOKETE_REQUEST_TIMEOUT_MS",
   "SENRYU_KUROMOJI_DICT_PATH",
   "JAPANESE_WORKER_ENABLED",
   "JAPANESE_WORKER_URL",
@@ -473,6 +475,11 @@ const envSchema = z.object({
     z.string().url().default("https://dog.ceo/api/breeds/image/random"),
   ),
   DOGCEO_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  BOKETE_API_BASE_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://bokete-api-worker.cielgameee.workers.dev"),
+  ),
+  BOKETE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
     // 川柳（5-7-5）検出（kuromoji）。未設定・空は false
 
   SENRYU_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),

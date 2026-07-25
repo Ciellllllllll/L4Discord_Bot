@@ -26,6 +26,11 @@ async function run(): Promise<void> {
   assert.ok(adhd);
   assert.equal(adhd.default_member_permissions, PermissionFlagsBits.Administrator.toString());
   assert.deepEqual(adhd.options?.map((option) => option.name), ["add", "remove", "list", "scan_now"]);
+
+  const bokete = chatInputCommand("bokete");
+  assert.ok(bokete);
+  assert.equal("description" in bokete ? bokete.description : undefined, "Boketeを1件表示します");
+  assert.equal(bokete.default_member_permissions, undefined);
 }
 
 void run()

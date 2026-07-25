@@ -156,6 +156,19 @@ assert.equal(fallbackConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 10000);
 assert.equal(fallbackConfig.YOUTUBE_YTDLP_ENABLED, true);
 assert.equal(fallbackConfig.YOUTUBE_YTDLP_PATH, "yt-dlp");
 assert.equal(fallbackConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 15000);
+assert.equal(fallbackConfig.BOKETE_API_BASE_URL, "https://bokete-api-worker.cielgameee.workers.dev");
+assert.equal(fallbackConfig.BOKETE_REQUEST_TIMEOUT_MS, 10000);
+
+const boketeProductionConfig = loadConfig(baseEnv({
+  PROFILE: "production",
+  BOKETE_API_BASE_URL: "https://common.bokete.example",
+  BOKETE_REQUEST_TIMEOUT_MS: "5000",
+  PRODUCTION_BOKETE_API_BASE_URL: "https://production.bokete.example",
+  PRODUCTION_BOKETE_REQUEST_TIMEOUT_MS: "12000",
+}));
+assert.equal(boketeProductionConfig.BOKETE_API_BASE_URL, "https://production.bokete.example");
+assert.equal(boketeProductionConfig.BOKETE_REQUEST_TIMEOUT_MS, 12000);
+assert.throws(() => loadConfig(baseEnv({ BOKETE_API_BASE_URL: "not a url" })), /BOKETE_API_BASE_URL/);
 
 for (const value of ["0", "false", "off", "no"]) {
   const youtubeDisabledConfig = loadConfig(

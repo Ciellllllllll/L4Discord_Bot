@@ -40,6 +40,10 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
       .setName("pacchi_help")
       .setDescription("ぱっちぃ機能の使い方を表示します")
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName("bokete")
+      .setDescription("Boketeを1件表示します")
+      .toJSON(),
 
     new SlashCommandBuilder()
       .setName("vc_rank")
