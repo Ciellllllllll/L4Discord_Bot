@@ -239,7 +239,6 @@ async function fetchSearchByAppid(ctx: BotContext, signal?: AbortSignal): Promis
 
 export async function initializeSteamAppBaseline(ctx: BotContext): Promise<{ created: boolean; appCount: number }> {
   const repo = createGameDealRepository(ctx);
-  if (!repo) return { created: false, appCount: 0 };
   if (await repo.hasSteamAppCatalog()) return { created: false, appCount: 0 };
   const apps = await new SteamAppListClient(ctx.log, steamApiKey(ctx)).fetchAllApps();
   const result = await repo.upsertSteamAppCatalog(apps);
@@ -249,17 +248,6 @@ export async function initializeSteamAppBaseline(ctx: BotContext): Promise<{ cre
 
 export async function scanSteamAppListChanges(ctx: BotContext, signal?: AbortSignal): Promise<SteamScanSummary> {
   const repo = createGameDealRepository(ctx);
-  if (!repo) {
-    return {
-      appListCount: 0,
-      diffCount: 0,
-      queuedCount: 0,
-      verifiedCount: 0,
-      excludedCount: 0,
-      notifiedCandidates: 0,
-      excludedReasons: {},
-    };
-  }
   try {
     const apps = await new SteamAppListClient(ctx.log, steamApiKey(ctx)).fetchAllApps(undefined, { signal });
     throwIfAborted(signal);
@@ -302,7 +290,6 @@ export async function scanSteamAppListChanges(ctx: BotContext, signal?: AbortSig
 
 export async function processSteamVerifyQueue(ctx: BotContext, batchSize = DEFAULT_STEAM_VERIFY_BATCH_SIZE, signal?: AbortSignal): Promise<GameDealFreeItem[]> {
   const repo = createGameDealRepository(ctx);
-  if (!repo) return [];
   const changes = await repo.listDueSteamVerifyQueue(batchSize);
   if (changes.length === 0) return [];
   const searchByAppid = await fetchSearchByAppid(ctx, signal);
@@ -317,7 +304,6 @@ export async function scanSteamNowFullDiscountItems(
   options: SteamNowScanOptions = {},
 ): Promise<GameDealFreeItem[]> {
   const repo = createGameDealRepository(ctx);
-  if (!repo) return [];
   const store = new SteamStoreClient(ctx.log);
   const searchItems = (await store.fetchSearchItems(undefined, { signal: options.signal })).filter(searchItemIsFullDiscount);
   if (searchItems.length === 0) return [];
@@ -359,6 +345,5 @@ export async function scanSteamNowFullDiscountItems(
 
 export async function listActiveSteamFreeItems(ctx: BotContext, limit = 20): Promise<GameDealFreeItem[]> {
   const repo = createGameDealRepository(ctx);
-  if (!repo) return [];
   return (await repo.listActiveSteamFreeEvents(limit)).map(toFreeItem);
 }

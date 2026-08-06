@@ -22,6 +22,7 @@ function runtimeConfig(overrides: NodeJS.ProcessEnv) {
     GUILD_ID: "123456789012345678",
     OWNER_ID: "123456789012345679",
     ADMIN_ROLE_ID: "123456789012345680",
+    BOT_PROFILE: "production",
     ...overrides,
   });
 }
@@ -38,13 +39,6 @@ function runtimePaths(root: string): NodeJS.ProcessEnv {
     REMINDER_DATABASE_PATH: join(root, "reminder.sqlite"),
   };
 }
-
-test("runtime configuration rejects SQLite", () => {
-  assert.throws(
-    () => runtimeConfig({ DB_DRIVER: "sqlite", DATABASE_URL: "postgres://user:pass@127.0.0.1:5432/l4discord_test" }),
-    /DB_DRIVER=postgres is required/,
-  );
-});
 
 test("ensurePostgresMainSchema creates polls with a bigint state revision", async () => {
   const connectionString = getOptionalPostgresTestUrl("TEST_DATABASE_URL", "databaseRuntime.spec.ts");
@@ -95,7 +89,6 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
   const adminPool = await createPgPool(connectionString);
   try {
     const runtime = await createDatabaseRuntime(runtimeConfig({
-      DB_DRIVER: "postgres",
       DATABASE_URL: connectionString,
       ...runtimePaths(root),
       POSTGRES_MAIN_SCHEMA: schemas.main,
@@ -107,8 +100,8 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
       POSTGRES_AUTOMOD_SCHEMA: schemas.automod,
       POSTGRES_REMINDER_SCHEMA: schemas.reminder,
     }), silentLogger);
-    assert.equal(runtime.usePostgres, true);
-    assert.equal(runtime.sqlite, undefined);
+    assert.equal("usePostgres" in runtime, false);
+    assert.equal("sqlite" in runtime, false);
     assert.ok(runtime.mainPgPool);
     assert.ok(runtime.messageLogPgPool);
     assert.ok(runtime.vcTimePgPool);
@@ -120,7 +113,7 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
       assert.ok(Number(history.rows[0]?.count ?? 0) > 0, `${schema} should have migration history`);
     }
     for (const pool of [runtime.mainPgPool, runtime.messageLogPgPool, runtime.vcTimePgPool, runtime.messageAttachmentPgPool]) {
-      assert.equal((await pool!.query<{ ok: number }>("SELECT 1 AS ok")).rows[0]?.ok, 1);
+      assert.equal((await pool.query<{ ok: number }>("SELECT 1 AS ok")).rows[0]?.ok, 1);
     }
     for (const [database, schema] of [
       [runtime.db, schemas.main],
@@ -142,7 +135,7 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
     const settingsRevision = await runtime.mainPgPool.query<{ revision: number }>("SELECT revision FROM guild_settings WHERE guild_id = $1", ["guild"]);
     assert.equal(settingsRevision.rows[0]?.revision, 2);
     await closeDatabaseRuntime(runtime);
-    await assert.rejects(runtime.mainPgPool!.query("SELECT 1"));
+    await assert.rejects(runtime.mainPgPool.query("SELECT 1"));
     await assert.rejects(sql`SELECT 1`.execute(runtime.db));
   } finally {
     for (const schema of Object.values(schemas)) {
@@ -188,7 +181,6 @@ test("createDatabaseRuntime applies pending polls and guild settings revision mi
     );
 
     runtime = await createDatabaseRuntime(runtimeConfig({
-      DB_DRIVER: "postgres",
       DATABASE_URL: connectionString,
       ...runtimePaths(root),
       POSTGRES_MAIN_SCHEMA: schemas.main,
@@ -283,7 +275,6 @@ test("createDatabaseRuntime repairs legacy Pacchi bigint flags through migration
     `);
 
     runtime = await createDatabaseRuntime(runtimeConfig({
-      DB_DRIVER: "postgres",
       DATABASE_URL: connectionString,
       ...runtimePaths(root),
       POSTGRES_MAIN_SCHEMA: schemas.main,
@@ -296,7 +287,7 @@ test("createDatabaseRuntime repairs legacy Pacchi bigint flags through migration
       POSTGRES_REMINDER_SCHEMA: schemas.reminder,
     }), silentLogger);
 
-    const columns = await runtime.mainPgPool!.query<{ data_type: string }>(
+    const columns = await runtime.mainPgPool.query<{ data_type: string }>(
       `SELECT data_type FROM information_schema.columns
        WHERE table_schema = current_schema() AND (table_name, column_name) IN (
          ('pacchi_settings', 'enabled'), ('pacchi_settings', 'default_talk_enabled'), ('pacchi_settings', 'default_learn_enabled'),
@@ -304,9 +295,9 @@ test("createDatabaseRuntime repairs legacy Pacchi bigint flags through migration
        )`,
     );
     assert.deepEqual(columns.rows.map((row) => row.data_type).sort(), ["boolean", "boolean", "boolean", "boolean", "boolean"]);
-    assert.equal(Number((await runtime.mainPgPool!.query("SELECT COUNT(*) AS count FROM postgres_schema_migrations WHERE version = 11")).rows[0]?.count), 1);
+    assert.equal(Number((await runtime.mainPgPool.query("SELECT COUNT(*) AS count FROM postgres_schema_migrations WHERE version = 11")).rows[0]?.count), 1);
 
-    const pacchi = new PostgresPacchiRepository(runtime.mainPgPool!);
+    const pacchi = new PostgresPacchiRepository(runtime.mainPgPool);
     assert.deepEqual(await pacchi.getSettings("guild-legacy"), {
       guildId: "guild-legacy",
       enabled: false,
@@ -335,7 +326,7 @@ test("createDatabaseRuntime repairs legacy Pacchi bigint flags through migration
   }
 });
 
-test("closeDatabaseRuntime closes Kysely, PostgreSQL pools, and SQLite handles", async () => {
+test("closeDatabaseRuntime closes Kysely and PostgreSQL pools", async () => {
   const calls: string[] = [];
   const runtime = {
     db: { destroy: async () => { calls.push("main"); } },
@@ -346,20 +337,12 @@ test("closeDatabaseRuntime closes Kysely, PostgreSQL pools, and SQLite handles",
     mainPgPool: { end: async () => { calls.push("mainPool"); } },
     vcTimePgPool: { end: async () => { calls.push("vcPool"); } },
     messageAttachmentPgPool: { end: async () => { calls.push("attachmentPool"); } },
-    messageLogSqlite: { close: () => { calls.push("messageLogSqlite"); } },
-    messageAttachmentStoreSqlite: { close: () => { calls.push("attachmentSqlite"); } },
-    vcTimeSqlite: { close: () => { calls.push("vcSqlite"); } },
-    ticketSqlite: { close: () => { calls.push("ticketSqlite"); } },
-    aiHistorySqlite: { close: () => { calls.push("aiHistorySqlite"); } },
-    automodSqlite: { close: () => { calls.push("automodSqlite"); } },
-    sqlite: { close: () => { calls.push("mainSqlite"); } },
   };
 
   await closeDatabaseRuntime(runtime as never);
 
   assert.deepEqual(calls, [
     "main", "ticket", "aiHistory", "automod", "messageLogPool", "mainPool", "vcPool", "attachmentPool",
-    "messageLogSqlite", "attachmentSqlite", "vcSqlite", "ticketSqlite", "aiHistorySqlite", "automodSqlite", "mainSqlite",
   ]);
 });
 
@@ -370,11 +353,15 @@ test("closeDatabaseRuntime tries every resource when one close operation fails",
     ticketDb: { destroy: async () => { calls.push("ticket"); } },
     aiHistoryDb: { destroy: async () => { calls.push("aiHistory"); } },
     automodDb: { destroy: async () => { calls.push("automod"); } },
-    sqlite: { close: () => { calls.push("sqlite"); } },
+    messageLogPgPool: { end: async () => { calls.push("messageLogPool"); } },
+    mainPgPool: { end: async () => { calls.push("mainPool"); } },
+    vcTimePgPool: { end: async () => { calls.push("vcPool"); } },
+    messageAttachmentPgPool: { end: async () => { calls.push("attachmentPool"); } },
+    sqlite: { close: () => { calls.push("unexpectedSqlite"); } },
   };
 
   await assert.rejects(closeDatabaseRuntime(runtime as never), /main close failed/);
-  assert.deepEqual(calls, ["main", "ticket", "aiHistory", "automod", "sqlite"]);
+  assert.deepEqual(calls, ["main", "ticket", "aiHistory", "automod", "messageLogPool", "mainPool", "vcPool", "attachmentPool"]);
 });
 
 test("createDatabaseRuntimeWithCleanup closes resources created before initialization fails", async () => {

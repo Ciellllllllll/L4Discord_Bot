@@ -10,7 +10,7 @@ function baseEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     GUILD_ID: "guild",
     OWNER_ID: "owner",
     ADMIN_ROLE_ID: "admin",
-    DB_DRIVER: "postgres",
+    BOT_PROFILE: "production",
     DATABASE_URL: "postgres://user:pass@127.0.0.1:5432/l4discord_test",
     ...overrides,
   };

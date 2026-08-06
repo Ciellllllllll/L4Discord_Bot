@@ -4,7 +4,6 @@ import { buildEpicFreeEmbed } from "../epic/epicFreeEmbeds.js";
 import { EpicStoreClient } from "../epic/epicStoreClient.js";
 import { SteamStoreClient } from "../steam/steamStoreClient.js";
 import type { SteamAppDetails } from "../steam/steamFreeTypes.js";
-import { createGameDealRepository, GAME_DEALS_POSTGRES_DISABLED_MESSAGE } from "./postgresGameDealRepository.js";
 import { listActiveSteamFreeItems } from "./steamFreeScanner.js";
 import type {
   GameDealFreeItem,
@@ -44,12 +43,6 @@ async function scanSteamCurrentFreeGamesWithStatus(
   ctx: BotContext,
   _options: { signal?: AbortSignal },
 ): Promise<{ items: GameDealFreeItem[]; source: GameDealSourceStatus }> {
-  if (!createGameDealRepository(ctx)) {
-    return {
-      items: [],
-      source: { platform: "steam", status: "unavailable", message: GAME_DEALS_POSTGRES_DISABLED_MESSAGE },
-    };
-  }
   return { items: await listActiveSteamFreeItems(ctx), source: { platform: "steam", status: "ok" } };
 }
 

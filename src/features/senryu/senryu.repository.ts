@@ -1,4 +1,3 @@
-import type DatabaseLib from "better-sqlite3";
 import type { Pool } from "pg";
 import type { PgQueryable } from "../../core/db/postgres.js";
 import { ulid } from "ulid";
@@ -8,46 +7,6 @@ export type SenryuRepository = {
   saveSenryu(record: SenryuRecord): Promise<SavedSenryuRecord>;
   deleteSenryu(id: string): Promise<void>;
 };
-
-export function createSenryuRepository(sqlite: DatabaseLib.Database): SenryuRepository {
-  const insert = sqlite.prepare(
-    `INSERT INTO senryu_records (
-      id, guild_id, channel_id, message_id, author_id,
-      kamigo, nakashichi, shimogo, formatted, source_content, spoiler, detected_at
-    ) VALUES (
-      @id, @guild_id, @channel_id, @message_id, @author_id,
-      @kamigo, @nakashichi, @shimogo, @formatted, @source_content, @spoiler, @detected_at
-    )`,
-  );
-
-  const del = sqlite.prepare(`DELETE FROM senryu_records WHERE id = ?`);
-
-  return {
-    async saveSenryu(record: SenryuRecord): Promise<SavedSenryuRecord> {
-      const id = record.id ?? ulid();
-      const detectedAt = record.detectedAt;
-      insert.run({
-        id,
-        guild_id: record.guildId,
-        channel_id: record.channelId,
-        message_id: record.messageId,
-        author_id: record.authorId,
-        kamigo: record.kamigo,
-        nakashichi: record.nakashichi,
-        shimogo: record.shimogo,
-        formatted: record.formatted,
-        source_content: record.sourceContent,
-        spoiler: record.spoiler ? 1 : 0,
-        detected_at: detectedAt,
-      });
-      return { ...record, id, detectedAt };
-    },
-
-    async deleteSenryu(id: string): Promise<void> {
-      del.run(id);
-    },
-  };
-}
 
 export async function ensurePostgresSenryuSchema(pool: PgQueryable): Promise<void> {
   await pool.query(`
@@ -71,7 +30,6 @@ export async function ensurePostgresSenryuSchema(pool: PgQueryable): Promise<voi
     CREATE INDEX IF NOT EXISTS senryu_records_detected_idx ON senryu_records (detected_at);
   `);
 }
-
 export function createPostgresSenryuRepository(pool: Pool): SenryuRepository {
   return {
     async saveSenryu(record): Promise<SavedSenryuRecord> {
@@ -87,17 +45,4 @@ export function createPostgresSenryuRepository(pool: Pool): SenryuRepository {
       await pool.query("DELETE FROM senryu_records WHERE id = $1", [id]);
     },
   };
-}
-
-// 仕様: 公開 API（内部は同期 DB）
-
-export async function saveSenryu(
-  sqlite: DatabaseLib.Database,
-  record: SenryuRecord,
-): Promise<SavedSenryuRecord> {
-  return await createSenryuRepository(sqlite).saveSenryu(record);
-}
-
-export async function deleteSenryu(sqlite: DatabaseLib.Database, id: string): Promise<void> {
-  await createSenryuRepository(sqlite).deleteSenryu(id);
 }

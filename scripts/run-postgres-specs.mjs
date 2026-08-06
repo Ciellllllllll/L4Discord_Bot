@@ -18,7 +18,13 @@ try {
   const port = output("docker", [...compose, "port", "postgres", "5432"]).match(/:(\d+)$/)?.[1];
   if (!port) throw new Error("Docker PostgreSQL host port could not be resolved");
   const databaseUrl = `postgres://l4discord:l4discord@127.0.0.1:${port}/l4discord_test`;
-  run(process.execPath, ["scripts/run-specs.mjs"], {
+  run(process.execPath, [
+    "--import", "tsx",
+    "--test",
+    "--test-concurrency=1",
+    "--test-timeout=120000",
+    "src/**/*.spec.ts",
+  ], {
     ...process.env,
     DATABASE_URL: databaseUrl,
     TEST_DATABASE_URL: databaseUrl,

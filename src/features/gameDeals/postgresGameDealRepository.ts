@@ -17,15 +17,8 @@ import type {
 } from "./gameDealTypes.js";
 import type { CheapSharkDeal } from "./cheapSharkTypes.js";
 
-export const GAME_DEALS_POSTGRES_DISABLED_MESSAGE = "Game Deals は PostgreSQL 環境でのみ利用できます。";
-
-export function isGameDealsPostgresEnabled(ctx: BotContext): boolean {
-  return ctx.config.DB_DRIVER === "postgres" && !!ctx.gameDealPgPool;
-}
-
-export function createGameDealRepository(ctx: BotContext): PostgresGameDealRepository | null {
-  if (!isGameDealsPostgresEnabled(ctx) || !ctx.gameDealPgPool) return null;
-  return new PostgresGameDealRepository(ctx.gameDealPgPool);
+export function createGameDealRepository(ctx: BotContext): PostgresGameDealRepository {
+  return new PostgresGameDealRepository(ctx.mainPgPool);
 }
 
 function pgStringLiteral(value: string): string {

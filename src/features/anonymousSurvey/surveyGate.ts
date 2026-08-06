@@ -20,7 +20,6 @@ export async function promptAnonymousSurvey(
   member: GuildMember | null,
   options: AnonymousSurveyPromptOptions = {},
 ): Promise<boolean> {
-  if (ctx.config.DB_DRIVER !== "postgres") return false;
   if (!interaction.inGuild() || !interaction.guildId) return false;
   if (!options.ignoreAdmin && member && isAdmin(member, ctx.config)) return false;
   if (
