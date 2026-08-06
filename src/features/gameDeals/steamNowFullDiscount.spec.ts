@@ -74,8 +74,8 @@ async function run(): Promise<boolean> {
   try {
     await ensurePostgresGameDealSchema(pool, schemaName);
     const ctx = {
-      config: { DB_DRIVER: "postgres" },
-      gameDealPgPool: pool,
+      config: {},
+      mainPgPool: pool,
       log: {
         debug(fields: unknown) {
           logs.push(fields);
@@ -83,7 +83,7 @@ async function run(): Promise<boolean> {
         info() {},
         warn() {},
       } as unknown as pino.Logger,
-    } as BotContext;
+    } as unknown as BotContext;
     const items = await scanSteamNowFullDiscountItems(ctx);
     assert.equal(items.length, 1);
     assert.equal(items[0]?.platform, "steam");

@@ -1,17 +1,18 @@
-import { EmbedBuilder, type Client, type GuildTextBasedChannel } from "discord.js";
+import { type Client, type GuildTextBasedChannel } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 import { fetchYouTubeChannelFeed, type YouTubeFeedEntry } from "./youtubeRss.js";
 import { PostgresYouTubeWatcherRepository, toUnnotifiedEntries, type YouTubeWatchSubscription } from "./youtubeWatcher.repository.js";
 
 export type YouTubeWatcherController = { scanNow(): Promise<void>; stop(): void };
 
-function notificationEmbed(entry: YouTubeFeedEntry): EmbedBuilder {
-  const embed = new EmbedBuilder()
+export function buildYouTubeNotificationPayload(entry: YouTubeFeedEntry) {
+  const card = new ComponentCardBuilder()
     .setTitle(entry.title.slice(0, 256))
     .setURL(entry.videoUrl)
     .setDescription(`${entry.channelTitle}\n公開: <t:${Math.floor(Date.parse(entry.publishedAt) / 1000)}:F>`);
-  if (entry.thumbnailUrl) embed.setThumbnail(entry.thumbnailUrl);
-  return embed;
+  card.setThumbnail(entry.thumbnailUrl);
+  return { ...componentCardsPayload([card]), allowedMentions: { parse: [] } };
 }
 
 async function fetchTarget(client: Client, id: string): Promise<GuildTextBasedChannel | null> {
@@ -22,8 +23,7 @@ async function fetchTarget(client: Client, id: string): Promise<GuildTextBasedCh
 }
 
 export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
-  if (!ctx.gameDealPgPool) throw new Error("YouTube watcher requires PostgreSQL");
-  const client = await ctx.gameDealPgPool.connect();
+  const client = await ctx.mainPgPool.connect();
   let locked = false;
   try {
   const lock = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_lock(hashtext('youtube_watcher_scan')) AS locked");
@@ -50,7 +50,7 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
       let sentToDiscord = false;
       try {
         await repo.savePost(subscription.id, entry, { status: "pending" });
-        const message = await target.send({ embeds: [notificationEmbed(entry)], allowedMentions: { parse: [] } });
+        const message = await target.send(buildYouTubeNotificationPayload(entry));
         sentToDiscord = true;
         await repo.savePost(subscription.id, entry, { status: "sent", messageId: message.id });
       } catch (error) {
@@ -73,7 +73,7 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
 }
 
 export function startYouTubeWatcher(ctx: BotContext): YouTubeWatcherController | null {
-  if (!ctx.config.ADHD_WATCHER_ENABLED || !ctx.gameDealPgPool) return null;
+  if (!ctx.config.ADHD_WATCHER_ENABLED) return null;
   let stopped = false;
   let running: Promise<void> | null = null;
   const scanNow = async () => {

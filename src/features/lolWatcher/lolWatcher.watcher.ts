@@ -4,7 +4,7 @@ import { componentCardsPayload } from "../panels/componentCard.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { buildLolWatcherCompletedEmbed, buildLolWatcherStartEmbed } from "./lolWatcher.embeds.js";
 import { buildDeepLolDetailUrl, LolWatcherRiotClient } from "./lolWatcher.client.js";
-import { createLolWatcherRepository, ensureLolWatcherSchema, type LolWatcherRepositoryLike } from "./lolWatcher.repository.js";
+import { createLolWatcherRepository, ensurePostgresLolWatcherSchema, type LolWatcherRepositoryLike } from "./lolWatcher.repository.js";
 import type {
   LolWatcherActiveGame,
   LolWatcherApiAccount,
@@ -78,10 +78,7 @@ export async function validateAndPrepareLolWatcher(ctx: BotContext): Promise<boo
   if (!ctx.config.DEEPLOL_WATCHER_ENABLED) return false;
   const repo = createLolWatcherRepository(ctx);
   try {
-    if (!ctx.gameDealPgPool) {
-      if (!ctx.sqlite) throw new Error("LoL watcher SQLite database is unavailable");
-      ensureLolWatcherSchema(ctx.sqlite);
-    }
+    await ensurePostgresLolWatcherSchema(ctx.mainPgPool);
   } catch (err) {
     ctx.log.error({ err }, "lol watcher schema ensure failed");
     return false;

@@ -13,12 +13,8 @@ function allowed(interaction: ChatInputCommandInteraction, ctx: BotContext, memb
 
 export async function handleAdhdCommand(interaction: ChatInputCommandInteraction, ctx: BotContext, member: GuildMember | null): Promise<void> {
   if (!allowed(interaction, ctx, member)) return;
-  if (!ctx.gameDealPgPool) {
-    await interaction.reply({ content: "この機能はPostgreSQL環境でのみ利用できます。", flags: MessageFlags.Ephemeral });
-    return;
-  }
   const subcommand = interaction.options.getSubcommand(true);
-  const repo = new PostgresYouTubeWatcherRepository(ctx.gameDealPgPool);
+  const repo = new PostgresYouTubeWatcherRepository(ctx.mainPgPool);
   if (subcommand === "list") {
     const subscriptions = await repo.list(interaction.guildId!);
     await interaction.reply({ content: subscriptions.length ? subscriptions.map(youtubeSubscriptionSummary).join("\n\n").slice(0, 1900) : "YouTube監視は登録されていません。", flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });

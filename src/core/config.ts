@@ -119,7 +119,6 @@ const profileOverridableKeys = [
   "OPENAI_MODEL_GPT56",
   "OPENAI_MODEL_GPT54_MINI",
   "OPENAI_REASONING_EFFORT",
-  "OPENAI_DAILY_TOKEN_LIMIT",
   "OPENAI_FALLBACK_THRESHOLD",
   "OPENAI_USAGE_CACHE_MS",
   "OPENAI_MAX_COMPLETION_TOKENS",
@@ -166,7 +165,6 @@ const profileOverridableKeys = [
   "DEEPLOL_MATCH_URL_TEMPLATE",
   "DEEPLOL_POLL_INTERVAL_MS",
   "DEEPLOL_ACTIVE_STALE_MS",
-  "DB_DRIVER",
   "DATABASE_URL",
   "POSTGRES_MAIN_SCHEMA",
   "POSTGRES_TICKET_SCHEMA",
@@ -178,20 +176,9 @@ const profileOverridableKeys = [
   "POSTGRES_REMINDER_SCHEMA",
 ] as const;
 
-function normalizeBotProfile(v: unknown): BotProfile {
-  const s = String(v || "production").trim().toLowerCase();
-  if (s === "prod") return "production";
-  if (s === "dev" || s === "development") return "debug";
-  if (botProfiles.includes(s as BotProfile)) return s as BotProfile;
-  throw new Error(`Invalid PROFILE/BOT_PROFILE: ${String(v)}. Use "production" or "debug".`);
-}
-
 function resolveBotProfile(env: NodeJS.ProcessEnv): BotProfile {
-  if (env.PROFILE || env.BOT_PROFILE || env.APP_ENV) {
-    return normalizeBotProfile(env.PROFILE || env.BOT_PROFILE || env.APP_ENV);
-  }
-  if (env.NODE_ENV === "development") return "debug";
-  return "production";
+  if (botProfiles.includes(env.BOT_PROFILE as BotProfile)) return env.BOT_PROFILE as BotProfile;
+  throw new Error(`Invalid BOT_PROFILE: ${String(env.BOT_PROFILE)}. Use "production" or "debug".`);
 }
 
 function profilePrefix(profile: BotProfile): "PRODUCTION" | "DEBUG" {
@@ -221,14 +208,12 @@ function applyProfileOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = {
     ...profileDataDefaults(profile),
     ...env,
-    PROFILE: profile,
     BOT_PROFILE: profile,
   };
 
   for (const key of profileOverridableKeys) {
     const prefixedKey = `${prefix}_${key}`;
-    const suffixedKey = `${key}_${prefix}`;
-    const value = env[prefixedKey] ?? env[suffixedKey];
+    const value = env[prefixedKey];
     if (value !== undefined) {
       next[key] = value;
     }
@@ -238,12 +223,8 @@ function applyProfileOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 const envSchema = z.object({
-  BOT_PROFILE: z.enum(botProfiles).default("production"),
-  DB_DRIVER: z.preprocess(
-    (v) => (v === "" || v === undefined ? "postgres" : String(v).toLowerCase()),
-    z.enum(["sqlite", "postgres"]).default("sqlite"),
-  ),
-  DATABASE_URL: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().url().optional()),
+  BOT_PROFILE: z.enum(botProfiles),
+  DATABASE_URL: z.string().url(),
   POSTGRES_MAIN_SCHEMA: z.string().min(1).default("main"),
   POSTGRES_TICKET_SCHEMA: z.string().min(1).default("ticket"),
   POSTGRES_MESSAGE_LOG_SCHEMA: z.string().min(1).default("message_log"),
@@ -332,7 +313,6 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.enum(["none", "low", "medium", "high", "xhigh"]).default("high"),
   ),
-  OPENAI_DAILY_TOKEN_LIMIT: z.coerce.number().int().positive().default(2_500_000),
   OPENAI_FALLBACK_THRESHOLD: z.coerce.number().int().positive().default(2_400_000),
   OPENAI_USAGE_CACHE_MS: z.coerce.number().int().min(0).default(30_000),
   OPENAI_MAX_COMPLETION_TOKENS: z.coerce.number().int().positive().default(8_192),
@@ -591,11 +571,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
   const data = parsed.data;
-  if (data.OPENAI_FALLBACK_THRESHOLD > data.OPENAI_DAILY_TOKEN_LIMIT) {
-    throw new Error("OPENAI_FALLBACK_THRESHOLD must be less than or equal to OPENAI_DAILY_TOKEN_LIMIT.");
-  }
-  if (data.DB_DRIVER !== "postgres") throw new Error("DB_DRIVER=postgres is required; SQLite runtime is no longer supported.");
-  if (!data.DATABASE_URL) throw new Error("DATABASE_URL is required for the PostgreSQL runtime.");
   const discordToken = data.DISCORD_TOKEN.trim();
   const guildId = data.GUILD_ID.trim();
   const ownerId = data.OWNER_ID.trim();

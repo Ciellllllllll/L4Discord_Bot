@@ -62,7 +62,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/l4discord-bot
 EnvironmentFile=/opt/l4discord-bot/.env
-ExecStart=/usr/bin/node bot.ts
+ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=5
 

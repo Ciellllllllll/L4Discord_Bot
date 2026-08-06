@@ -12,16 +12,13 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
 } from "discord.js";
-import type DatabaseLib from "better-sqlite3";
 import type { Pool } from "pg";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
 import { bigIntToSnowflake, snowflakeToBigInt } from "../../core/snowflake.js";
 import {
-  buildDetailImageSlots,
   buildDetailImageSlotsPostgres,
   formatStoredHint,
-  lookupStoredAttachmentsMap,
   lookupStoredAttachmentsMapPostgres,
   type DetailImageSlotsResult,
   type StoredAttachmentRow,
@@ -287,107 +284,6 @@ type LogRow = {
   event_time?: string | null;
 };
 
-function buildWhereClause(session: SearchSession, botUserId: string): { where: string[]; params: unknown[] } {
-  const gid = snowflakeToBigInt(session.guildId);
-  const where: string[] = ["guild_id = ?"];
-  const params: unknown[] = [gid];
-
-  const selfBot = normalizeSnowflake(botUserId);
-  if (selfBot) {
-    where.push("(COALESCE(author_id, user_id) IS NULL OR COALESCE(author_id, user_id) != ?)");
-    params.push(snowflakeToBigInt(selfBot));
-  }
-
-  if (session.userId) {
-    where.push("COALESCE(author_id, user_id) = ?");
-    params.push(snowflakeToBigInt(session.userId));
-  }
-  if (session.channelId) {
-    where.push("channel_id = ?");
-    params.push(snowflakeToBigInt(session.channelId));
-  }
-  if (session.keyword) {
-    const esc = session.keyword.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-    where.push("content LIKE ? ESCAPE '\\'");
-    params.push(`%${esc}%`);
-  }
-  if (session.fromIso) {
-    where.push(`${LOG_EVENT_TIME_SQL} >= ?`);
-    params.push(session.fromIso);
-  }
-  if (session.toIso) {
-    where.push(`${LOG_EVENT_TIME_SQL} <= ?`);
-    params.push(session.toIso);
-  }
-  if (session.attachmentsOnly) {
-    where.push(
-      "(COALESCE(attachment_count, 0) > 0 OR (COALESCE(attachments_json, '') NOT IN ('', '[]', 'null')) OR (COALESCE(attachments, '') NOT IN ('', '[]')))",
-    );
-  }
-  return { where, params };
-}
-
-function searchLogsPage(db: DatabaseLib.Database, session: SearchSession, botUserId: string) {
-  const { where, params } = buildWhereClause(session, botUserId);
-  const whereSql = where.join(" AND ");
-  const countRow = db.prepare(`SELECT COUNT(*) AS total FROM message_logs WHERE ${whereSql}`).get(...params) as {
-    total: number;
-  };
-  const total = Number(countRow?.total || 0);
-  const totalPages = Math.max(1, Math.ceil(total / RESULTS_PER_PAGE));
-  if (session.page >= totalPages) session.page = totalPages - 1;
-  if (session.page < 0) session.page = 0;
-  const offset = session.page * RESULTS_PER_PAGE;
-  const rows = db
-    .prepare(
-      `SELECT
-         id, log_type, guild_id, channel_id, user_id, user_name, content,
-         edited_at, deleted_at, time,
-         message_id, author_id, author_tag, author_display_name, created_at, message_type,
-         attachments, attachments_json, attachment_count, embeds_json, reply_ref_json,
-         ${LOG_EVENT_TIME_SQL} AS event_time
-       FROM message_logs
-       WHERE ${whereSql}
-       ORDER BY ${LOG_EVENT_TIME_SQL} DESC, id DESC
-       LIMIT ? OFFSET ?`,
-    )
-    .all(...params, RESULTS_PER_PAGE, offset) as LogRow[];
-  return { total, totalPages, rows };
-}
-
-function fetchLogById(db: DatabaseLib.Database, session: SearchSession, logId: number): LogRow | undefined {
-  const gid = snowflakeToBigInt(session.guildId);
-  return db
-    .prepare(
-      `SELECT id, log_type, guild_id, channel_id, user_id, user_name, content,
-       edited_at, deleted_at, time, message_id, author_id, author_tag, author_display_name,
-       created_at, message_type, attachments, attachments_json, attachment_count, embeds_json, reply_ref_json
-       FROM message_logs WHERE id = ? AND guild_id = ?`,
-    )
-    .get(logId, gid) as LogRow | undefined;
-}
-
-function fetchLogsForExport(db: DatabaseLib.Database, session: SearchSession, botUserId: string, limit: number) {
-  const { where, params } = buildWhereClause(session, botUserId);
-  const whereSql = where.join(" AND ");
-  const countRow = db.prepare(`SELECT COUNT(*) AS total FROM message_logs WHERE ${whereSql}`).get(...params) as {
-    total: number;
-  };
-  const total = Number(countRow?.total || 0);
-  const rows = db
-    .prepare(
-      `SELECT id, log_type, guild_id, channel_id, user_id, user_name, content,
-       edited_at, deleted_at, time, message_id, author_id, author_tag, author_display_name,
-       created_at, message_type, attachments, attachments_json, attachment_count, embeds_json, reply_ref_json,
-       ${LOG_EVENT_TIME_SQL} AS event_time
-       FROM message_logs WHERE ${whereSql}
-       ORDER BY ${LOG_EVENT_TIME_SQL} DESC, id DESC
-       LIMIT ?`,
-    )
-    .all(...params, limit) as LogRow[];
-  return { total, rows };
-}
-
 function buildPostgresWhereClause(session: SearchSession, botUserId: string): { where: string[]; params: unknown[] } {
   const params: unknown[] = [];
   const add = (value: unknown): string => {
@@ -577,17 +473,6 @@ function buildListComponents(session: SearchSession, rows: LogRow[], total: numb
   return out;
 }
 
-function buildListPayload(db: DatabaseLib.Database, session: SearchSession, botUserId: string) {
-  const { total, totalPages, rows } = searchLogsPage(db, session, botUserId);
-  return {
-    ...componentCardsPayload(
-      [buildListEmbed(session, rows, total, totalPages)],
-      buildListComponents(session, rows, total, totalPages),
-    ),
-    files: [],
-  };
-}
-
 async function buildListPayloadPostgres(pool: Pool, session: SearchSession, botUserId: string) {
   const { total, totalPages, rows } = await searchMessageLogsPostgres(pool, session, botUserId);
   return {
@@ -717,16 +602,13 @@ function buildContentEmbeds(content: string | null): ComponentCardBuilder[] {
 
 function attachmentSummaryBlock(
   row: LogRow,
-  storeDb?: DatabaseLib.Database | null,
   storedMap?: Map<string, StoredAttachmentRow>,
 ): string {
   const raw = row.attachments_json || row.attachments || "[]";
   try {
     const arr = JSON.parse(String(raw)) as unknown[];
     if (!Array.isArray(arr) || arr.length === 0) return "(添付なし)";
-    const gid = snowflakeFromDb(row.guild_id);
-    const mid = snowflakeFromDb(row.message_id);
-    const map = storedMap ?? (storeDb && gid && mid ? lookupStoredAttachmentsMap(storeDb, gid, mid) : new Map());
+    const map = storedMap ?? new Map();
     return arr
       .slice(0, 8)
       .map((a, i) => {
@@ -759,21 +641,18 @@ function buildOversizeEphemeralEmbed(
 }
 
 function buildDetailPayload(
-  db: DatabaseLib.Database | null,
   session: SearchSession,
   logId: number,
-  attachmentStore: DatabaseLib.Database | null | undefined,
   imageIndexRequested: number,
-  rowOverride?: LogRow,
-  slotsOverride?: DetailImageSlotsResult,
-  attachmentMapOverride?: Map<string, StoredAttachmentRow>,
+  row: LogRow | undefined,
+  slots: DetailImageSlotsResult,
+  attachmentMap: Map<string, StoredAttachmentRow>,
 ): {
   cards: ComponentCardBuilder[];
   components: ActionRowBuilder<ButtonBuilder>[];
   files: AttachmentBuilder[];
   ephemeralFollowUpEmbed?: ComponentCardBuilder;
 } {
-  const row = rowOverride ?? (db ? fetchLogById(db, session, logId) : undefined);
   if (!row) {
     return {
       cards: [
@@ -794,13 +673,11 @@ function buildDetailPayload(
   const bodyEmbeds = buildContentEmbeds(row.content);
   const gid = snowflakeFromDb(row.guild_id);
   const mid = snowflakeFromDb(row.message_id);
-  const slots = slotsOverride ?? buildDetailImageSlots(attachmentStore ?? undefined, gid, mid);
-
   const maxImgIdx = Math.max(0, slots.imageSlots.length - 1);
   const clampedIdx =
     slots.imageSlots.length === 0 ? 0 : Math.max(0, Math.min(imageIndexRequested, maxImgIdx));
 
-  let attachDesc = attachmentSummaryBlock(row, attachmentStore ?? null, attachmentMapOverride);
+  let attachDesc = attachmentSummaryBlock(row, attachmentMap);
   if (slots.oversizeItems.length > 0) {
     const extra = slots.oversizeItems
       .map((o) => `・${o.filename}\n  \`${o.storageRelpath}\``)
@@ -897,13 +774,12 @@ async function buildDetailPayloadPostgres(
   const mid = snowflakeFromDb(row?.message_id);
   const slots = await buildDetailImageSlotsPostgres(attachmentStore, gid, mid);
   const map = attachmentStore ? await lookupStoredAttachmentsMapPostgres(attachmentStore, gid, mid) : new Map<string, StoredAttachmentRow>();
-  return buildDetailPayload(null, session, logId, null, imageIndexRequested, row, slots, map);
+  return buildDetailPayload(session, logId, imageIndexRequested, row, slots, map);
 }
 
 function formatExportEntry(
   row: LogRow,
   index: number,
-  storeDb?: DatabaseLib.Database | null,
   storedMap?: Map<string, StoredAttachmentRow>,
 ): string {
   const channelId = snowflakeFromDb(row.channel_id) || "-";
@@ -922,14 +798,13 @@ function formatExportEntry(
     content || "(空)",
     `添付件数: ${resolveAttachmentCount(row)}`,
   ];
-  if (storeDb || storedMap) {
+  if (storedMap) {
     const gid = snowflakeFromDb(row.guild_id);
     const mid = snowflakeFromDb(row.message_id);
     if (gid && mid) {
-      const map = storedMap ?? (storeDb ? lookupStoredAttachmentsMap(storeDb, gid, mid) : new Map());
-      if (map.size > 0) {
+      if (storedMap.size > 0) {
         lines.push("保存済み添付:");
-        for (const s of map.values()) {
+        for (const s of storedMap.values()) {
           lines.push(
             `  - ${s.filename}: ${s.storage_relpath} (${s.size_bytes != null ? `${s.size_bytes} B` : "?"})`,
           );
@@ -938,33 +813,6 @@ function formatExportEntry(
     }
   }
   return lines.join("\n");
-}
-
-function buildExportText(
-  session: SearchSession,
-  rows: LogRow[],
-  total: number,
-  attachmentStore?: DatabaseLib.Database | null,
-): string {
-  const header = [
-    "メッセージログ出力",
-    `生成日時: ${new Date().toISOString()}`,
-    `サーバーID: ${session.guildId}`,
-    `実行者ID: ${session.ownerId}`,
-    `キーワード: ${session.keyword || "-"}`,
-    `ユーザーID: ${session.userId || "-"}`,
-    `チャンネルID: ${session.channelId || "-"}`,
-    `開始: ${session.fromIso || "-"}`,
-    `終了: ${session.toIso || "-"}`,
-    `添付ありのみ: ${session.attachmentsOnly ? "はい" : "いいえ"}`,
-    `総件数: ${total}`,
-    `出力件数: ${rows.length}`,
-    "",
-  ];
-  const body = rows
-    .map((r, i) => formatExportEntry(r, i + 1, attachmentStore))
-    .join("\n\n----------------------------------------\n\n");
-  return `${header.join("\n")}${body}`;
 }
 
 async function buildExportTextPostgres(pool: Pool | undefined, session: SearchSession, rows: LogRow[], total: number): Promise<string> {
@@ -996,7 +844,7 @@ async function buildExportTextPostgres(pool: Pool | undefined, session: SearchSe
   const body = rows.map((row, i) => {
     const gid = snowflakeFromDb(row.guild_id);
     const mid = snowflakeFromDb(row.message_id);
-    return formatExportEntry(row, i + 1, null, gid && mid ? maps.get(`${gid}:${mid}`) : undefined);
+    return formatExportEntry(row, i + 1, gid && mid ? maps.get(`${gid}:${mid}`) : undefined);
   }).join("\n\n----------------------------------------\n\n");
   return `${header.join("\n")}${body}`;
 }
@@ -1084,16 +932,17 @@ export async function routeMessageLogButton(interaction: ButtonInteraction, ctx:
     if (action === "export") {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       try {
-        const { total, rows } = ctx.messageLogPgPool
-          ? await fetchLogsForExportPostgres(ctx.messageLogPgPool, session, ctx.client.user?.id ?? "", MAX_EXPORT_ROWS)
-          : fetchLogsForExport(ctx.messageLogSqlite!, session, ctx.client.user?.id ?? "", MAX_EXPORT_ROWS);
+        const { total, rows } = await fetchLogsForExportPostgres(
+          ctx.messageLogPgPool,
+          session,
+          ctx.client.user?.id ?? "",
+          MAX_EXPORT_ROWS,
+        );
         if (rows.length === 0) {
           await interaction.editReply({ content: "エクスポート対象のログがありません。" });
           return true;
         }
-        const content = ctx.messageLogPgPool
-          ? await buildExportTextPostgres(ctx.messageAttachmentPgPool, session, rows, total)
-          : buildExportText(session, rows, total, ctx.messageAttachmentStoreSqlite!);
+        const content = await buildExportTextPostgres(ctx.messageAttachmentPgPool, session, rows, total);
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         const file = new AttachmentBuilder(Buffer.from(content, "utf8"), {
           name: `message_logs_${session.guildId}_${stamp}.txt`,
@@ -1113,9 +962,7 @@ export async function routeMessageLogButton(interaction: ButtonInteraction, ctx:
       session.page = 0;
     } else if (action !== "refresh") return true;
 
-    const payload = ctx.messageLogPgPool
-      ? await buildListPayloadPostgres(ctx.messageLogPgPool, session, ctx.client.user?.id ?? "")
-      : buildListPayload(ctx.messageLogSqlite!, session, ctx.client.user?.id ?? "");
+    const payload = await buildListPayloadPostgres(ctx.messageLogPgPool, session, ctx.client.user?.id ?? "");
     await interaction.update(payload).catch(async () => {
       await interaction.reply({ content: "検索UIの更新に失敗しました。", flags: MessageFlags.Ephemeral }).catch(() => undefined);
     });
@@ -1148,9 +995,13 @@ export async function routeMessageLogButton(interaction: ButtonInteraction, ctx:
       return false;
     }
 
-    const payload = ctx.messageLogPgPool
-      ? await buildDetailPayloadPostgres(ctx.messageLogPgPool, session, logId, ctx.messageAttachmentPgPool, imageIndex)
-      : buildDetailPayload(ctx.messageLogSqlite!, session, logId, ctx.messageAttachmentStoreSqlite!, imageIndex);
+    const payload = await buildDetailPayloadPostgres(
+      ctx.messageLogPgPool,
+      session,
+      logId,
+      ctx.messageAttachmentPgPool,
+      imageIndex,
+    );
     try {
       await interaction.update({
         ...componentCardsPayload(payload.cards, payload.components),
@@ -1227,9 +1078,7 @@ export async function routeMessageLogModal(interaction: ModalSubmitInteraction, 
   if (!existing) session.attachmentsOnly = false;
   searchSessions.set(session.id, session);
 
-  const payload = ctx.messageLogPgPool
-    ? await buildListPayloadPostgres(ctx.messageLogPgPool, session, ctx.client.user?.id ?? "")
-    : buildListPayload(ctx.messageLogSqlite!, session, ctx.client.user?.id ?? "");
+  const payload = await buildListPayloadPostgres(ctx.messageLogPgPool, session, ctx.client.user?.id ?? "");
   await interaction.reply(ephemeralComponentPayload(payload));
   return true;
 }
