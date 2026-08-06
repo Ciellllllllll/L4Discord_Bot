@@ -77,7 +77,7 @@ export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMess
 
   const embed = new ComponentCardBuilder()
     .setTitle(`${meta.createLabel}: 投稿先チャンネルを選択`)
-    .setDescription("投稿先チャンネルを選択してください。選択後に入力画面を開きます。")
+    .setDescription("投稿先チャンネルを選択するか、チャンネルIDを直接入力してください。")
 
   const channelRow = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
     new ChannelSelectMenuBuilder()
@@ -94,7 +94,14 @@ export function buildCreateChannelPayload(kind: ReminderEvType): ReminderHubMess
       ),
   );
 
-  return componentCardsPayload([embed], [channelRow]);
+  const manualEntryRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`rem_create_channel_id:${normalized}`)
+      .setLabel("チャンネルIDを入力")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  return componentCardsPayload([embed], [channelRow, manualEntryRow]);
 }
 
 function buildManageTabsRow(activeKind: ReminderEvType): ActionRowBuilder<ButtonBuilder> {
@@ -210,7 +217,7 @@ export function buildManageDetailPayload(row: ReminderHubRowView, noticeText = "
   return componentCardsPayload([embed], [buildManageTabsRow(kind), actionRow, channelRow]);
 }
 
-export function buildCreateModal(kind: ReminderEvType, channelId: string): ModalBuilder {
+export function buildCreateModal(kind: ReminderEvType, channelId = ""): ModalBuilder {
   const normalized = normalizeEventType(kind);
   const modalTitle = EVENT_META[normalized].createLabel;
   const initialTitleMap: Record<ReminderEvType, string> = {
@@ -220,7 +227,7 @@ export function buildCreateModal(kind: ReminderEvType, channelId: string): Modal
   };
 
   return new ModalBuilder()
-    .setCustomId(`reminder_modal:${normalized}:${channelId}`)
+    .setCustomId(`reminder_modal:${normalized}`)
     .setTitle(modalTitle.slice(0, 45))
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
@@ -255,6 +262,15 @@ export function buildCreateModal(kind: ReminderEvType, channelId: string): Modal
           .setStyle(TextInputStyle.Short)
           .setRequired(false)
           .setMaxLength(RECURRENCE_INPUT_MAX),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("channel_id")
+          .setLabel("投稿先チャンネルID")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(20)
+          .setValue(channelId),
       ),
     );
 }
@@ -301,6 +317,15 @@ export function buildEditModal(row: ReminderHubRowView): ModalBuilder {
           .setRequired(false)
           .setMaxLength(RECURRENCE_INPUT_MAX)
           .setValue(cut(recurrenceToInput(row.recurrence_json), RECURRENCE_INPUT_MAX)),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("channel_id")
+          .setLabel("投稿先チャンネルID")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(20)
+          .setValue(row.channel_id),
       ),
     );
 }

@@ -53,7 +53,7 @@ function isReminderSystemButtonId(id: string): boolean {
   ) {
     return true;
   }
-  return id.startsWith("rem_manage_");
+  return id.startsWith("rem_manage_") || id.startsWith("rem_create_channel_id:");
 }
 
 async function buildManageListForUser(
@@ -76,6 +76,19 @@ export async function handleReminderHubButton(interaction: ButtonInteraction, ct
     todo_create: "todo",
     notice_create: "notice",
   };
+
+  if (id.startsWith("rem_create_channel_id:")) {
+    if (!interaction.guild) {
+      await interaction.reply({
+        ...componentCardsPayload([makeInfoEmbed("エラー", "サーバー内でのみ利用できます。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+      });
+      return true;
+    }
+    const kind = normalizeEventType(id.slice("rem_create_channel_id:".length));
+    await interaction.showModal(buildCreateModal(kind));
+    return true;
+  }
 
   if (createMap[id]) {
     if (!interaction.guild) {
@@ -335,7 +348,7 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
       return true;
     }
     const parts = interaction.customId.split(":");
-    if (parts[0] !== "reminder_modal" || parts.length < 3) {
+    if (parts[0] !== "reminder_modal" || parts.length !== 2) {
       await interaction.reply({
         ...componentCardsPayload([makeInfoEmbed("エラー", "モーダルIDが不正です。", 0xe74c3c)]),
         flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
@@ -343,9 +356,8 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
       return true;
     }
     const kindRaw = parts[1] ?? "reminder";
-    const channelIdRaw = parts[2] ?? "";
     const kind = normalizeEventType(kindRaw);
-    const channelId = /^\d+$/.test(channelIdRaw) ? channelIdRaw : interaction.channelId;
+    const channelId = interaction.fields.getTextInputValue("channel_id").trim();
     if (!channelId || !/^\d+$/.test(channelId)) {
       await interaction.reply({
         ...componentCardsPayload([makeInfoEmbed("エラー", "チャンネルが不正です。", 0xe74c3c)]),
@@ -421,6 +433,15 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
     const body = interaction.fields.getTextInputValue("body").trim();
     const dueRaw = interaction.fields.getTextInputValue("due_at").trim();
     const recRaw = interaction.fields.getTextInputValue("recurrence").trim();
+    const channelId = interaction.fields.getTextInputValue("channel_id").trim();
+
+    if (!/^\d+$/.test(channelId)) {
+      await interaction.reply({
+        ...componentCardsPayload([makeInfoEmbed("入力エラー", "チャンネルIDは数字のみで入力してください。", 0xe74c3c)]),
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+      });
+      return true;
+    }
 
     const dueAt = parseDueAt(dueRaw);
     if (!dueAt) {
@@ -448,6 +469,7 @@ export async function handleReminderHubModal(interaction: ModalSubmitInteraction
       fireAt: dueAt,
       recurrence: recParse.value,
     });
+    await updateReminderHubChannel(ctx, interaction.guild.id, interaction.user.id, rowId, channelId);
 
     const refreshed = await getActiveForAuthor(ctx, interaction.guild.id, interaction.user.id, rowId);
     if (!refreshed) {
