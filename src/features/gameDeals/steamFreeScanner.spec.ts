@@ -9,8 +9,8 @@ test("scanSteamAppListChanges rethrows shutdown AbortError without a warning", a
   const controller = new AbortController();
   controller.abort();
   const ctx = {
-    config: { DB_DRIVER: "postgres", STEAM_WEB_API_KEY: "" },
-    gameDealPgPool: {},
+    config: { STEAM_WEB_API_KEY: "" },
+    mainPgPool: {},
     log: {
       info: () => undefined,
       warn: (...args: unknown[]) => { warnings.push(args); },

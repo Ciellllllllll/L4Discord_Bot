@@ -16,8 +16,8 @@ Schema names can be overridden with `POSTGRES_*_SCHEMA` or profile-specific `PRO
 
 ## Runtime status
 
-`DB_DRIVER=postgres` now uses direct PostgreSQL paths for the runtime repositories that previously required the
-synchronous SQLite compatibility layer:
+The bot uses direct PostgreSQL paths for runtime repositories that previously required the synchronous SQLite
+compatibility layer:
 
 - Pacchi memory, sleep/report logs, import/export, and Senryu submissions
 - Senryu records
@@ -27,23 +27,22 @@ synchronous SQLite compatibility layer:
 - Existing PostgreSQL paths for VC session writes, message log/attachment writes, Game Deals, AI provider settings,
   ticket DB, AI history, automoderation, reminders, and Kysely-backed main tables
 
-PostgreSQL startup applies versioned schema migrations through `postgres_schema_migrations`. SQLite mode is still
-kept for compatibility, but PostgreSQL mode does not create or pass the old SQLite compatibility object.
+Startup applies versioned schema migrations through `postgres_schema_migrations`. SQLite files and source DDL remain
+only for one-way migration and verification; the bot runtime cannot start without PostgreSQL.
 
 ## Environment
 
 Minimum PostgreSQL runtime settings:
 
 ```env
-DB_DRIVER=postgres
+BOT_PROFILE=production
 DATABASE_URL=postgres://l4bot:password@127.0.0.1:5432/l4discord
 ```
 
 For production profile-specific overrides, prefer:
 
 ```env
-PROFILE=production
-PRODUCTION_DB_DRIVER=postgres
+BOT_PROFILE=production
 PRODUCTION_DATABASE_URL=postgres://l4bot:password@127.0.0.1:5432/l4discord
 ```
 
@@ -66,7 +65,7 @@ not require Docker; it is not the cutover or CI gate.
 On the production host, before stopping the bot, run the read-only cutover readiness check:
 
 ```bash
-PROFILE=production npm run check:postgres-cutover
+BOT_PROFILE=production npm run check:postgres-cutover
 ```
 
 This checks configured SQLite source paths, schema-name uniqueness, `DATABASE_URL`, and PostgreSQL connectivity. It
@@ -78,7 +77,7 @@ is expected there.
 ## Planned production cutover
 
 Do this only during a planned outage. Do not run migration while the bot is still writing to SQLite.
-Before step 1, run `PROFILE=production npm run check:postgres-cutover` and resolve every `fail` result. Treat missing
+Before step 1, run `BOT_PROFILE=production npm run check:postgres-cutover` and resolve every `fail` result. Treat missing
 SQLite sources as a blocker unless you have explicitly confirmed that the specific legacy database was never used.
 
 1. Stop the bot process.
@@ -86,7 +85,7 @@ SQLite sources as a blocker unless you have explicitly confirmed that the specif
 3. Back up all active SQLite files and attachment files for the active profile.
 4. Run the SQLite-to-PostgreSQL copy.
 5. Run the PostgreSQL data verifier.
-6. Set `DB_DRIVER=postgres` for the active profile.
+6. Deploy the PostgreSQL-only runtime configuration.
 7. Start the bot.
 8. Run smoke tests.
 
@@ -132,7 +131,7 @@ Adjust paths if `PRODUCTION_*_PATH` overrides are used.
 Run from the repository root with the same environment that production uses:
 
 ```bash
-PROFILE=production npm run migrate:sqlite-to-postgres
+BOT_PROFILE=production npm run migrate:sqlite-to-postgres
 ```
 
 The copy script:
@@ -152,7 +151,7 @@ instead of requiring the SQLite FTS tables.
 Run:
 
 ```bash
-PROFILE=production npm run verify:postgres-data
+BOT_PROFILE=production npm run verify:postgres-data
 ```
 
 The verifier checks:
@@ -167,12 +166,12 @@ The verifier checks:
 
 Do not switch runtime if this command reports any failure.
 
-### 5. Enable PostgreSQL runtime
+### 5. Enable the PostgreSQL runtime
 
 Set the active profile to PostgreSQL:
 
 ```env
-PRODUCTION_DB_DRIVER=postgres
+BOT_PROFILE=production
 PRODUCTION_DATABASE_URL=postgres://l4bot:password@127.0.0.1:5432/l4discord
 ```
 
@@ -206,18 +205,9 @@ Keep the SQLite backup until these smoke tests pass and the bot has run long eno
 
 ## Rollback
 
-If verification fails before PostgreSQL startup:
+If verification fails before startup, leave the SQLite backups untouched and fix the migration/verifier issue. Rerun
+only against a new verification schema; never rerun the SQLite migration against a production schema. Do not start the
+new runtime until verification passes.
 
-1. Keep `DB_DRIVER=sqlite`.
-2. Leave the SQLite backups untouched.
-3. Fix the reported migration/verifier issue.
-4. Re-run migration into clean or intentionally overwritten PostgreSQL schemas.
-
-If smoke tests fail after PostgreSQL startup:
-
-1. Stop the bot immediately.
-2. Restore `DB_DRIVER=sqlite` for the active profile.
-3. Start the bot with the existing SQLite files or the backup copy.
-4. Preserve PostgreSQL schemas for diagnosis; do not drop them until the failure is understood.
-
-Do not run both SQLite and PostgreSQL production writers at the same time.
+If smoke tests fail after startup, stop the bot immediately and restore the previous application release against the
+same PostgreSQL data. Do not rerun the SQLite migration against production or start the retired SQLite writer.

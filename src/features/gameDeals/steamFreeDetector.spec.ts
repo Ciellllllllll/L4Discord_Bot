@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
-import { GameDealRepository } from "./gameDealRepository.js";
 import { buildSteamFreeStateKey, detectSteamFreeEvent } from "./steamFreeDetector.js";
 import type { CheapSharkDeal } from "./cheapSharkTypes.js";
-import type { SteamAppCatalogChange, SteamFreeEvent, SteamPaidPriceHistory } from "./gameDealTypes.js";
+import type { SteamAppCatalogChange, SteamPaidPriceHistory } from "./gameDealTypes.js";
 import type { SteamAppDetails, SteamSearchItem } from "../steam/steamFreeTypes.js";
 
 const change: SteamAppCatalogChange = {
@@ -72,29 +70,6 @@ function cheapSharkDeal(extra: Partial<CheapSharkDeal> = {}): CheapSharkDeal {
   };
 }
 
-function countCatalogPointLookups(db: Database.Database): { db: Database.Database; getCount: () => number } {
-  let count = 0;
-  const wrapped = new Proxy(db, {
-    get(target, prop, receiver) {
-      if (prop !== "prepare") return Reflect.get(target, prop, receiver);
-      return (sql: string) => {
-        const statement = target.prepare(sql);
-        if (!/FROM steam_app_catalog WHERE appid = \?/.test(sql)) return statement;
-        return new Proxy(statement, {
-          get(statementTarget, statementProp, statementReceiver) {
-            if (statementProp !== "get") return Reflect.get(statementTarget, statementProp, statementReceiver);
-            return (...args: unknown[]) => {
-              count += 1;
-              return statement.get(...args);
-            };
-          },
-        });
-      };
-    },
-  }) as Database.Database;
-  return { db: wrapped, getCount: () => count };
-}
-
 function runDetector(input: {
   appdetails?: SteamAppDetails | null;
   searchItem?: SteamSearchItem | null;
@@ -138,45 +113,7 @@ async function run(): Promise<void> {
   });
   assert.equal(baselineOnly.shouldNotify, false);
 
-  const db = new Database(":memory:");
-  const repo = new GameDealRepository(db);
-  const baseline = repo.upsertSteamAppCatalog([{ appid: "123", name: "Paid Game", lastModified: 100, priceChangeNumber: 1 }]);
-  assert.equal(baseline.baselineCreated, true);
-  assert.equal(baseline.changes.length, 0);
-  const changed = repo.upsertSteamAppCatalog([{ appid: "123", name: "Paid Game", lastModified: 101, priceChangeNumber: 2 }]);
-  assert.equal(changed.changes.length, 1);
-
-  const lookupDb = new Database(":memory:");
-  const lookupCounter = countCatalogPointLookups(lookupDb);
-  const lookupRepo = new GameDealRepository(lookupCounter.db);
-  lookupRepo.upsertSteamAppCatalog([
-    { appid: "1", name: "One", lastModified: 100, priceChangeNumber: 1 },
-    { appid: "2", name: "Two", lastModified: 100, priceChangeNumber: 1 },
-  ]);
-  lookupRepo.upsertSteamAppCatalog([
-    { appid: "1", name: "One", lastModified: 101, priceChangeNumber: 2 },
-    { appid: "2", name: "Two", lastModified: 100, priceChangeNumber: 1 },
-  ]);
-  assert.equal(lookupCounter.getCount(), 0);
-  lookupDb.close();
-
-  const event: SteamFreeEvent = {
-    appid: "123",
-    title: "Paid Game",
-    stateKey: buildSteamFreeStateKey(change),
-    priceChangeNumber: 2,
-    lastModified: 100,
-    normalPriceCents: 198000,
-    currentPriceCents: 0,
-    discountPercent: 100,
-    evidenceJson: "[]",
-    steamUrl: "https://store.steampowered.com/app/123/",
-    imageUrl: null,
-  };
-  assert.equal(repo.upsertSteamFreeEvent(event).shouldNotify, true);
-  repo.markSteamFreeEventNotified(event.stateKey);
-  assert.equal(repo.upsertSteamFreeEvent(event).shouldNotify, false);
-  db.close();
+  assert.equal(buildSteamFreeStateKey(change), "steam_free:123:2:100");
 }
 
 void run()

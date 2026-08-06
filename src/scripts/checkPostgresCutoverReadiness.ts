@@ -68,10 +68,7 @@ export function checkPostgresCutoverEnvironment(config: AppConfig): CheckItem[] 
   const seen = new Map<string, string>();
   const checks: CheckItem[] = [
     item("ok", "profile", config.BOT_PROFILE),
-    item(config.DB_DRIVER === "postgres" ? "ok" : "warn", "DB_DRIVER", `${config.DB_DRIVER}; set postgres before final startup`),
-    config.DATABASE_URL
-      ? item("ok", "DATABASE_URL", "configured")
-      : item("fail", "DATABASE_URL", "required for migrate:sqlite-to-postgres and DB_DRIVER=postgres"),
+    item("ok", "DATABASE_URL", "configured"),
   ];
 
   for (const [label, schema] of schemaNames) {

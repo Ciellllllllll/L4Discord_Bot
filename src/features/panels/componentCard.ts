@@ -251,20 +251,6 @@ export function componentCardsPayload(
   };
 }
 
-export function singleComponentCardPayload(
-  card: ComponentCardBuilder,
-  rows: readonly ActionRowLike[] = [],
-): ComponentCardsPayload {
-  return componentCardsPayload([card], rows);
-}
-
-export function ephemeralComponentCardsPayload(
-  cards: readonly ComponentCardBuilder[],
-  rows: readonly ActionRowLike[] = [],
-): EphemeralComponentCardsPayload {
-  return ephemeralComponentPayload(componentCardsPayload(cards, rows));
-}
-
 export function ephemeralComponentPayload(payload: ComponentCardsPayload): EphemeralComponentCardsPayload {
   return {
     embeds: [],

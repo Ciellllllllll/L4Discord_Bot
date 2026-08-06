@@ -203,7 +203,7 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
   if (!message.guildId || message.guildId !== ctx.config.GUILD_ID) return false;
 
   const content = message.content.trim();
-  if (ctx.config.DB_DRIVER === "postgres" && !isExplicitPacchiTrigger(content)) {
+  if (!isExplicitPacchiTrigger(content)) {
     return false;
   }
 

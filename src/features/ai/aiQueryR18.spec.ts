@@ -239,7 +239,7 @@ async function run(): Promise<void> {
       const config = makeConfig(dir);
       const ctx = makeCtx(db, aiHistoryDb, config);
       const rec = makeInteraction({ userId: "off-user", channelId: "normal-channel" });
-      await handleSlashCommand(rec.interaction, ctx);
+      await handleSlashCommand(rec.interaction, ctx, { skipSurvey: true });
 
       assert.equal(calls.at(-1)?.url, "http://deepseek.test/v1/chat/completions");
       const rows = await historyRows(aiHistoryDb);
@@ -266,7 +266,7 @@ async function run(): Promise<void> {
       const config = makeConfig(dir);
       const ctx = makeCtx(db, aiHistoryDb, config, "openai");
       const rec = makeInteraction({ userId: "openai-history-user", channelId: "normal-channel" });
-      await handleSlashCommand(rec.interaction, ctx);
+      await handleSlashCommand(rec.interaction, ctx, { skipSurvey: true });
       const row = await aiHistoryDb
         .selectFrom("ai_history")
         .select("meta")
@@ -299,7 +299,7 @@ async function run(): Promise<void> {
       const config = makeConfig(dir);
       const ctx = makeCtx(db, aiHistoryDb, config);
       const rec = makeInteraction({ userId: "long-answer-user", channelId: "normal-channel" });
-      await handleSlashCommand(rec.interaction, ctx);
+      await handleSlashCommand(rec.interaction, ctx, { skipSurvey: true });
 
       const payload = rec.edits[0] as { components?: Array<{ type: ComponentType; components?: Array<{ type: ComponentType; content?: string }> }> };
       const container = payload.components?.[0];
@@ -327,7 +327,7 @@ async function run(): Promise<void> {
           await setR18(db, "race-user", true);
         },
       });
-      await handleSlashCommand(rec.interaction, ctx);
+      await handleSlashCommand(rec.interaction, ctx, { skipSurvey: true });
 
       assert.equal(rec.deferred[0], undefined);
       assert.equal(calls.at(-1)?.url, "http://deepseek.test/v1/chat/completions");
@@ -360,7 +360,7 @@ async function run(): Promise<void> {
       const config = makeConfig(dir, { AI_JUDGE_ENABLED: true });
       const ctx = makeCtx(db, aiHistoryDb, config);
       const rec = makeInteraction({ userId: "local-user", channelId: "r18-channel" });
-      await handleSlashCommand(rec.interaction, ctx);
+      await handleSlashCommand(rec.interaction, ctx, { skipSurvey: true });
 
       assert.deepEqual(rec.deferred[0], { flags: MessageFlags.Ephemeral });
       assert.equal(calls.at(-1)?.url, "http://local.test/v1/chat/completions");
@@ -466,7 +466,7 @@ async function run(): Promise<void> {
       const ctx = makeCtx(db, aiHistoryDb, config);
       const rec = makeInteraction({ userId: "local-fail-user", channelId: "r18-channel" });
       const before = (await historyRows(aiHistoryDb)).length;
-      await handleSlashCommand(rec.interaction, ctx);
+      await handleSlashCommand(rec.interaction, ctx, { skipSurvey: true });
 
       assert.equal(calls.at(-1)?.url, "http://local.test/v1/chat/completions");
       assert.equal((await historyRows(aiHistoryDb)).length, before);

@@ -175,10 +175,6 @@ async function handleDebugSurvey(
     await interaction.reply({ content: "このコマンドはdebug profileでのみ利用できます。", flags: MessageFlags.Ephemeral });
     return;
   }
-  if (ctx.config.DB_DRIVER !== "postgres") {
-    await interaction.reply({ content: "Anonymous SurveyはPostgreSQL環境でのみ利用できます。", flags: MessageFlags.Ephemeral });
-    return;
-  }
   if (await promptAnonymousSurvey(interaction, ctx, member, { ignoreAdmin: true, ignoreCooldown: true })) {
     return;
   }

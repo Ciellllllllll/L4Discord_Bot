@@ -1,8 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
 import type { Message } from "discord.js";
 import { countAmbiguousInReading, countMora } from "./senryu.counter.js";
 import {
@@ -16,16 +12,12 @@ import {
   pickSenryuCandidate,
   senryuCandidate575MismatchScore,
 } from "./senryu.detector.js";
-import { deleteSenryu, saveSenryu } from "./senryu.repository.js";
 import { replySenryu } from "./senryu.reply.js";
 import { senryuCandidateMatchesJsHaiku575 } from "./senryu.jsHaikuVerify.js";
 import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { buildSenryuReviewContextExcerpt } from "./senryu.reviewContext.js";
 import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
 import type { KuromojiToken } from "./senryu.types.js";
-
-const _dir = dirname(fileURLToPath(import.meta.url));
-const migration013 = join(_dir, "..", "..", "..", "migrations", "sqlite", "013_senryu.up.sql");
 
 function tok(
   surface: string,
@@ -197,24 +189,6 @@ async function run(): Promise<void> {
   assert.ok(reviewUser.includes("上句:"));
   assert.ok(reviewUser.includes("周辺文脈"));
 
-  const mem = new Database(":memory:");
-  mem.exec(readFileSync(migration013, "utf8"));
-  const saved = await saveSenryu(mem, {
-    guildId: "g",
-    channelId: "c",
-    messageId: "m",
-    authorId: "a",
-    kamigo: "x",
-    nakashichi: "y",
-    shimogo: "z",
-    formatted: "x y z",
-    sourceContent: "src",
-    spoiler: false,
-    detectedAt: new Date().toISOString(),
-  });
-  const row = mem.prepare("SELECT id FROM senryu_records WHERE id = ?").get(saved.id) as { id: string };
-  assert.equal(row.id, saved.id);
-
   let replied = "";
   const fakeMessage = {
     reply: async (opts: { content: string }) => {
@@ -250,11 +224,6 @@ async function run(): Promise<void> {
   );
   assert.ok(replied.includes("||"));
 
-  await deleteSenryu(mem, saved.id);
-  const gone = mem.prepare("SELECT id FROM senryu_records WHERE id = ?").get(saved.id);
-  assert.equal(gone, undefined);
-
-  mem.close();
 }
 
 void run()

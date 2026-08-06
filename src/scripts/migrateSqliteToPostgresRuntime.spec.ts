@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -16,6 +16,8 @@ import {
 } from "../core/db/kysely.js";
 import { PostgresVcRankingRepository } from "../adapters/legacyDb/postgresVcRankingRepository.js";
 import { ensureLolWatcherSchema, PostgresLolWatcherRepository } from "../features/lolWatcher/lolWatcher.repository.js";
+import { ensureSqliteAiProviderSourceSchema } from "../features/ai/aiProviderRepository.js";
+import { ensureSqliteGameDealSourceSchema } from "../features/gameDeals/gameDealSourceSchema.js";
 import { ensurePacchiSchema } from "../features/pacchi/pacchi.schema.js";
 import { PostgresPacchiRepository } from "../features/pacchi/postgresPacchiRepository.js";
 import { createPostgresSenryuRepository } from "../features/senryu/senryu.repository.js";
@@ -29,8 +31,13 @@ import { getOptionalPostgresTestUrl } from "../test/postgresTestEnv.js";
 function createMainFixture(path: string): void {
   const db = new Database(path);
   try {
+    for (const file of ["017_game_deals.up.sql", "018_game_deals_steam_source_status.up.sql", "019_cheapshark_deals.up.sql"]) {
+      db.exec(readFileSync(join(process.cwd(), "migrations", "sqlite", file), "utf8"));
+    }
     ensurePacchiSchema(db);
     ensureLolWatcherSchema(db);
+    ensureSqliteAiProviderSourceSchema(db);
+    ensureSqliteGameDealSourceSchema(db);
     db.exec(`
       CREATE TABLE IF NOT EXISTS senryu_records (
         id TEXT PRIMARY KEY,
@@ -69,6 +76,23 @@ function createMainFixture(path: string): void {
       .run("User#JP1", "user#jp1", "987654321098765435", "987654321098765433", 1, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
     db.prepare("INSERT INTO lol_watcher_status (key, value, updated_at) VALUES (?, ?, ?)")
       .run("notification_channel_id", "987654321098765433", "2026-01-01T00:00:00.000Z");
+    db.prepare("INSERT INTO steam_app_catalog (appid, name, last_modified, price_change_number, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run("123", "Migrated Game", 100, 2, "2026-01-01T00:00:00.000Z", "2026-01-01T00:01:00.000Z");
+    db.prepare("INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider, preferred_openai_model, updated_at) VALUES (?, ?, ?, ?)")
+      .run("987654321098765432", "deepseek", "gpt54_mini", "2026-01-01T00:00:00.000Z");
+    db.prepare(`
+      INSERT INTO game_deal_subscription_notifications (
+        id, subscription_id, user_id, guild_id, target_platform, target_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "notification-1",
+      "subscription-1",
+      "987654321098765435",
+      "987654321098765432",
+      "steam",
+      "123",
+      "2026-01-01T00:00:00.000Z",
+    );
     db.prepare("INSERT INTO senryu_records (id, guild_id, channel_id, message_id, author_id, kamigo, nakashichi, shimogo, formatted, source_content, spoiler, detected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run("senryu-1", "987654321098765432", "987654321098765433", "987654321098765436", "987654321098765435", "上五", "中七です", "下五", "上五 中七です 下五", "content", 1, "2026-01-01T00:03:00.000Z");
     const insertSnowflakeFixture = db.prepare("INSERT INTO snowflake_verify_fixture (guild_id, executor_user_id, emoji_id) VALUES (?, ?, ?)");
@@ -270,8 +294,9 @@ async function run(): Promise<void> {
 
   const childEnv = {
     ...process.env,
-    DB_DRIVER: "postgres",
+    BOT_PROFILE: "production",
     DATABASE_URL: connectionString,
+    PRODUCTION_DATABASE_URL: connectionString,
     DISCORD_TOKEN: "test-token",
     DISCORD_CLIENT_ID: "client",
     GUILD_ID: "987654321098765432",
@@ -412,6 +437,25 @@ async function run(): Promise<void> {
       assert.equal(await lol.getNotificationChannelId(), "987654321098765433");
       await lol.disableAccount("user#jp1");
       assert.equal((await lol.getAccount("user#jp1"))?.enabled, false);
+
+      assert.deepEqual(
+        (await mainPool.query<{ appid: string; name: string }>("SELECT appid, name FROM steam_app_catalog WHERE appid = $1", ["123"])).rows,
+        [{ appid: "123", name: "Migrated Game" }],
+      );
+      assert.deepEqual(
+        (await mainPool.query<{ preferred_provider: string; preferred_openai_model: string }>(
+          "SELECT preferred_provider, preferred_openai_model FROM ai_guild_provider_settings WHERE guild_id = $1",
+          ["987654321098765432"],
+        )).rows,
+        [{ preferred_provider: "deepseek", preferred_openai_model: "gpt54_mini" }],
+      );
+      assert.deepEqual(
+        (await mainPool.query<{ guild_id: string; target_platform: string; target_id: string }>(
+          "SELECT guild_id, target_platform, target_id FROM game_deal_subscription_notifications WHERE id = $1",
+          ["notification-1"],
+        )).rows,
+        [{ guild_id: "987654321098765432", target_platform: "steam", target_id: "123" }],
+      );
 
       const senryu = await mainPool.query<{ spoiler: boolean }>("SELECT spoiler FROM senryu_records WHERE id = $1", ["senryu-1"]);
       assert.equal(senryu.rows[0]?.spoiler, true);

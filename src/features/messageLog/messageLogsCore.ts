@@ -1,9 +1,7 @@
 import { extname } from "node:path";
-import type DatabaseLib from "better-sqlite3";
 import type { Message, PartialMessage } from "discord.js";
 import type { Pool } from "pg";
 import { snowflakeToBigInt } from "../../core/snowflake.js";
-import { ensureMessageLogsSchema } from "./messageLogsSchema.js";
 
 const IMAGE_EXTENSIONS = new Set([
   ".png",
@@ -28,7 +26,6 @@ export type MessageLogIngestOptions = {
 function utcNowIso(): string {
   return new Date().toISOString();
 }
-
 function normalizeSnowflake(value: unknown): string | null {
   const s = String(value ?? "").trim();
   return /^\d+$/.test(s) ? s : null;
@@ -191,36 +188,6 @@ function buildLogRecord(message: Message | PartialMessage, logType: LogType, now
   };
 }
 
-const INSERT_SQL = `INSERT INTO message_logs
-  (log_type, guild_id, channel_id, user_id, user_name, content, attachments, attachments_json, edited_at, deleted_at, time,
-   message_id, author_id, author_tag, author_display_name, created_at, message_type, embeds_json, reply_ref_json, attachment_count)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-function insertLog(db: DatabaseLib.Database, r: ReturnType<typeof buildLogRecord>): void {
-  db.prepare(INSERT_SQL).run(
-    r.log_type,
-    r.guild_id,
-    r.channel_id,
-    r.user_id,
-    r.user_name,
-    r.content,
-    r.attachments,
-    r.attachments_json,
-    r.edited_at,
-    r.deleted_at,
-    r.time,
-    r.message_id,
-    r.author_id,
-    r.author_tag,
-    r.author_display_name,
-    r.created_at,
-    r.message_type,
-    r.embeds_json,
-    r.reply_ref_json,
-    r.attachment_count,
-  );
-}
-
 function pgValue(value: unknown): unknown {
   return typeof value === "bigint" ? value.toString() : value;
 }
@@ -256,22 +223,6 @@ async function insertLogPostgres(pool: Pool, r: ReturnType<typeof buildLogRecord
   );
 }
 
-// message.db を開いた直後に呼ぶ（スキーマ・FTS・トリガー）
-
-export function prepareMessageLogsDatabase(db: DatabaseLib.Database): void {
-  ensureMessageLogsSchema(db);
-}
-
-export function ingestMessageCreate(
-  db: DatabaseLib.Database,
-  message: Message,
-  opt: MessageLogIngestOptions,
-): void {
-  if (shouldSkipMessage(message, opt)) return;
-  const now = utcNowIso();
-  insertLog(db, buildLogRecord(message, "normal", now));
-}
-
 export async function ingestMessageCreatePostgres(
   pool: Pool,
   message: Message,
@@ -280,16 +231,6 @@ export async function ingestMessageCreatePostgres(
   if (shouldSkipMessage(message, opt)) return;
   const now = utcNowIso();
   await insertLogPostgres(pool, buildLogRecord(message, "normal", now));
-}
-
-export function ingestMessageUpdate(
-  db: DatabaseLib.Database,
-  message: Message,
-  opt: MessageLogIngestOptions,
-): void {
-  if (shouldSkipMessage(message, opt)) return;
-  const now = utcNowIso();
-  insertLog(db, buildLogRecord(message, "edit", now));
 }
 
 export async function ingestMessageUpdatePostgres(
@@ -302,16 +243,6 @@ export async function ingestMessageUpdatePostgres(
   await insertLogPostgres(pool, buildLogRecord(message, "edit", now));
 }
 
-export function ingestMessageDelete(
-  db: DatabaseLib.Database,
-  message: Message | PartialMessage,
-  opt: MessageLogIngestOptions,
-): void {
-  if (shouldSkipMessage(message, opt)) return;
-  const now = utcNowIso();
-  insertLog(db, buildLogRecord(message, "delete", now));
-}
-
 export async function ingestMessageDeletePostgres(
   pool: Pool,
   message: Message | PartialMessage,
@@ -321,5 +252,3 @@ export async function ingestMessageDeletePostgres(
   const now = utcNowIso();
   await insertLogPostgres(pool, buildLogRecord(message, "delete", now));
 }
-
-export { ensureMessageLogsSchema };

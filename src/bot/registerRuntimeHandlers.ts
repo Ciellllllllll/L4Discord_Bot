@@ -25,15 +25,15 @@ import { initKuromojiTokenizer } from "../features/senryu/senryu.kuromoji.js";
 import { trackStampMessage, trackStampReaction } from "../features/stamps/trackReaction.js";
 import { createUtilitiesMessageHandlers, runUtilitiesMessageChain } from "../features/utilities/utilitiesMessage.js";
 import { sendMemberLeaveEmbed } from "../features/utilities/leaveNotifier.js";
-import { endOpenVcSessionForMember, endOpenVcSessionForMemberPostgres, reconcileVcTimeSessionsAtReady, reconcileVcTimeSessionsAtReadyPostgres, trackVoiceStateUpdate, trackVoiceStateUpdatePostgres } from "../features/vc/voiceSessionTracker.js";
+import { endOpenVcSessionForMemberPostgres, reconcileVcTimeSessionsAtReadyPostgres, trackVoiceStateUpdatePostgres } from "../features/vc/voiceSessionTracker.js";
 import { reconcileWerewolfGames } from "../features/werewolf/werewolfGame.js";
 import { handleZigAutoReply } from "../features/zig/zigAutoReply.js";
 import { routeButton, routeChannelSelectMenu, routeModal, routeStringSelectMenu } from "../interactions/handleComponents.js";
 import { handleExtendedAutoReplies } from "../message/extendedAutoReply.js";
 import { handlePrefixMessage } from "../message/prefixHandlers.js";
 import { handleAiChatMonitorMessage } from "../features/ai/aiQueryService.js";
-import { hydrateMessageIfPartial, ingestMessageCreate, ingestMessageCreatePostgres, ingestMessageDelete, ingestMessageDeletePostgres, ingestMessageUpdate, ingestMessageUpdatePostgres } from "../features/messageLog/index.js";
-import { scheduleArchiveMessageAttachments, scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
+import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDeletePostgres, ingestMessageUpdatePostgres } from "../features/messageLog/index.js";
+import { scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { deleteExpiredVxTwitterPreviewStates } from "../features/utilities/vxtwitterPreviewState.js";
 
 export type RuntimeHandlerHandle = { shutdown(): Promise<void> };
@@ -256,9 +256,8 @@ export async function initializeJapaneseRuntime(options: {
   }
 }
 
-export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTimePgPool?: import("pg").Pool } = {}): Promise<RuntimeHandlerHandle> {
-  const { config, log, client, db, messageLogPgPool, messageLogSqlite, messageAttachmentPgPool, messageAttachmentStoreSqlite, vcTimeSqlite } = ctx;
-  const { vcTimePgPool } = options;
+export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeHandlerHandle> {
+  const { config, log, client, db, messageLogPgPool, messageAttachmentPgPool, vcTimePgPool } = ctx;
   const utilitiesBundle = createUtilitiesMessageHandlers(ctx);
   const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
   const lifecycle = createRuntimeResourceLifecycle({ vcTemp: ctx.vcTemp, client, shutdownModerationFlows: shutdownModerationFlowRuntimes });
@@ -294,13 +293,7 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
       if (lifecycle.isClosed()) return;
       await startupReport.run("werewolf game reconciliation", () => reconcileWerewolfGames(ctx));
       if (lifecycle.isClosed()) return;
-      await startupReport.run("VC session reconciliation", async () => {
-        if (vcTimePgPool) {
-          await reconcileVcTimeSessionsAtReadyPostgres(client, vcTimePgPool, config.GUILD_ID);
-        } else {
-          reconcileVcTimeSessionsAtReady(client, vcTimeSqlite!, config.GUILD_ID);
-        }
-      });
+      await startupReport.run("VC session reconciliation", () => reconcileVcTimeSessionsAtReadyPostgres(client, vcTimePgPool, config.GUILD_ID));
       if (lifecycle.isClosed()) return;
       await startupReport.run("temporary VC tracking restore", () => ctx.vcTemp.restoreFromDatabase(g.id));
       if (lifecycle.isClosed()) return;
@@ -411,27 +404,14 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
           excludedChannelIds: ex,
           botUserId: client.user?.id ?? "",
         };
-        if (messageLogPgPool) {
-          await ingestMessageCreatePostgres(messageLogPgPool, message, messageLogOptions);
-        } else {
-          ingestMessageCreate(messageLogSqlite!, message, messageLogOptions);
-        }
+        await ingestMessageCreatePostgres(messageLogPgPool, message, messageLogOptions);
         if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-          if (messageAttachmentPgPool) {
-            scheduleArchiveMessageAttachmentsPostgres(
-              messageAttachmentPgPool,
-              config.MESSAGE_ATTACHMENT_FILES_DIR,
-              message,
-              log,
-            );
-          } else {
-            scheduleArchiveMessageAttachments(
-              messageAttachmentStoreSqlite,
-              config.MESSAGE_ATTACHMENT_FILES_DIR,
-              message,
-              log,
-            );
-          }
+          scheduleArchiveMessageAttachmentsPostgres(
+            messageAttachmentPgPool,
+            config.MESSAGE_ATTACHMENT_FILES_DIR,
+            message,
+            log,
+          );
         }
         await trackStampMessage(message, ctx);
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
@@ -462,27 +442,14 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
         excludedChannelIds: ex,
         botUserId: client.user?.id ?? "",
       };
-      if (messageLogPgPool) {
-        await ingestMessageUpdatePostgres(messageLogPgPool, message, messageLogOptions);
-      } else {
-        ingestMessageUpdate(messageLogSqlite!, message, messageLogOptions);
-      }
+      await ingestMessageUpdatePostgres(messageLogPgPool, message, messageLogOptions);
       if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        if (messageAttachmentPgPool) {
-          scheduleArchiveMessageAttachmentsPostgres(
-            messageAttachmentPgPool,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            message,
-            log,
-          );
-        } else {
-          scheduleArchiveMessageAttachments(
-            messageAttachmentStoreSqlite,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            message,
-            log,
-          );
-        }
+        scheduleArchiveMessageAttachmentsPostgres(
+          messageAttachmentPgPool,
+          config.MESSAGE_ATTACHMENT_FILES_DIR,
+          message,
+          log,
+        );
       }
     } catch (err) {
       log.error({ err }, "messageUpdate");
@@ -501,27 +468,14 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
         excludedChannelIds: ex,
         botUserId: client.user?.id ?? "",
       };
-      if (messageLogPgPool) {
-        await ingestMessageDeletePostgres(messageLogPgPool, target, messageLogOptions);
-      } else {
-        ingestMessageDelete(messageLogSqlite!, target, messageLogOptions);
-      }
+      await ingestMessageDeletePostgres(messageLogPgPool, target, messageLogOptions);
       if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        if (messageAttachmentPgPool) {
-          scheduleArchiveMessageAttachmentsPostgres(
-            messageAttachmentPgPool,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            target,
-            log,
-          );
-        } else {
-          scheduleArchiveMessageAttachments(
-            messageAttachmentStoreSqlite,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            target,
-            log,
-          );
-        }
+        scheduleArchiveMessageAttachmentsPostgres(
+          messageAttachmentPgPool,
+          config.MESSAGE_ATTACHMENT_FILES_DIR,
+          target,
+          log,
+        );
       }
     } catch (err) {
       log.error({ err }, "messageDelete");
@@ -540,13 +494,9 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
 
   client.on("voiceStateUpdate", (oldS, newS) => {
     try {
-      if (vcTimePgPool) {
-        void trackVoiceStateUpdatePostgres(vcTimePgPool, oldS, newS, config.GUILD_ID).catch((err) => {
-          log.error({ err }, "voiceStateUpdate postgres tracking");
-        });
-      } else {
-        trackVoiceStateUpdate(vcTimeSqlite!, oldS, newS, config.GUILD_ID);
-      }
+      void trackVoiceStateUpdatePostgres(vcTimePgPool, oldS, newS, config.GUILD_ID).catch((err) => {
+        log.error({ err }, "voiceStateUpdate postgres tracking");
+      });
       ctx.vcTemp.onVoiceStateUpdate(oldS, newS);
     } catch (err) {
       log.error({ err }, "voiceStateUpdate");
@@ -573,11 +523,7 @@ export async function registerRuntimeHandlers(ctx: BotContext, options: { vcTime
     try {
       if (member.guild.id !== config.GUILD_ID) return;
       await getDetecterService(ctx).onGuildMemberRemove(member);
-      if (vcTimePgPool) {
-        await endOpenVcSessionForMemberPostgres(vcTimePgPool, member.guild.id, member.id);
-      } else {
-        endOpenVcSessionForMember(vcTimeSqlite!, member.guild.id, member.id);
-      }
+      await endOpenVcSessionForMemberPostgres(vcTimePgPool, member.guild.id, member.id);
       await sendMemberLeaveEmbed(ctx, member);
     } catch (err) {
       log.error({ err }, "guildMemberRemove");

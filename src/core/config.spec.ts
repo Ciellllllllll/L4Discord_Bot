@@ -8,7 +8,7 @@ function baseEnv(extra: Record<string, string | undefined> = {}): NodeJS.Process
     GUILD_ID: "guild",
     OWNER_ID: "owner",
     ADMIN_ROLE_ID: "admin",
-    DB_DRIVER: "postgres",
+    BOT_PROFILE: "production",
     DATABASE_URL: "postgres://user:pass@127.0.0.1:5432/l4discord_test",
     ...extra,
   };
@@ -16,7 +16,7 @@ function baseEnv(extra: Record<string, string | undefined> = {}): NodeJS.Process
 
 const productionConfig = loadConfig(
   baseEnv({
-    PROFILE: "production",
+    BOT_PROFILE: "production",
     GAME_DEAL_CHANNEL_ID: "common-game-deal-channel",
     GAME_DEAL_NOTIFY_ROLE_ID: "common-game-deal-role",
     STEAM_WEB_API_KEY: "common-steam-key",
@@ -75,7 +75,7 @@ assert.equal(productionConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 20000);
 
 const debugConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     GAME_DEAL_CHANNEL_ID: "common-game-deal-channel",
     GAME_DEAL_NOTIFY_ROLE_ID: "common-game-deal-role",
     STEAM_WEB_API_KEY: "common-steam-key",
@@ -134,7 +134,7 @@ assert.equal(debugConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 12000);
 
 const fallbackConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     GAME_DEAL_CHANNEL_ID: "common-game-deal-channel",
     GAME_DEAL_NOTIFY_ROLE_ID: "common-game-deal-role",
   }),
@@ -160,7 +160,7 @@ assert.equal(fallbackConfig.BOKETE_API_BASE_URL, "https://bokete-api-worker.ciel
 assert.equal(fallbackConfig.BOKETE_REQUEST_TIMEOUT_MS, 10000);
 
 const boketeProductionConfig = loadConfig(baseEnv({
-  PROFILE: "production",
+  BOT_PROFILE: "production",
   BOKETE_API_BASE_URL: "https://common.bokete.example",
   BOKETE_REQUEST_TIMEOUT_MS: "5000",
   PRODUCTION_BOKETE_API_BASE_URL: "https://production.bokete.example",
@@ -173,7 +173,7 @@ assert.throws(() => loadConfig(baseEnv({ BOKETE_API_BASE_URL: "not a url" })), /
 for (const value of ["0", "false", "off", "no"]) {
   const youtubeDisabledConfig = loadConfig(
     baseEnv({
-      PROFILE: "debug",
+      BOT_PROFILE: "debug",
       YOUTUBE_PREVIEW_ENABLED: value,
     }),
   );
@@ -183,7 +183,7 @@ for (const value of ["0", "false", "off", "no"]) {
 for (const value of ["0", "false", "off", "no"]) {
   const youtubeYtdlpDisabledConfig = loadConfig(
     baseEnv({
-      PROFILE: "debug",
+      BOT_PROFILE: "debug",
       YOUTUBE_YTDLP_ENABLED: value,
     }),
   );
@@ -192,7 +192,7 @@ for (const value of ["0", "false", "off", "no"]) {
 
 const youtubeEmptyConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     YOUTUBE_PREVIEW_ENABLED: "",
     YOUTUBE_REQUEST_TIMEOUT_MS: "",
     YOUTUBE_YTDLP_ENABLED: "",
@@ -208,7 +208,7 @@ assert.equal(youtubeEmptyConfig.YOUTUBE_YTDLP_PATH, "yt-dlp");
 assert.equal(youtubeEmptyConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 15000);
 
 const youtubeNullApiKeyConfig = loadConfig({
-  ...baseEnv({ PROFILE: "debug" }),
+  ...baseEnv({ BOT_PROFILE: "debug" }),
   YOUTUBE_DATA_API_KEY: null,
 } as unknown as NodeJS.ProcessEnv);
 
@@ -216,7 +216,7 @@ assert.equal(youtubeNullApiKeyConfig.YOUTUBE_DATA_API_KEY, "");
 
 const youtubeTimeoutConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     YOUTUBE_REQUEST_TIMEOUT_MS: "30000",
   }),
 );
@@ -224,17 +224,17 @@ const youtubeTimeoutConfig = loadConfig(
 assert.equal(youtubeTimeoutConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 30000);
 
 assert.throws(
-  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_REQUEST_TIMEOUT_MS: "999" })),
+  () => loadConfig(baseEnv({ BOT_PROFILE: "debug", YOUTUBE_REQUEST_TIMEOUT_MS: "999" })),
   /YOUTUBE_REQUEST_TIMEOUT_MS/,
 );
 assert.throws(
-  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_REQUEST_TIMEOUT_MS: "30001" })),
+  () => loadConfig(baseEnv({ BOT_PROFILE: "debug", YOUTUBE_REQUEST_TIMEOUT_MS: "30001" })),
   /YOUTUBE_REQUEST_TIMEOUT_MS/,
 );
 
 const youtubeYtdlpTimeoutConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     YOUTUBE_YTDLP_TIMEOUT_MS: "30000",
   }),
 );
@@ -242,17 +242,17 @@ const youtubeYtdlpTimeoutConfig = loadConfig(
 assert.equal(youtubeYtdlpTimeoutConfig.YOUTUBE_YTDLP_TIMEOUT_MS, 30000);
 
 assert.throws(
-  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_YTDLP_TIMEOUT_MS: "999" })),
+  () => loadConfig(baseEnv({ BOT_PROFILE: "debug", YOUTUBE_YTDLP_TIMEOUT_MS: "999" })),
   /YOUTUBE_YTDLP_TIMEOUT_MS/,
 );
 assert.throws(
-  () => loadConfig(baseEnv({ PROFILE: "debug", YOUTUBE_YTDLP_TIMEOUT_MS: "30001" })),
+  () => loadConfig(baseEnv({ BOT_PROFILE: "debug", YOUTUBE_YTDLP_TIMEOUT_MS: "30001" })),
   /YOUTUBE_YTDLP_TIMEOUT_MS/,
 );
 
 const localLlmConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     AI_TEMPERATURE: "0.42",
     R18_CHANNEL_ID: "r18-channel",
     LOCAL_LLM_API_BASE: "http://127.0.0.1:8080/v1",
@@ -276,7 +276,7 @@ assert.equal(localLlmConfig.LOCAL_LLM_TEMPERATURE, 1.1);
 
 const localLlmTemperatureFallbackConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     AI_TEMPERATURE: "0.33",
     LOCAL_LLM_TEMPERATURE: "",
   }),
@@ -286,27 +286,40 @@ assert.equal(localLlmTemperatureFallbackConfig.LOCAL_LLM_TEMPERATURE, 0.33);
 
 const suffixedProductionConfig = loadConfig(
   baseEnv({
-    PROFILE: "production",
+    BOT_PROFILE: "production",
     GAME_DEAL_CHANNEL_ID: "common-game-deal-channel",
     GAME_DEAL_CHANNEL_ID_PRODUCTION: "suffixed-production-game-deal-channel",
     GAME_DEAL_CHANNEL_ID_DEBUG: "suffixed-debug-game-deal-channel",
   }),
 );
 
-assert.equal(suffixedProductionConfig.GAME_DEAL_CHANNEL_ID, "suffixed-production-game-deal-channel");
+assert.equal(suffixedProductionConfig.GAME_DEAL_CHANNEL_ID, "common-game-deal-channel");
 
 const suffixedDebugConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     GAME_DEAL_CHANNEL_ID: "common-game-deal-channel",
     GAME_DEAL_CHANNEL_ID_PRODUCTION: "suffixed-production-game-deal-channel",
     GAME_DEAL_CHANNEL_ID_DEBUG: "suffixed-debug-game-deal-channel",
   }),
 );
 
-assert.equal(suffixedDebugConfig.GAME_DEAL_CHANNEL_ID, "suffixed-debug-game-deal-channel");
+assert.equal(suffixedDebugConfig.GAME_DEAL_CHANNEL_ID, "common-game-deal-channel");
 
-const openAiDefaultsConfig = loadConfig(baseEnv({ PROFILE: "production" }));
+assert.throws(
+  () => loadConfig(baseEnv({ BOT_PROFILE: undefined, PROFILE: "debug" })),
+  /BOT_PROFILE/,
+);
+assert.throws(
+  () => loadConfig(baseEnv({ BOT_PROFILE: undefined, APP_ENV: "debug" })),
+  /BOT_PROFILE/,
+);
+assert.throws(
+  () => loadConfig(baseEnv({ BOT_PROFILE: "prod" })),
+  /BOT_PROFILE/,
+);
+
+const openAiDefaultsConfig = loadConfig(baseEnv({ BOT_PROFILE: "production" }));
 
 assert.equal(openAiDefaultsConfig.OPENAI_API_KEY, "");
 assert.equal(openAiDefaultsConfig.OPENAI_ADMIN_KEY, "");
@@ -315,13 +328,12 @@ assert.equal(openAiDefaultsConfig.OPENAI_API_BASE, "https://api.openai.com/v1");
 assert.equal(openAiDefaultsConfig.OPENAI_MODEL_GPT56, "gpt-5.6-terra");
 assert.equal(openAiDefaultsConfig.OPENAI_MODEL_GPT54_MINI, "gpt-5.4-mini-2026-03-17");
 assert.equal(openAiDefaultsConfig.OPENAI_REASONING_EFFORT, "high");
-assert.equal(openAiDefaultsConfig.OPENAI_DAILY_TOKEN_LIMIT, 2_500_000);
 assert.equal(openAiDefaultsConfig.OPENAI_FALLBACK_THRESHOLD, 2_400_000);
 assert.equal(openAiDefaultsConfig.OPENAI_USAGE_CACHE_MS, 30_000);
 assert.equal(openAiDefaultsConfig.OPENAI_MAX_COMPLETION_TOKENS, 8_192);
 
 const openAiNullKeysConfig = loadConfig({
-  ...baseEnv({ PROFILE: "production" }),
+  ...baseEnv({ BOT_PROFILE: "production" }),
   OPENAI_API_KEY: null,
   OPENAI_ADMIN_KEY: null,
   OPENAI_PROJECT_ID: null,
@@ -333,7 +345,7 @@ assert.equal(openAiNullKeysConfig.OPENAI_PROJECT_ID, "");
 
 const openAiProfileConfig = loadConfig(
   baseEnv({
-    PROFILE: "debug",
+    BOT_PROFILE: "debug",
     OPENAI_API_KEY: "common-api-key",
     OPENAI_ADMIN_KEY: "common-admin-key",
     OPENAI_PROJECT_ID: "common-project",
@@ -341,7 +353,6 @@ const openAiProfileConfig = loadConfig(
     OPENAI_MODEL_GPT56: "common-gpt56-model",
     OPENAI_MODEL_GPT54_MINI: "common-gpt54-mini-model",
     OPENAI_REASONING_EFFORT: "low",
-    OPENAI_DAILY_TOKEN_LIMIT: "1000000",
     OPENAI_FALLBACK_THRESHOLD: "900000",
     OPENAI_USAGE_CACHE_MS: "1000",
     OPENAI_MAX_COMPLETION_TOKENS: "1024",
@@ -352,7 +363,6 @@ const openAiProfileConfig = loadConfig(
     DEBUG_OPENAI_MODEL_GPT56: "debug-gpt56-model",
     DEBUG_OPENAI_MODEL_GPT54_MINI: "debug-gpt54-mini-model",
     DEBUG_OPENAI_REASONING_EFFORT: "xhigh",
-    DEBUG_OPENAI_DAILY_TOKEN_LIMIT: "3000000",
     DEBUG_OPENAI_FALLBACK_THRESHOLD: "2900000",
     DEBUG_OPENAI_USAGE_CACHE_MS: "0",
     DEBUG_OPENAI_MAX_COMPLETION_TOKENS: "4096",
@@ -366,7 +376,6 @@ assert.equal(openAiProfileConfig.OPENAI_API_BASE, "https://debug.openai.example/
 assert.equal(openAiProfileConfig.OPENAI_MODEL_GPT56, "debug-gpt56-model");
 assert.equal(openAiProfileConfig.OPENAI_MODEL_GPT54_MINI, "debug-gpt54-mini-model");
 assert.equal(openAiProfileConfig.OPENAI_REASONING_EFFORT, "xhigh");
-assert.equal(openAiProfileConfig.OPENAI_DAILY_TOKEN_LIMIT, 3_000_000);
 assert.equal(openAiProfileConfig.OPENAI_FALLBACK_THRESHOLD, 2_900_000);
 assert.equal(openAiProfileConfig.OPENAI_USAGE_CACHE_MS, 0);
 assert.equal(openAiProfileConfig.OPENAI_MAX_COMPLETION_TOKENS, 4_096);
@@ -382,19 +391,7 @@ const openAiNewModelPrecedenceConfig = loadConfig(baseEnv({
 }));
 assert.equal(openAiNewModelPrecedenceConfig.OPENAI_MODEL_GPT56, "new-terra-model");
 
-assert.throws(
-  () =>
-    loadConfig(
-      baseEnv({
-        OPENAI_DAILY_TOKEN_LIMIT: "1000",
-        OPENAI_FALLBACK_THRESHOLD: "1001",
-      }),
-    ),
-  /OPENAI_FALLBACK_THRESHOLD must be less than or equal to OPENAI_DAILY_TOKEN_LIMIT/,
-);
-
 for (const [key, value] of [
-  ["OPENAI_DAILY_TOKEN_LIMIT", "0"],
   ["OPENAI_FALLBACK_THRESHOLD", "0"],
   ["OPENAI_MAX_COMPLETION_TOKENS", "0"],
 ] as const) {
