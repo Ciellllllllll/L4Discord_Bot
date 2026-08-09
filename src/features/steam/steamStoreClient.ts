@@ -3,7 +3,7 @@ import { load, type CheerioAPI } from "cheerio";
 import type pino from "pino";
 import type { SteamAppDetails, SteamSearchItem } from "./steamFreeTypes.js";
 
-const SEARCH_URL = "https://store.steampowered.com/search/?maxprice=free&specials=1&cc=jp&l=japanese";
+const SEARCH_URL = "https://store.steampowered.com/search/?hwtype=0&maxprice=free&category1=998&specials=1&ndl=1&cc=jp&l=japanese";
 const APPDETAILS_URL = "https://store.steampowered.com/api/appdetails";
 const USER_AGENT = "L4DiscordBot/0.1 SteamFreeWatcher (+https://store.steampowered.com/)";
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -57,6 +57,7 @@ type AppDetailsResponse = Record<
       is_free?: unknown;
       header_image?: unknown;
       capsule_image?: unknown;
+      short_description?: unknown;
       price_overview?: {
         currency?: unknown;
         initial?: unknown;
@@ -96,18 +97,37 @@ function parseSearchItem($: CheerioAPI, row: Parameters<CheerioAPI>[0]): SteamSe
   if (!appid) return null;
   const name = normalizedText($row.find(".title").first().text());
   if (!name) return null;
-  const discountRaw = normalizedText($row.find(".search_discount").first().text());
-  const discountPercent = Number(discountRaw.match(/-?(\d+)%/)?.[1] ?? NaN);
-  const priceBlock = normalizedText($row.find(".search_price").first().text());
+  const discountBlock = $row.find(".discount_block").first();
+  const discountRaw = normalizedText($row.find(".discount_pct").first().text() || $row.find(".search_discount").first().text());
+  const dataDiscount = Number(discountBlock.attr("data-discount") ?? NaN);
+  const discountPercent = Number.isFinite(dataDiscount)
+    ? dataDiscount
+    : Number(discountRaw.match(/-?(\d+)%/)?.[1] ?? NaN);
+  const priceBlock = normalizedText(
+    $row.find(".search_price_discount_combined").first().text() || $row.find(".search_price").first().text(),
+  );
+  const discountLabel = normalizedText(discountBlock.attr("aria-label") ?? "");
+  if (!priceBlock && !discountRaw && !discountLabel && !Number.isFinite(dataDiscount)) return null;
+  const originalPriceBlock = normalizedText($row.find(".discount_original_price").first().text());
+  const finalPriceBlock = normalizedText($row.find(".discount_final_price").first().text());
   const priceNumbers = [...priceBlock.matchAll(/[¥￥]\s*([\d,]+)/g)].map((m) => Number(m[1]!.replace(/,/g, "")));
+  const hasFreePriceMarker = /free|無料/i.test(priceBlock) || /free|無料/i.test(discountLabel);
+  const finalPrice = parsePriceYen(finalPriceBlock)
+    ?? (hasFreePriceMarker ? 0 : priceNumbers.length > 1 ? priceNumbers[priceNumbers.length - 1]! : parsePriceYen(priceBlock));
+  const originalPrice = parsePriceYen(originalPriceBlock)
+    ?? (priceNumbers.length > 1
+      ? priceNumbers[0]!
+      : hasFreePriceMarker && priceNumbers.length > 0
+        ? priceNumbers[0]!
+        : null);
   return {
     appid,
     name,
     storeUrl: (href || `https://store.steampowered.com/app/${appid}/`).split("?")[0] ?? href,
     discountPercent: Number.isFinite(discountPercent) ? discountPercent : null,
-    finalPrice: priceNumbers.length > 0 ? priceNumbers[priceNumbers.length - 1]! : parsePriceYen(priceBlock),
-    originalPrice: priceNumbers.length > 1 ? priceNumbers[0]! : null,
-    rawPriceText: priceBlock,
+    finalPrice,
+    originalPrice,
+    rawPriceText: priceBlock || discountLabel,
   };
 }
 
@@ -167,6 +187,7 @@ function normalizeDetails(appid: string, raw: AppDetailsResponse[string]): Steam
     isFree: typeof d.is_free === "boolean" ? d.is_free : undefined,
     headerImage: typeof d.header_image === "string" ? d.header_image : undefined,
     capsuleImage: typeof d.capsule_image === "string" ? d.capsule_image : undefined,
+    shortDescription: typeof d.short_description === "string" ? d.short_description : undefined,
     priceOverview: po
       ? {
           currency: typeof po.currency === "string" ? po.currency : undefined,
@@ -216,7 +237,11 @@ export class SteamStoreClient {
       const html = await steamSearchLimiter.schedule(() => withTimeout((signal) => fetchText(SEARCH_URL, { signal }), options.signal));
       const $ = load(html);
       const rows = $("a.search_result_row").toArray();
-      for (const item of rows.map((row) => parseSearchItem($, row)).filter((v): v is SteamSearchItem => v !== null)) {
+      const parsedItems = rows.map((row) => parseSearchItem($, row)).filter((v): v is SteamSearchItem => v !== null);
+      if (rows.length > 0 && parsedItems.length === 0) {
+        throw new Error("Steam search page contained rows but no valid items");
+      }
+      for (const item of parsedItems) {
         if (!byAppid.has(item.appid)) byAppid.set(item.appid, item);
         if (byAppid.size >= limit) break;
       }
@@ -225,6 +250,7 @@ export class SteamStoreClient {
         throw new SteamSearchUnavailableError("Steam search source unavailable", err.status, err.url, err.bodyPreview);
       }
       this.log.warn({ err, url: SEARCH_URL }, "steam search fetch or parse failed");
+      throw err;
     }
     return [...byAppid.values()].slice(0, limit);
   }
@@ -252,8 +278,11 @@ export class SteamStoreClient {
         if (result.value.details) out.set(result.value.appid, result.value.details);
       } else {
         const reason = result.reason as { appid?: unknown; err?: unknown };
+        const error = reason.err ?? result.reason;
+        if (options.signal?.aborted) throw options.signal.reason ?? error;
+        if (error instanceof SteamHttpError && error.status === 403) throw error;
         this.log.warn(
-          { appid: reason.appid, ...appdetailsSingleErrorLogFields(reason.err ?? result.reason) },
+          { appid: reason.appid, ...appdetailsSingleErrorLogFields(error) },
           "steam appdetails single failed",
         );
       }

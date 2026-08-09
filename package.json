@@ -39,6 +39,7 @@
     "semver": "^7.6.3",
     "tsx": "^4.19.2",
     "ulid": "^2.3.0",
+    "youtubei.js": "^17.2.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

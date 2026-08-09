@@ -1,13 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { URL } from "node:url";
-import type { Message } from "discord.js";
+import { MessageFlags, type APIEmbed, type Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 import { COLD_LAUGH_KEYWORD } from "./coldLaughConstants.js";
 import { buildVxTwitterReplyPayloads, collectVxTwitterReplyTargets, type VxTwitterPreviewPayload } from "./vxtwitterPreview.js";
-import { buildYouTubeReplyPayloads, collectYouTubeReplyTargets } from "./youtubePreview.js";
+import {
+  buildYouTubeComponentsOnlyFallbackPayload,
+  buildYouTubeNativeEmbedPayload,
+  buildYouTubeReplyPayloads,
+  collectYouTubeReplyTargets,
+  getYouTubeNativeEmbedVideoUrl,
+  parseYouTubeUrl,
+} from "./youtubePreview.js";
 import { saveVxTwitterPreviewState } from "./vxtwitterPreviewState.js";
 
 const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
@@ -31,6 +38,7 @@ const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const BOOST_TIER_2_ATTACHMENT_SIZE_LIMIT_BYTES = 50 * 1000 * 1000;
 const BOOST_TIER_3_ATTACHMENT_SIZE_LIMIT_BYTES = 100 * 1000 * 1000;
+const NATIVE_EMBED_WAIT_MS = 3_000;
 
 function stripUrlTail(urlText: string): string {
   let u = String(urlText || "").trim();
@@ -93,6 +101,57 @@ function isYouTubeLikeUrl(urlText: string): boolean {
   } catch {
     return false;
   }
+}
+
+function toApiEmbed(value: unknown): APIEmbed | null {
+  if (!value || typeof value !== "object") return null;
+  const toJSON = (value as { toJSON?: () => unknown }).toJSON;
+  const json = typeof toJSON === "function" ? toJSON.call(value) : value;
+  return json && typeof json === "object" ? json as APIEmbed : null;
+}
+
+function nativeYouTubeEmbedForTarget(
+  message: Message,
+  target: { canonicalUrl: string },
+  allowUrllessVideo: boolean,
+): APIEmbed | null {
+  for (const rawEmbed of message.embeds ?? []) {
+    const embed = toApiEmbed(rawEmbed);
+    if (!embed) continue;
+    const parsedUrl = embed.url ? parseYouTubeUrl(embed.url) : null;
+    if (parsedUrl?.canonicalUrl === target.canonicalUrl || (allowUrllessVideo && !embed.url && embed.type === "video")) return embed;
+  }
+  return null;
+}
+
+async function waitForNativeYouTubeEmbed(
+  message: Message,
+  target: { canonicalUrl: string },
+  client: { on?: (...args: unknown[]) => unknown; off?: (...args: unknown[]) => unknown } | undefined,
+  allowUrllessVideo: boolean,
+): Promise<APIEmbed | null> {
+  const existing = nativeYouTubeEmbedForTarget(message, target, allowUrllessVideo);
+  if (existing) return existing;
+  if (!client?.on || !client.off) return null;
+
+  return await new Promise<APIEmbed | null>((resolve) => {
+    let settled = false;
+    const finish = (embed: APIEmbed | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.off?.("messageUpdate", onUpdate);
+      resolve(embed);
+    };
+    const onUpdate = (_oldMessage: unknown, newMessage: unknown): void => {
+      if (!newMessage || typeof newMessage !== "object") return;
+      if ((newMessage as { id?: string }).id !== message.id) return;
+      const embed = nativeYouTubeEmbedForTarget(newMessage as Message, target, allowUrllessVideo);
+      if (embed) finish(embed);
+    };
+    const timer = setTimeout(() => finish(null), NATIVE_EMBED_WAIT_MS);
+    client.on?.("messageUpdate", onUpdate);
+  });
 }
 
 function countKeywordOccurrences(text: string, keyword: string): number {
@@ -273,6 +332,17 @@ export class LinkAndColdLaugh {
       return;
     }
 
+    const nativeYouTubeEmbeds = new Map<string, APIEmbed | null>();
+    await Promise.all(youtubeReplyTargets.map(async (target) => {
+      nativeYouTubeEmbeds.set(
+        target.canonicalUrl,
+        await waitForNativeYouTubeEmbed(message, target, this.ctx.client as unknown as {
+          on?: (...args: unknown[]) => unknown;
+          off?: (...args: unknown[]) => unknown;
+        } | undefined, youtubeReplyTargets.length === 1),
+      );
+    }));
+
     try {
       await message.suppressEmbeds(true);
     } catch {}
@@ -303,14 +373,45 @@ export class LinkAndColdLaugh {
       }
     }
 
-    const youtubeReplyPayloads = await this.deps.buildYouTubeReplyPayloads(youtubeReplyTargets, {
-      apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
-      requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
-      attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
-      ytdlpEnabled: this.ctx.config.YOUTUBE_YTDLP_ENABLED,
-      ytdlpPath: this.ctx.config.YOUTUBE_YTDLP_PATH,
-      ytdlpTimeoutMs: this.ctx.config.YOUTUBE_YTDLP_TIMEOUT_MS,
-      log: this.ctx.log,
+    const nativeYouTubeTargets = youtubeReplyTargets.filter((target) => {
+      const embed = nativeYouTubeEmbeds.get(target.canonicalUrl);
+      return Boolean(embed && getYouTubeNativeEmbedVideoUrl(embed));
+    });
+    const failedNativeYouTubeTargets = new Set<string>();
+    for (const target of nativeYouTubeTargets) {
+      const embed = nativeYouTubeEmbeds.get(target.canonicalUrl);
+      if (!embed) continue;
+      try {
+        await message.reply(buildYouTubeNativeEmbedPayload(embed, target.canonicalUrl));
+      } catch (err) {
+        failedNativeYouTubeTargets.add(target.canonicalUrl);
+        this.ctx.log.warn({ err: String(err) }, "native youtube preview reply error");
+      }
+    }
+
+    const fallbackYouTubeTargets = youtubeReplyTargets.filter((target) => {
+      const embed = nativeYouTubeEmbeds.get(target.canonicalUrl);
+      return failedNativeYouTubeTargets.has(target.canonicalUrl)
+        || !embed
+        || !getYouTubeNativeEmbedVideoUrl(embed);
+    });
+    const resolvedYoutubeReplyPayloads = fallbackYouTubeTargets.length > 0
+      ? await this.deps.buildYouTubeReplyPayloads(fallbackYouTubeTargets, {
+        apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
+        requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+        attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
+        componentsOnly: true,
+        log: this.ctx.log,
+      })
+      : [];
+    const youtubeReplyPayloads = fallbackYouTubeTargets.map((target, index) => {
+      const resolved = resolvedYoutubeReplyPayloads[index];
+      if (resolved && (resolved as { flags?: number }).flags === MessageFlags.IsComponentsV2) return resolved;
+      const nativeEmbed = nativeYouTubeEmbeds.get(target.canonicalUrl);
+      if (nativeEmbed && !failedNativeYouTubeTargets.has(target.canonicalUrl)) {
+        return buildYouTubeNativeEmbedPayload(nativeEmbed, target.canonicalUrl);
+      }
+      return buildYouTubeComponentsOnlyFallbackPayload(target.canonicalUrl);
     });
     for (const payload of youtubeReplyPayloads) {
       try {
