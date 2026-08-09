@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ComponentType, MessageFlags } from "discord.js";
 import {
   LinkAndColdLaugh,
   coldLaughHitsForMessageContent,
@@ -6,6 +7,7 @@ import {
   extractYouTubeLinks,
   stripLinksForColdLaughContent,
 } from "./linkAndColdLaugh.js";
+import { buildYouTubePreviewPayload } from "./youtubePreview.js";
 
 function createDb(settings: Record<string, unknown> = {}): unknown {
   return {
@@ -156,10 +158,9 @@ async function run(): Promise<void> {
   };
   await new LinkAndColdLaugh(createCtx() as never).onMessage(message as never);
   assert.equal(suppressCalls, 1);
-  assert.deepEqual(replies.map((payload) => (payload as { content?: string }).content), [
-    "https://vxtwitter.com/profile",
-    "https://www.youtube.com/c/custom",
-  ]);
+  assert.equal((replies[0] as { content?: string }).content, "https://vxtwitter.com/profile");
+  assert.equal((replies[1] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
+  assert.equal("content" in (replies[1] as object), false);
 
   const youtubeDisabledReplies: unknown[] = [];
   const youtubeDisabledMessage = {
@@ -184,11 +185,7 @@ async function run(): Promise<void> {
       injectedReplies.push(payload);
     },
   };
-  const injectedCtx = createCtx({
-    YOUTUBE_YTDLP_ENABLED: false,
-    YOUTUBE_YTDLP_PATH: "custom-ytdlp",
-    YOUTUBE_YTDLP_TIMEOUT_MS: 4321,
-  });
+  const injectedCtx = createCtx();
   await new LinkAndColdLaugh(injectedCtx as never, {
     buildYouTubeReplyPayloads: async (_targets, options) => {
       passedYoutubeOptions.push(options);
@@ -201,15 +198,180 @@ async function run(): Promise<void> {
   assert.deepEqual(passedYoutubeOptions, [{
     apiKey: "",
     requestTimeoutMs: 10,
-    ytdlpEnabled: false,
-    ytdlpPath: "custom-ytdlp",
-    ytdlpTimeoutMs: 4321,
+    componentsOnly: true,
     attachmentSizeLimitBytes: 100_000_000,
     log: (injectedCtx as { log: unknown }).log,
   }]);
-  assert.deepEqual(injectedReplies.map((payload) => (payload as { content?: string }).content), [
-    "youtube injected reply",
+  assert.equal((injectedReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
+  assert.equal("content" in (injectedReplies[0] as object), false);
+
+  let nativeFallbackCalled = false;
+  const nativeReplies: unknown[] = [];
+  const nativeEmbed = {
+    type: "video",
+    title: "Discord標準YouTube Embed",
+    description: "標準説明",
+    url: "https://www.youtube.com/watch?v=native-message",
+    thumbnail: { url: "https://i.ytimg.com/vi/native-message/hqdefault.jpg" },
+    video: {
+      url: "https://www.youtube.com/embed/native-message",
+      proxy_url: "https://media.discordapp.net/attachments/native-message.mp4",
+      content_type: "video/mp4",
+    },
+  };
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async () => {
+      nativeFallbackCalled = true;
+      return [];
+    },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=native-message",
+    embeds: [{ toJSON: () => nativeEmbed }],
+    reply: async (payload: unknown) => {
+      nativeReplies.push(payload);
+    },
+  } as never);
+  assert.equal(nativeFallbackCalled, false);
+  assert.equal(nativeReplies.length, 1);
+  const nativePayload = nativeReplies[0] as { flags?: number; embeds?: unknown[]; components?: Array<{ type?: number; components?: Array<{ type?: number }> }> };
+  assert.equal(nativePayload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(nativePayload.embeds, []);
+  assert.equal(nativePayload.components?.[0]?.type, ComponentType.Container);
+  assert.equal(nativePayload.components?.[0]?.components?.some((component) => component.type === ComponentType.MediaGallery), true);
+
+  let failedNativeFallbackCalled = false;
+  let failedNativeSendAttempts = 0;
+  const failedNativeReplies: unknown[] = [];
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async () => {
+      failedNativeFallbackCalled = true;
+      return [buildYouTubePreviewPayload({
+        kind: "video",
+        url: "https://www.youtube.com/watch?v=native-send-failed",
+        title: "direct media fallback after native failure",
+        thumbnailUrl: "https://i.ytimg.com/vi/native-send-failed/hqdefault.jpg",
+      })];
+    },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=native-send-failed",
+    embeds: [{ toJSON: () => ({ ...nativeEmbed, url: "https://www.youtube.com/watch?v=native-send-failed" }) }],
+    reply: async (payload: unknown) => {
+      failedNativeSendAttempts += 1;
+      if (failedNativeSendAttempts === 1) throw new Error("native payload rejected");
+      failedNativeReplies.push(payload);
+    },
+  } as never);
+  assert.equal(failedNativeFallbackCalled, true);
+  assert.equal(failedNativeReplies.length, 1);
+  assert.equal((failedNativeReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
+
+  let thumbnailNativeFallbackCalled = false;
+  const thumbnailNativeReplies: unknown[] = [];
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async () => {
+      thumbnailNativeFallbackCalled = true;
+      return [buildYouTubePreviewPayload({
+        kind: "video",
+        url: "https://www.youtube.com/watch?v=thumbnail-native",
+        title: "Thumbnail fallback",
+        thumbnailUrl: "https://i.ytimg.com/vi/thumbnail-native/hqdefault.jpg",
+      })];
+    },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=thumbnail-native",
+    embeds: [{
+      toJSON: () => ({
+        type: "video",
+        title: "Thumbnail only native Embed",
+        url: "https://www.youtube.com/watch?v=thumbnail-native",
+        thumbnail: { url: "https://i.ytimg.com/vi/thumbnail-native/hqdefault.jpg" },
+        video: { url: "https://www.youtube.com/embed/thumbnail-native" },
+      }),
+    }],
+    reply: async (payload: unknown) => {
+      thumbnailNativeReplies.push(payload);
+    },
+  } as never);
+  assert.equal(thumbnailNativeFallbackCalled, true);
+  assert.equal(thumbnailNativeReplies.length, 1);
+  assert.equal((thumbnailNativeReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
+
+  let urllessNativeFallbackTargets: string[] = [];
+  const urllessReplies: unknown[] = [];
+  await new LinkAndColdLaugh(injectedCtx as never, {
+    buildYouTubeReplyPayloads: async (targets) => {
+      urllessNativeFallbackTargets = targets.map((target) => target.canonicalUrl);
+      return [];
+    },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=url-less-one youtube.com/watch?v=url-less-two",
+    embeds: [{ toJSON: () => ({ type: "video", video: { url: "https://www.youtube.com/embed/unknown" } }) }],
+    reply: async (payload: unknown) => {
+      urllessReplies.push(payload);
+    },
+  } as never);
+  assert.deepEqual(urllessNativeFallbackTargets, [
+    "https://www.youtube.com/watch?v=url-less-one",
+    "https://www.youtube.com/watch?v=url-less-two",
   ]);
+  assert.equal(urllessReplies.length, 2);
+  for (const payload of urllessReplies) {
+    const container = (payload as { components?: Array<{ components?: Array<{ content?: string }> }> }).components?.[0];
+    assert.equal(container?.components?.some((component) => component.content?.includes("## YouTube動画")), true);
+  }
+
+  const updateListeners: Array<(...args: unknown[]) => void> = [];
+  const delayedClient = {
+    on: (_event: string, listener: (...args: unknown[]) => void) => {
+      updateListeners.push(listener);
+    },
+    off: (_event: string, listener: (...args: unknown[]) => void) => {
+      const index = updateListeners.indexOf(listener);
+      if (index >= 0) updateListeners.splice(index, 1);
+    },
+  };
+  let delayedFallbackCalled = false;
+  const delayedReplies: unknown[] = [];
+  const delayedMessage = {
+    ...message,
+    id: "delayed-native-message",
+    content: "youtube.com/watch?v=delayed-native",
+    embeds: [],
+    reply: async (payload: unknown) => {
+      delayedReplies.push(payload);
+    },
+  };
+  const delayedCtx = { ...(injectedCtx as Record<string, unknown>), client: delayedClient };
+  const delayedRun = new LinkAndColdLaugh(delayedCtx as never, {
+    buildYouTubeReplyPayloads: async () => {
+      delayedFallbackCalled = true;
+      return [];
+    },
+  }).onMessage(delayedMessage as never);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  for (const listener of [...updateListeners]) {
+    listener({ id: delayedMessage.id }, { id: delayedMessage.id, embeds: [] });
+  }
+  assert.equal(delayedFallbackCalled, false);
+  const delayedEmbed = {
+    ...nativeEmbed,
+    url: "https://www.youtube.com/watch?v=delayed-native",
+    video: {
+      ...nativeEmbed.video,
+      proxy_url: "https://media.discordapp.net/attachments/delayed-native.mp4",
+    },
+  };
+  (delayedMessage as { embeds: unknown[] }).embeds = [{ toJSON: () => delayedEmbed }];
+  for (const listener of [...updateListeners]) {
+    listener({ id: delayedMessage.id }, delayedMessage);
+  }
+  await delayedRun;
+  assert.equal(delayedFallbackCalled, false);
+  assert.equal(delayedReplies.length, 1);
 
   let dmYoutubeCalls = 0;
   const dmMessage = {

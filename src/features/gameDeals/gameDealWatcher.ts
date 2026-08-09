@@ -5,7 +5,7 @@ import { componentCardsPayload } from "../panels/componentCard.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
 import { checkSubscriptions, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
 import { createGameDealRepository } from "./postgresGameDealRepository.js";
-import { processSteamVerifyQueue, scanSteamAppListChanges, scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
+import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealSubscriptionHit } from "./gameDealTypes.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 60 * 1000;
@@ -171,10 +171,9 @@ export async function groupSubscriptionNotificationHits(
 }
 
 export async function scanAndNotifyGameDeals(ctx: BotContext): Promise<void> {
-  const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE);
   const steamNowItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
   const scan = await scanCurrentFreeGamesDetailed(ctx);
-  await notifyFreeGameDealItems(ctx, [...steamItems, ...steamNowItems, ...scan.items.filter((item) => item.platform === "epic")]);
+  await notifyFreeGameDealItems(ctx, [...steamNowItems, ...scan.items.filter((item) => item.platform === "epic")]);
 }
 
 async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeItem[], signal?: AbortSignal): Promise<number> {
@@ -319,8 +318,6 @@ async function scanAndNotifySubscriptions(ctx: BotContext, signal?: AbortSignal)
 }
 
 export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_INTERVAL_MS): GameDealWatcherController {
-  let lastSteamAppListAt = 0;
-  let lastSteamVerifyAt = 0;
   let lastSteamNowAt = 0;
   let lastEpicAt = 0;
   let lastSubscriptionAt = 0;
@@ -333,20 +330,6 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
     let notifiedCount = 0;
     try {
       const now = Date.now();
-      if (now - lastSteamAppListAt >= ctx.config.GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS) {
-        lastSteamAppListAt = now;
-        await scanSteamAppListChanges(ctx, signal).catch((err) => { if (!signal.aborted) ctx.log.warn({ err }, "steam app list scheduled scan failed"); });
-      }
-      throwIfAborted(signal);
-      if (now - lastSteamVerifyAt >= ctx.config.GAME_DEAL_STEAM_VERIFY_INTERVAL_MS) {
-        lastSteamVerifyAt = now;
-        const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE, signal).catch((err) => {
-          if (!signal.aborted) ctx.log.warn({ err }, "steam verify scheduled scan failed");
-          return [];
-        });
-        detectedCount += steamItems.length;
-        notifiedCount += await notifyFreeGameDealItems(ctx, steamItems, signal);
-      }
       throwIfAborted(signal);
       if (now - lastSteamNowAt >= ctx.config.GAME_DEAL_STEAM_NOW_INTERVAL_MS) {
         lastSteamNowAt = now;

@@ -78,6 +78,8 @@ function createMainFixture(path: string): void {
       .run("notification_channel_id", "987654321098765433", "2026-01-01T00:00:00.000Z");
     db.prepare("INSERT INTO steam_app_catalog (appid, name, last_modified, price_change_number, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run("123", "Migrated Game", 100, 2, "2026-01-01T00:00:00.000Z", "2026-01-01T00:01:00.000Z");
+    db.prepare("INSERT INTO steam_verify_queue (appid, reason, price_change_number, last_modified, attempts, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("123", "price_change_detected", 2, 100, 1, "2026-01-01T00:02:00.000Z", null, "2026-01-01T00:01:00.000Z", "2026-01-01T00:01:00.000Z");
     db.prepare("INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider, preferred_openai_model, updated_at) VALUES (?, ?, ?, ?)")
       .run("987654321098765432", "deepseek", "gpt54_mini", "2026-01-01T00:00:00.000Z");
     db.prepare(`
@@ -368,7 +370,7 @@ async function run(): Promise<void> {
     const mainMigrationVersions = await adminPool.query<{ version: number }>(
       `SELECT version FROM ${quotePgIdent(schemas.main)}.postgres_schema_migrations ORDER BY version`,
     );
-    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 11 }, (_, index) => index + 1));
+    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 12 }, (_, index) => index + 1));
     await assertPollsStateRevisionSchema(adminPool, schemas.main);
     await assertKyselySchema(
       "main",
@@ -439,8 +441,10 @@ async function run(): Promise<void> {
       assert.equal((await lol.getAccount("user#jp1"))?.enabled, false);
 
       assert.deepEqual(
-        (await mainPool.query<{ appid: string; name: string }>("SELECT appid, name FROM steam_app_catalog WHERE appid = $1", ["123"])).rows,
-        [{ appid: "123", name: "Migrated Game" }],
+        (await mainPool.query<{ catalog: string | null; queue: string | null }>(
+          "SELECT to_regclass('steam_app_catalog') AS catalog, to_regclass('steam_verify_queue') AS queue",
+        )).rows,
+        [{ catalog: null, queue: null }],
       );
       assert.deepEqual(
         (await mainPool.query<{ preferred_provider: string; preferred_openai_model: string }>(

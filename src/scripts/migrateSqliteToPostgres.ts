@@ -7,7 +7,7 @@ import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
 import { applyPostgresMigrations, type PostgresMigration } from "../core/db/postgresMigrations.js";
 import { ensurePostgresAiHistorySchema } from "../features/ai/aiHistorySchema.js";
 import { ensurePostgresAiProviderSchema } from "../features/ai/postgresAiProviderRepository.js";
-import { ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
+import { dropPostgresSteamAppListTables, ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
 import { prepareMessageAttachmentStorePostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { ensurePostgresMessageLogsSchema } from "../features/messageLog/messageLogsSchema.js";
 import { ensurePostgresAutomoderationSchema } from "../features/moderation/automodSchema.js";
@@ -89,6 +89,8 @@ const snowflakeColumns = new Set([
   "review_message_id",
   "hold_thread_id",
 ]);
+
+const retiredMainTables = new Set(["steam_app_catalog", "steam_verify_queue"]);
 
 function sqliteTables(db: Database.Database): string[] {
   const rows = db
@@ -273,6 +275,7 @@ async function ensureCanonicalSchemas(config: ReturnType<typeof loadConfig>): Pr
       `); } },
       { version: 10, name: "youtube_watcher_initial", apply: ensurePostgresYouTubeWatcherSchema },
       { version: 11, name: "pacchi_boolean_columns", apply: migratePostgresPacchiBooleanColumns },
+      { version: 12, name: "drop_steam_app_list_tables", apply: (pool) => dropPostgresSteamAppListTables(pool, config.POSTGRES_MAIN_SCHEMA) },
     ]);
   } finally {
     await mainPool.end();
@@ -311,6 +314,10 @@ async function migrateSource(pool: Awaited<ReturnType<typeof createPgPool>>, sou
   sqlite.defaultSafeIntegers(true);
   try {
     for (const table of sqliteTables(sqlite)) {
+      if (source.label === "main" && retiredMainTables.has(table)) {
+        console.log(`[skip] ${source.label}.${table}: retired Steam AppList table`);
+        continue;
+      }
       const count = await copyTable(pool, sqlite, source.schema, table);
       console.log(`[copy] ${source.label}.${table} -> ${source.schema}.${table}: ${count}`);
     }

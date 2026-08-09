@@ -28,18 +28,6 @@ export type GameDealFreeItem = {
   components?: ActionRowBuilder<ButtonBuilder>[];
 };
 
-export type SteamAppCatalogEntry = {
-  appid: string;
-  name: string;
-  lastModified: number | null;
-  priceChangeNumber: number | null;
-};
-
-export type SteamAppCatalogChange = SteamAppCatalogEntry & {
-  previousLastModified: number | null;
-  previousPriceChangeNumber: number | null;
-};
-
 export type SteamPaidPriceHistory = {
   appid: string;
   title: string | null;
