@@ -15,7 +15,7 @@ import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabas
 import { ensurePostgresAiHistorySchema } from "../features/ai/aiHistorySchema.js";
 import { ensurePostgresAiProviderSchema, PostgresAiProviderBudgetRepository, PostgresAiProviderSettingsRepository } from "../features/ai/postgresAiProviderRepository.js";
 import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
-import { ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
+import { dropPostgresSteamAppListTables, ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
 import { prepareMessageAttachmentStorePostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { ensurePostgresMessageLogsSchema } from "../features/messageLog/messageLogsSchema.js";
@@ -120,6 +120,7 @@ async function createDatabaseRuntimeUnsafe(
     `); } },
     { version: 10, name: "youtube_watcher_initial", apply: ensurePostgresYouTubeWatcherSchema },
     { version: 11, name: "pacchi_boolean_columns", apply: migratePostgresPacchiBooleanColumns },
+    { version: 12, name: "drop_steam_app_list_tables", apply: (pool) => dropPostgresSteamAppListTables(pool, config.POSTGRES_MAIN_SCHEMA) },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);

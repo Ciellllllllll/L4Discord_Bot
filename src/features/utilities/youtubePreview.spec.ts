@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
-import { ButtonStyle, ComponentType, MessageFlags, type APIContainerComponent, type APISectionComponent } from "discord.js";
+import {
+  ButtonStyle,
+  ComponentType,
+  EmbedType,
+  MessageFlags,
+  type APIContainerComponent,
+  type APIEmbed,
+  type APISectionComponent,
+} from "discord.js";
 import {
   buildYouTubeFallbackReply,
+  buildYouTubeNativeEmbedPayload,
   buildYouTubePreviewPayload,
   buildYouTubeReplyPayloads,
   collectYouTubeReplyTargets,
   fetchYouTubePreview,
+  getYouTubeNativeEmbedVideoUrl,
   normalizeYouTubeChannelResponse,
   normalizeYouTubeOEmbedResponse,
   normalizeYouTubePlaylistResponse,
@@ -461,6 +471,68 @@ async function run(): Promise<void> {
   assert.equal(row.components[0]?.label, "YouTubeで開く");
   assert.equal(row.components[0]?.url, "https://www.youtube.com/watch?v=payload");
 
+  const nativeVideoEmbed: APIEmbed = {
+    type: EmbedType.Video,
+    title: "標準Embedの動画",
+    description: "Discordが生成した説明",
+    url: "https://www.youtube.com/watch?v=native-video",
+    provider: { name: "YouTube", url: "https://www.youtube.com" },
+    thumbnail: { url: "https://i.ytimg.com/vi/native-video/hqdefault.jpg" },
+    video: {
+      url: "https://www.youtube.com/embed/native-video",
+      proxy_url: "https://media.discordapp.net/attachments/native-video.mp4",
+      content_type: "video/mp4",
+      width: 1280,
+      height: 720,
+    },
+  };
+  const nativeVideoPayload = buildYouTubeNativeEmbedPayload(nativeVideoEmbed);
+  assert.equal(nativeVideoPayload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(nativeVideoPayload.embeds, []);
+  assert.equal("content" in nativeVideoPayload, false);
+  const nativeVideoContainer = nativeVideoPayload.components[0] as APIContainerComponent;
+  const nativeVideoText = nativeVideoContainer.components
+    .filter((component) => component.type === ComponentType.TextDisplay)
+    .map((component) => component.content)
+    .join("\n");
+  assert.equal(nativeVideoText.includes("標準Embedの動画"), true);
+  assert.equal(nativeVideoText.includes("Discordが生成した説明"), true);
+  const nativeVideoGallery = nativeVideoContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(nativeVideoGallery?.items[0]?.media.url, nativeVideoEmbed.video?.proxy_url);
+  const nativeVideoRow = nativeVideoContainer.components.find((component) => component.type === ComponentType.ActionRow);
+  assert.equal(nativeVideoRow?.components[0]?.type, ComponentType.Button);
+  const nativeVideoButton = nativeVideoRow?.components[0];
+  assert.equal("url" in (nativeVideoButton ?? {}), true);
+  if (nativeVideoButton && "url" in nativeVideoButton) {
+    assert.equal(nativeVideoButton.url, nativeVideoEmbed.url);
+  }
+
+  assert.equal(getYouTubeNativeEmbedVideoUrl({
+    type: EmbedType.Video,
+    url: "https://www.youtube.com/watch?v=proxy-only",
+    thumbnail: { url: "https://i.ytimg.com/vi/proxy-only/hqdefault.jpg" },
+    video: {
+      url: "https://www.youtube.com/embed/proxy-only",
+      proxy_url: "https://media.discordapp.net/attachments/proxy-only",
+    },
+  }), undefined);
+
+  const playerOnlyEmbed: APIEmbed = {
+    type: EmbedType.Video,
+    title: "プレイヤーURLのみ",
+    url: "https://www.youtube.com/watch?v=player-only",
+    thumbnail: { url: "https://i.ytimg.com/vi/player-only/hqdefault.jpg" },
+    video: { url: "https://www.youtube.com/embed/player-only" },
+  };
+  const playerOnlyPayload = buildYouTubeNativeEmbedPayload(playerOnlyEmbed);
+  const playerOnlyContainer = playerOnlyPayload.components[0] as APIContainerComponent;
+  const playerOnlyGallery = playerOnlyContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(playerOnlyGallery?.items[0]?.media.url, playerOnlyEmbed.thumbnail?.url);
+
   const safeFallbackPayload = buildYouTubePreviewPayload(safeFallbackVideo.preview);
   const safeFallbackContainer = safeFallbackPayload.components[0] as APIContainerComponent;
   assert.equal(safeFallbackContainer.components[0]?.type, ComponentType.TextDisplay);
@@ -665,10 +737,14 @@ async function run(): Promise<void> {
     mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/too-large.mp4" }),
   });
   const oversizedResolverPayload = oversizedResolverPayloads[0]!;
-  assert.equal(oversizedResolverPayloads[0]?.flags, undefined);
-  assert.equal(oversizedResolverPayload.content, "https://www.youtube.com/watch?v=media-oversized");
-  assert.equal(oversizedResolverPayload.embeds, undefined);
-  assert.equal(oversizedResolverPayload.components, undefined);
+  assert.equal(oversizedResolverPayload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(oversizedResolverPayload.embeds, []);
+  assert.equal("content" in oversizedResolverPayload, false);
+  assert.equal((oversizedResolverPayload.components?.[0] as APIContainerComponent | undefined)?.type, ComponentType.Container);
+  const oversizedResolverGallery = (oversizedResolverPayload.components?.[0] as APIContainerComponent).components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(oversizedResolverGallery?.items[0]?.media.url, "https://media.example.com/too-large.mp4");
   assert.deepEqual(oversizedResolverPayloads[0]?.allowedMentions, { parse: [], repliedUser: false });
   assert.equal(oversizedResolverPayloads[0]?.files, undefined);
 
@@ -714,10 +790,13 @@ async function run(): Promise<void> {
     mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/stream-too-large.mp4" }),
   });
   const streamOversizedResolverPayload = streamOversizedResolverPayloads[0]!;
-  assert.equal(streamOversizedResolverPayloads[0]?.flags, undefined);
-  assert.equal(streamOversizedResolverPayload.content, "https://www.youtube.com/watch?v=media-stream-oversized");
-  assert.equal(streamOversizedResolverPayload.embeds, undefined);
-  assert.equal(streamOversizedResolverPayload.components, undefined);
+  assert.equal(streamOversizedResolverPayload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(streamOversizedResolverPayload.embeds, []);
+  assert.equal("content" in streamOversizedResolverPayload, false);
+  const streamOversizedResolverGallery = (streamOversizedResolverPayload.components?.[0] as APIContainerComponent).components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(streamOversizedResolverGallery?.items[0]?.media.url, "https://media.example.com/stream-too-large.mp4");
 
   const defaultLimitPayloads = await buildYouTubeReplyPayloads([
     {
@@ -751,10 +830,68 @@ async function run(): Promise<void> {
     mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/default-limit.mp4" }),
   });
   const defaultLimitPayload = defaultLimitPayloads[0]!;
-  assert.equal(defaultLimitPayloads[0]?.flags, undefined);
-  assert.equal(defaultLimitPayload.content, "https://www.youtube.com/watch?v=default-limit");
-  assert.equal(defaultLimitPayload.embeds, undefined);
-  assert.equal(defaultLimitPayload.components, undefined);
+  assert.equal(defaultLimitPayload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(defaultLimitPayload.embeds, []);
+  assert.equal("content" in defaultLimitPayload, false);
+  const defaultLimitGallery = (defaultLimitPayload.components?.[0] as APIContainerComponent).components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(defaultLimitGallery?.items[0]?.media.url, "https://media.example.com/default-limit.mp4");
+
+  const componentsOnlyPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/components-only",
+      canonicalUrl: "https://www.youtube.com/watch?v=components-only",
+      id: "components-only",
+    },
+  ], {
+    apiKey: "key",
+    attachmentSizeLimitBytes: 1024,
+    componentsOnly: true,
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/components-only.mp4") {
+        return new Response(null, {
+          headers: {
+            "content-type": "video/mp4",
+            "content-length": "2048",
+          },
+        });
+      }
+      return jsonResponse({
+        items: [{
+          snippet: {
+            title: "Components only fallback",
+            thumbnails: { high: { url: "https://i.ytimg.com/vi/components-only/hqdefault.jpg" } },
+          },
+          contentDetails: {},
+          statistics: {},
+        }],
+      });
+    },
+    mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/components-only.mp4" }),
+  });
+  const componentsOnlyPayload = componentsOnlyPayloads[0]!;
+  assert.equal(componentsOnlyPayload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(componentsOnlyPayload.embeds, []);
+  assert.equal("content" in componentsOnlyPayload, false);
+  assert.equal((componentsOnlyPayload.components?.[0] as APIContainerComponent | undefined)?.type, ComponentType.Container);
+
+  const componentsOnlyFailedPayloads = await buildYouTubeReplyPayloads([{
+    kind: "video",
+    originalUrl: "https://youtu.be/components-only-failed",
+    canonicalUrl: "https://www.youtube.com/watch?v=components-only-failed",
+    id: "components-only-failed",
+  }], {
+    apiKey: "key",
+    componentsOnly: true,
+    fetcher: async () => jsonResponse({ items: [] }),
+  });
+  const componentsOnlyFailedPayload = componentsOnlyFailedPayloads[0]!;
+  assert.equal(componentsOnlyFailedPayload.flags, MessageFlags.IsComponentsV2);
+  assert.deepEqual(componentsOnlyFailedPayload.embeds, []);
+  assert.equal("content" in componentsOnlyFailedPayload, false);
+  assert.equal((componentsOnlyFailedPayload.components?.[0] as APIContainerComponent | undefined)?.type, ComponentType.Container);
 
   const fallbackResolverPayloads = await buildYouTubeReplyPayloads([
     {
@@ -783,6 +920,45 @@ async function run(): Promise<void> {
   );
   assert.equal(fallbackResolverGallery?.items[0]?.media.url, "https://i.ytimg.com/vi/media-fallback/hqdefault.jpg");
 
+  const oversizedExternalPayloads = await buildYouTubeReplyPayloads([
+    {
+      kind: "video",
+      originalUrl: "https://youtu.be/media-oversized",
+      canonicalUrl: "https://www.youtube.com/watch?v=media-oversized",
+      id: "media-oversized",
+    },
+  ], {
+    apiKey: "key",
+    attachmentSizeLimitBytes: 1024,
+    componentsOnly: true,
+    fetcher: async (url) => {
+      if (url === "https://media.example.com/oversized.mp4") {
+        return new Response(null, {
+          headers: {
+            "content-type": "video/mp4",
+            "content-length": "2048",
+          },
+        });
+      }
+      return jsonResponse({
+        items: [{
+          snippet: {
+            title: "Oversized video",
+            thumbnails: { high: { url: "https://i.ytimg.com/vi/media-oversized/hqdefault.jpg" } },
+          },
+          contentDetails: {},
+          statistics: {},
+        }],
+      });
+    },
+    mediaResolver: async () => ({ status: "ok", mediaUrl: "https://media.example.com/oversized.mp4" }),
+  });
+  const oversizedExternalContainer = oversizedExternalPayloads[0]?.components?.[0] as APIContainerComponent;
+  const oversizedExternalGallery = oversizedExternalContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(oversizedExternalGallery?.items[0]?.media.url, "https://media.example.com/oversized.mp4");
+
   const throwingResolverPayloads = await buildYouTubeReplyPayloads([
     {
       kind: "video",
@@ -803,7 +979,7 @@ async function run(): Promise<void> {
       }],
     }),
     mediaResolver: async () => {
-      throw new Error("yt-dlp exploded");
+      throw new Error("media resolver exploded");
     },
   });
   const throwingResolverContainer = throwingResolverPayloads[0]?.components?.[0] as APIContainerComponent;

@@ -10,6 +10,7 @@ import {
   type APIButtonComponent,
   type APIComponentInContainer,
   type APIContainerComponent,
+  type APIEmbed,
   type APIMediaGalleryComponent,
   type APIMessageTopLevelComponent,
   type APISectionComponent,
@@ -17,6 +18,7 @@ import {
   type MessageCreateOptions,
 } from "discord.js";
 import { resolveYouTubeVideoMedia } from "./youtubeVideoMedia.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
 
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -76,9 +78,7 @@ export type YouTubePreviewBuildOptions = {
   requestTimeoutMs?: number;
   attachmentSizeLimitBytes?: number;
   nowMs?: () => number;
-  ytdlpEnabled?: boolean;
-  ytdlpPath?: string;
-  ytdlpTimeoutMs?: number;
+  componentsOnly?: boolean;
   mediaResolver?: typeof resolveYouTubeVideoMedia;
   log?: { warn?: (...args: unknown[]) => void };
 };
@@ -94,7 +94,7 @@ type CacheEntry = {
 };
 
 type ResolvedPreviewMedia = {
-  kind: "attachment";
+  kind: "attachment" | "external";
   mediaUrl: string;
   files?: AttachmentBuilder[];
 };
@@ -712,12 +712,55 @@ function buildMediaGallery(mediaUrl: string | undefined, title: string): APIMedi
   };
 }
 
-function buildLinkRow(preview: YouTubePreview): APIActionRowComponent<APIButtonComponent> {
+function buildLinkRowBuilder(url: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>()
     .addComponents(
-      new ButtonBuilder().setLabel("YouTubeで開く").setStyle(ButtonStyle.Link).setURL(preview.url),
-    )
-    .toJSON() as APIActionRowComponent<APIButtonComponent>;
+      new ButtonBuilder().setLabel("YouTubeで開く").setStyle(ButtonStyle.Link).setURL(url),
+    );
+}
+
+function buildLinkRow(preview: YouTubePreview): APIActionRowComponent<APIButtonComponent> {
+  return buildLinkRowBuilder(preview.url).toJSON() as APIActionRowComponent<APIButtonComponent>;
+}
+
+function isLikelyDirectVideoUrl(url: string, contentType: string | undefined): boolean {
+  if (contentType?.toLowerCase().startsWith("video/")) return true;
+  try {
+    return /\.(?:mp4|m4v|webm|mov)(?:$|[?#])/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function getYouTubeNativeEmbedVideoUrl(embed: APIEmbed): string | undefined {
+  const contentType = embed.video?.content_type;
+  for (const candidate of [embed.video?.proxy_url, embed.video?.url]) {
+    const url = safeHttpsUrl(candidate);
+    if (url && isLikelyDirectVideoUrl(url, contentType)) return url;
+  }
+  return undefined;
+}
+
+export function buildYouTubeNativeEmbedPayload(
+  embed: APIEmbed,
+  fallbackUrl?: string,
+): YouTubePreviewPayload {
+  const url = safeHttpsUrl(embed.url) ?? safeHttpsUrl(fallbackUrl) ?? "https://www.youtube.com";
+  const mediaUrl = getYouTubeNativeEmbedVideoUrl(embed)
+    ?? safeHttpsUrl(embed.image?.url)
+    ?? safeHttpsUrl(embed.thumbnail?.url);
+  const body = [
+    embed.provider?.name,
+    embed.author?.name ? `投稿者: ${embed.author.name}` : null,
+    embed.description ? compactText(embed.description, 3500) : null,
+  ].filter((line): line is string => Boolean(line)).join("\n");
+  const card = new ComponentCardBuilder()
+    .setTitle(compactText(embed.title ?? "YouTube", 256))
+    .setURL(url)
+    .setDescription(body || "YouTube動画");
+  card.setImage(mediaUrl);
+  card.setThumbnail(embed.author?.icon_url);
+  return { ...componentCardsPayload([card], [buildLinkRowBuilder(url)]), allowedMentions: { parse: [], repliedUser: false } };
 }
 
 export function buildYouTubePreviewPayload(
@@ -745,16 +788,21 @@ export function buildYouTubePreviewPayload(
   };
 }
 
-function buildYouTubeNativeEmbedReply(preview: YouTubePreview): MessageCreateOptions {
+export function buildYouTubeFallbackReply(urls: readonly string[]): MessageCreateOptions {
   return {
-    content: preview.url,
+    content: urls.join("\n"),
     allowedMentions: { parse: [], repliedUser: false },
   };
 }
 
-export function buildYouTubeFallbackReply(urls: readonly string[]): MessageCreateOptions {
+export function buildYouTubeComponentsOnlyFallbackPayload(url: string): YouTubePreviewPayload {
+  const safeUrl = safeHttpsUrl(url) ?? "https://www.youtube.com";
+  const card = new ComponentCardBuilder()
+    .setTitle("YouTube動画")
+    .setURL(safeUrl)
+    .setDescription("動画プレビューを取得できませんでした。ボタンからYouTubeで開けます。");
   return {
-    content: urls.join("\n"),
+    ...componentCardsPayload([card], [buildLinkRowBuilder(safeUrl)]),
     allowedMentions: { parse: [], repliedUser: false },
   };
 }
@@ -772,16 +820,15 @@ async function resolvePreviewMediaUrl(
   target: YouTubeReplyTarget,
   preview: YouTubePreview,
   options: YouTubePreviewBuildOptions,
-): Promise<ResolvedPreviewMedia | "embed_fallback" | undefined> {
+): Promise<ResolvedPreviewMedia | undefined> {
   const resolverTargetUrl = mediaResolverTargetUrl(target, preview);
   if (!resolverTargetUrl) return undefined;
 
   const mediaResolver = options.mediaResolver ?? resolveYouTubeVideoMedia;
   try {
     const mediaResult = await mediaResolver(resolverTargetUrl, {
-      enabled: options.ytdlpEnabled,
-      ytdlpPath: options.ytdlpPath,
-      timeoutMs: options.ytdlpTimeoutMs,
+      timeoutMs: options.requestTimeoutMs,
+      maxBytes: options.attachmentSizeLimitBytes,
     });
     if (mediaResult.status === "ok") {
       const attachment = await downloadPreviewMediaAttachment(mediaResult.mediaUrl, options);
@@ -793,7 +840,10 @@ async function resolvePreviewMediaUrl(
         };
       }
       if (attachment.reason === "media_too_large") {
-        return "embed_fallback";
+        return {
+          kind: "external",
+          mediaUrl: mediaResult.mediaUrl,
+        };
       }
       options.log?.warn?.(
         { url: resolverTargetUrl, mediaUrl: mediaResult.mediaUrl, reason: attachment.reason },
@@ -824,7 +874,7 @@ async function downloadPreviewMediaAttachment(
   if (!url) return { status: "fallback", reason: "invalid_media_url" };
 
   const fetcher = options.fetcher ?? fetch;
-  const requestTimeoutMs = options.ytdlpTimeoutMs ?? options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const attachmentSizeLimitBytes = options.attachmentSizeLimitBytes ?? MEDIA_ATTACHMENT_MAX_BYTES;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -881,19 +931,20 @@ export async function buildYouTubeReplyPayloads(
 ): Promise<MessageCreateOptions[]> {
   return await Promise.all(targets.map(async (target): Promise<MessageCreateOptions> => {
     if (target.kind === "fallback") {
-      return buildYouTubeFallbackReply([target.canonicalUrl]);
+      return options.componentsOnly
+        ? buildYouTubeComponentsOnlyFallbackPayload(target.canonicalUrl)
+        : buildYouTubeFallbackReply([target.canonicalUrl]);
     }
     const result = await fetchYouTubePreview(target, options);
     if (result.status === "ok") {
       const media = await resolvePreviewMediaUrl(target, result.preview, options);
-      if (media === "embed_fallback") {
-        return buildYouTubeNativeEmbedReply(result.preview);
-      }
       return buildYouTubePreviewPayload(
         result.preview,
         media ? { mediaUrl: media.mediaUrl, files: media.files } : {},
       );
     }
-    return buildYouTubeFallbackReply([target.canonicalUrl]);
+    return options.componentsOnly
+      ? buildYouTubeComponentsOnlyFallbackPayload(target.canonicalUrl)
+      : buildYouTubeFallbackReply([target.canonicalUrl]);
   }));
 }

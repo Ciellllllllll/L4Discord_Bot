@@ -15,6 +15,7 @@ export type SteamAppDetails = {
   isFree?: boolean;
   headerImage?: string;
   capsuleImage?: string;
+  shortDescription?: string;
   priceOverview?: {
     currency?: string;
     initial?: number;

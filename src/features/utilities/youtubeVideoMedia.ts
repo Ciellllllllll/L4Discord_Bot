@@ -1,47 +1,56 @@
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
-import { URL } from "node:url";
-import { parseYouTubeUrl } from "./youtubePreview.js";
+import { ClientType, Innertube, Platform } from "youtubei.js";
+import type { Types } from "youtubei.js";
 
-const execFile = promisify(execFileCallback);
 const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const QUALITY_ORDER = ["720p", "480p", "360p", "240p", "144p"] as const;
+const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"]);
+const YOUTU_BE_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
 
-type YtDlpFormat = {
-  url?: unknown;
-  ext?: unknown;
-  vcodec?: unknown;
-  acodec?: unknown;
-  height?: unknown;
-  tbr?: unknown;
-  filesize?: unknown;
+export type YouTubeStreamingRequest = {
+  type: "video+audio";
+  format: "mp4";
+  quality: string;
 };
 
-type CacheEntry = {
-  expiresAt: number;
-  result: ResolveYouTubeVideoMediaResult;
+export type YouTubeStreamingFormat = {
+  url?: string;
+  mime_type?: string;
+  height?: number;
+  has_audio?: boolean;
+  has_video?: boolean;
+  content_length?: number;
 };
 
-export type YtDlpRunner = (
-  command: string,
-  args: readonly string[],
-  options: { timeoutMs: number; maxBuffer: number },
-) => Promise<{ stdout: string }>;
+export type YouTubeStreamingClient = {
+  getStreamingData: (
+    videoId: string,
+    options: YouTubeStreamingRequest,
+  ) => Promise<YouTubeStreamingFormat>;
+};
+
+export type YouTubeClientFactory = () => Promise<YouTubeStreamingClient>;
 
 export type ResolveYouTubeVideoMediaOptions = {
-  enabled?: boolean;
-  ytdlpPath?: string;
   timeoutMs?: number;
+  maxBytes?: number;
   nowMs?: () => number;
-  runner?: YtDlpRunner;
+  clientFactory?: YouTubeClientFactory;
 };
 
 export type ResolveYouTubeVideoMediaResult =
   | { status: "ok"; mediaUrl: string }
   | { status: "fallback"; reason: string };
 
+type CacheEntry = {
+  expiresAt: number;
+  result: ResolveYouTubeVideoMediaResult;
+};
+
 const cache = new Map<string, CacheEntry>();
+let defaultClientPromise: Promise<YouTubeStreamingClient> | undefined;
+let evaluatorInstalled = false;
 
 function stripTrailingUrlPunctuation(urlText: string): string {
   let out = urlText.trim();
@@ -51,24 +60,26 @@ function stripTrailingUrlPunctuation(urlText: string): string {
   return out;
 }
 
-function canonicalizeYouTubeVideoUrl(urlText: string): string | null {
-  const parsedTarget = parseYouTubeUrl(stripTrailingUrlPunctuation(urlText));
-  if (!parsedTarget || parsedTarget.kind !== "video") return null;
+function extractYouTubeVideoId(urlText: string): string | null {
+  let parsed: URL;
   try {
-    const parsed = new URL(parsedTarget.originalUrl);
-    if (parsed.protocol !== "https:") return null;
-    return parsedTarget.canonicalUrl;
+    parsed = new URL(stripTrailingUrlPunctuation(urlText));
   } catch {
     return null;
   }
-}
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
+  if (parsed.protocol !== "https:") return null;
+  const host = parsed.hostname.toLowerCase();
+  if (YOUTU_BE_HOSTS.has(host)) {
+    const id = parsed.pathname.split("/").filter(Boolean)[0];
+    return id || null;
+  }
+  if (!YOUTUBE_HOSTS.has(host)) return null;
 
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts[0] === "watch") return parsed.searchParams.get("v") || null;
+  if (["shorts", "live", "embed", "v"].includes(parts[0] ?? "")) return parts[1] || null;
+  return null;
 }
 
 function stringValue(value: unknown): string | null {
@@ -84,122 +95,146 @@ function numberValue(value: unknown): number | null {
   return null;
 }
 
-function formatScore(format: YtDlpFormat): number | null {
-  const height = numberValue(format.height);
-  if (height === null) return null;
-  if (height > 720) return null;
-  if (stringValue(format.ext) !== "mp4") return null;
-  const vcodec = stringValue(format.vcodec);
-  const acodec = stringValue(format.acodec);
-  if (!vcodec || !acodec) return null;
-  if (vcodec === "none" || acodec === "none") return null;
-  const url = stringValue(format.url);
-  if (!url || !url.startsWith("https:")) return null;
-  if (url.toLowerCase().includes(".m3u8")) return null;
-  return height;
+function installJavaScriptEvaluator(): void {
+  if (evaluatorInstalled) return;
+
+  Platform.shim.eval = (data: Types.BuildScriptResult, env: Record<string, Types.VMPrimative>) => {
+    const argumentNames = Object.keys(env);
+    const evaluate = new Function(...argumentNames, data.output) as (...values: unknown[]) => unknown;
+    return evaluate(...Object.values(env)) as Record<string, unknown> | undefined;
+  };
+  evaluatorInstalled = true;
 }
 
-function compareFormats(a: YtDlpFormat, b: YtDlpFormat): number {
-  const aHeight = numberValue(a.height) ?? 0;
-  const bHeight = numberValue(b.height) ?? 0;
-  if (aHeight !== bHeight) return bHeight - aHeight;
-
-  const aTbr = numberValue(a.tbr) ?? 0;
-  const bTbr = numberValue(b.tbr) ?? 0;
-  if (aTbr !== bTbr) return bTbr - aTbr;
-
-  const aSize = numberValue(a.filesize) ?? 0;
-  const bSize = numberValue(b.filesize) ?? 0;
-  if (aSize !== bSize) return bSize - aSize;
-
-  return 0;
+async function createDefaultClient(): Promise<YouTubeStreamingClient> {
+  installJavaScriptEvaluator();
+  return await Innertube.create({
+    lang: "ja",
+    location: "JP",
+    client_type: ClientType.ANDROID,
+  });
 }
 
-function selectMediaUrl(raw: unknown): string | null {
-  const formats = asArray(asRecord(raw)?.formats).filter((format): format is YtDlpFormat => Boolean(asRecord(format)));
-  const candidates = formats
-    .filter((format) => formatScore(format) !== null)
-    .sort(compareFormats);
-  const best = candidates[0];
-  return best ? stringValue(best.url) : null;
+async function getDefaultClient(): Promise<YouTubeStreamingClient> {
+  defaultClientPromise ??= createDefaultClient();
+  try {
+    return await defaultClientPromise;
+  } catch (err) {
+    defaultClientPromise = undefined;
+    throw err;
+  }
 }
 
-function makeCacheKey(canonicalUrl: string): string {
-  return canonicalUrl;
+function makeCacheKey(videoId: string, maxBytes: number): string {
+  return `${videoId}:${maxBytes}`;
+}
+
+class TimeoutError extends Error {
+  constructor() {
+    super("YouTube InnerTube request timed out");
+    this.name = "TimeoutError";
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new TimeoutError()), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 function isTimeoutError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const record = err as { code?: unknown; name?: unknown; message?: unknown; killed?: unknown };
-  return record.code === "ETIMEDOUT"
-    || record.code === "ERR_CHILD_PROCESS_TIMEOUT"
-    || record.name === "AbortError"
-    || record.killed === true
-    || (typeof record.message === "string" && record.message.toLowerCase().includes("timeout"));
+  return err instanceof TimeoutError
+    || (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError"));
 }
 
-async function runYtDlp(
-  command: string,
-  args: readonly string[],
-  options: { timeoutMs: number; maxBuffer: number },
-): Promise<{ stdout: string }> {
-  const result = await execFile(command, args, {
-    timeout: options.timeoutMs,
-    maxBuffer: options.maxBuffer,
-    windowsHide: true,
-  });
-  return { stdout: result.stdout };
+function isSuitableFormat(format: YouTubeStreamingFormat, maxBytes: number): format is YouTubeStreamingFormat & { url: string } {
+  const url = stringValue(format.url);
+  if (!url || !url.startsWith("https:") || url.toLowerCase().includes(".m3u8")) return false;
+  const mimeType = stringValue(format.mime_type)?.toLowerCase() ?? "";
+  if (!mimeType.startsWith("video/mp4")) return false;
+  if (format.has_video !== true || format.has_audio !== true) return false;
+  const height = numberValue(format.height);
+  if (height === null || height > 720) return false;
+  const contentLength = numberValue(format.content_length);
+  if (contentLength !== null && contentLength > maxBytes) return false;
+  return true;
+}
+
+function makeCacheResult(
+  cacheKey: string,
+  now: number,
+  result: ResolveYouTubeVideoMediaResult,
+): ResolveYouTubeVideoMediaResult {
+  cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+  return result;
 }
 
 export async function resolveYouTubeVideoMedia(
   url: string,
   options: ResolveYouTubeVideoMediaOptions = {},
 ): Promise<ResolveYouTubeVideoMediaResult> {
-  if (options.enabled === false) return { status: "fallback", reason: "disabled" };
-
-  const canonicalUrl = canonicalizeYouTubeVideoUrl(url);
-  if (!canonicalUrl) return { status: "fallback", reason: "invalid_url" };
+  const videoId = extractYouTubeVideoId(url);
+  if (!videoId) return { status: "fallback", reason: "invalid_url" };
 
   const now = options.nowMs?.() ?? Date.now();
-  const cached = cache.get(makeCacheKey(canonicalUrl));
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const cacheKey = makeCacheKey(videoId, maxBytes);
+  const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > now) return cached.result;
-  if (cached) cache.delete(makeCacheKey(canonicalUrl));
+  if (cached) cache.delete(cacheKey);
 
-  const runner = options.runner ?? runYtDlp;
-  const command = options.ytdlpPath?.trim() || "yt-dlp";
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
 
-  let result: ResolveYouTubeVideoMediaResult;
+  let client: YouTubeStreamingClient;
   try {
-    const response = await runner(command, [
-      "--dump-single-json",
-      "--no-playlist",
-      "--skip-download",
-      "--no-warnings",
-      canonicalUrl,
-    ], {
-      timeoutMs,
-      maxBuffer: MAX_BUFFER_BYTES,
-    });
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(response.stdout) as unknown;
-    } catch {
-      result = { status: "fallback", reason: "invalid_json" };
-      cache.set(makeCacheKey(canonicalUrl), { expiresAt: now + CACHE_TTL_MS, result });
-      return result;
-    }
-    const mediaUrl = selectMediaUrl(parsed);
-    if (!mediaUrl) {
-      result = { status: "fallback", reason: "no_suitable_format" };
-    } else {
-      result = { status: "ok", mediaUrl };
-    }
+    const factory = options.clientFactory ?? getDefaultClient;
+    client = await withTimeout(factory(), Math.max(1, deadline - Date.now()));
   } catch (err) {
-    const reason = isTimeoutError(err) ? "timeout" : "cli_error";
-    result = { status: "fallback", reason };
+    return makeCacheResult(cacheKey, now, {
+      status: "fallback",
+      reason: isTimeoutError(err) ? "timeout" : "inner_tube_error",
+    });
   }
 
-  cache.set(makeCacheKey(canonicalUrl), { expiresAt: now + CACHE_TTL_MS, result });
-  return result;
+  let sawFormat = false;
+  let lastError: unknown;
+  for (const quality of QUALITY_ORDER) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return makeCacheResult(cacheKey, now, { status: "fallback", reason: "timeout" });
+    }
+
+    try {
+      const format = await withTimeout(client.getStreamingData(videoId, {
+        type: "video+audio",
+        format: "mp4",
+        quality,
+      }), remainingMs);
+      sawFormat = true;
+      if (isSuitableFormat(format, maxBytes)) {
+        return makeCacheResult(cacheKey, now, { status: "ok", mediaUrl: format.url });
+      }
+    } catch (err) {
+      if (isTimeoutError(err)) {
+        return makeCacheResult(cacheKey, now, { status: "fallback", reason: "timeout" });
+      }
+      lastError = err;
+    }
+  }
+
+  return makeCacheResult(cacheKey, now, {
+    status: "fallback",
+    reason: sawFormat || !lastError ? "no_suitable_format" : "inner_tube_error",
+  });
 }

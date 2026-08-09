@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
 import {
+  dropPostgresSteamAppListTables,
   ensurePostgresGameDealSchema,
   PostgresGameDealRepository,
 } from "./postgresGameDealRepository.js";
@@ -22,10 +23,8 @@ const expectedTables = [
   "game_deal_subscription_notifications",
   "game_deal_subscriptions",
   "game_deal_watcher_status",
-  "steam_app_catalog",
   "steam_free_events",
   "steam_paid_price_history",
-  "steam_verify_queue",
 ].sort();
 
 function tempSchemaName(): string {
@@ -134,6 +133,16 @@ async function run(): Promise<boolean> {
   try {
     await ensurePostgresGameDealSchema(pool, schemaName);
     await assertSchemaTables(pool, schemaName);
+    await pool.query("CREATE TABLE steam_app_catalog (appid text PRIMARY KEY)");
+    await pool.query("CREATE TABLE steam_verify_queue (appid text PRIMARY KEY)");
+    await dropPostgresSteamAppListTables(pool, schemaName);
+    await dropPostgresSteamAppListTables(pool, schemaName);
+    assert.deepEqual(
+      (await pool.query<{ catalog: string | null; queue: string | null }>(
+        "SELECT to_regclass('steam_app_catalog') AS catalog, to_regclass('steam_verify_queue') AS queue",
+      )).rows,
+      [{ catalog: null, queue: null }],
+    );
 
     const repo = new PostgresGameDealRepository(pool);
 
@@ -243,42 +252,6 @@ async function run(): Promise<boolean> {
       await repo.upsertDetectedDeal({ source: "cheapshark", detectedType: "sale", deal, dedupeKey: "deal:100", markNotified: true }),
       { shouldNotify: false },
     );
-
-    assert.equal(await repo.hasSteamAppCatalog(), false);
-    assert.deepEqual(
-      await repo.upsertSteamAppCatalog([
-        { appid: "100", name: "One", lastModified: 10, priceChangeNumber: 1 },
-        { appid: "200", name: "Two", lastModified: 20, priceChangeNumber: 1 },
-      ]),
-      { baselineCreated: true, changes: [] },
-    );
-    assert.equal(await repo.hasSteamAppCatalog(), true);
-    const catalogUpdate = await repo.upsertSteamAppCatalog([
-      { appid: "100", name: "One", lastModified: 11, priceChangeNumber: 2 },
-      { appid: "200", name: "Two", lastModified: 20, priceChangeNumber: 1 },
-      { appid: "300", name: "Three", lastModified: 30, priceChangeNumber: 1 },
-    ]);
-    assert.equal(catalogUpdate.baselineCreated, false);
-    assert.deepEqual(catalogUpdate.changes, [
-      {
-        appid: "100",
-        name: "One",
-        lastModified: 11,
-        priceChangeNumber: 2,
-        previousLastModified: 10,
-        previousPriceChangeNumber: 1,
-      },
-    ]);
-
-    await repo.enqueueSteamVerify({ appid: "100", reason: "price_change_detected", priceChangeNumber: 2, lastModified: 11 });
-    await repo.enqueueSteamVerify({ appid: "200", reason: "delayed", priceChangeNumber: 1, lastModified: 20, delayMs: 60_000 });
-    assert.deepEqual((await repo.listDueSteamVerifyQueue(10)).map((item) => item.appid), ["100"]);
-    await repo.markSteamVerifyRetry("100", "retry", "temporary failure");
-    assert.deepEqual(await repo.listDueSteamVerifyQueue(10), []);
-    await repo.enqueueSteamVerify({ appid: "100", reason: "ready", priceChangeNumber: 2, lastModified: 11 });
-    assert.equal((await repo.listDueSteamVerifyQueue(10))[0]?.appid, "100");
-    await repo.removeSteamVerifyQueue("100");
-    assert.deepEqual(await repo.listDueSteamVerifyQueue(10), []);
 
     const event = steamFreeEvent();
     assert.deepEqual(await repo.upsertSteamFreeEvent(event), { shouldNotify: true });

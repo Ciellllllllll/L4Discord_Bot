@@ -10,8 +10,6 @@ import type {
   GameDealStatus,
   GameDealSubscription,
   GameDealSubscriptionHit,
-  SteamAppCatalogChange,
-  SteamAppCatalogEntry,
   SteamFreeEvent,
   SteamPaidPriceHistory,
 } from "./gameDealTypes.js";
@@ -205,15 +203,6 @@ export async function ensurePostgresGameDealSchema(pool: PgQueryable, schemaName
     VALUES (1, 0)
     ON CONFLICT (id) DO NOTHING;
 
-    CREATE TABLE IF NOT EXISTS ${schema}.steam_app_catalog (
-      appid text PRIMARY KEY,
-      name text,
-      last_modified integer,
-      price_change_number integer,
-      first_seen_at text NOT NULL,
-      last_seen_at text NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS ${schema}.steam_paid_price_history (
       appid text PRIMARY KEY,
       title text,
@@ -250,20 +239,6 @@ export async function ensurePostgresGameDealSchema(pool: PgQueryable, schemaName
     CREATE INDEX IF NOT EXISTS steam_free_events_appid_idx
       ON ${schema}.steam_free_events (appid);
 
-    CREATE TABLE IF NOT EXISTS ${schema}.steam_verify_queue (
-      appid text PRIMARY KEY,
-      reason text NOT NULL,
-      price_change_number integer,
-      last_modified integer,
-      attempts integer NOT NULL DEFAULT 0,
-      next_attempt_at text NOT NULL,
-      last_error text,
-      created_at text NOT NULL,
-      updated_at text NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS steam_verify_queue_due_idx
-      ON ${schema}.steam_verify_queue (next_attempt_at, updated_at);
   `);
   await pool.query(
     [
@@ -275,6 +250,11 @@ export async function ensurePostgresGameDealSchema(pool: PgQueryable, schemaName
       legacyBooleanColumnMigrationSql(schema, schemaName, "steam_free_events", "active"),
     ].join("\n"),
   );
+}
+
+export async function dropPostgresSteamAppListTables(pool: PgQueryable, schemaName: string): Promise<void> {
+  const schema = quotePgIdent(schemaName);
+  await pool.query(`DROP TABLE IF EXISTS ${schema}.steam_verify_queue; DROP TABLE IF EXISTS ${schema}.steam_app_catalog;`);
 }
 
 type ChannelRow = {
@@ -331,13 +311,6 @@ type DealWatchRow = {
   enabled: boolean;
 };
 
-type SteamAppCatalogRow = {
-  appid: string;
-  name: string | null;
-  last_modified: number | null;
-  price_change_number: number | null;
-};
-
 type SteamPaidPriceHistoryRow = {
   appid: string;
   title: string | null;
@@ -358,14 +331,6 @@ type SteamFreeEventRow = {
   evidence_json: string;
   steam_url: string;
   image_url: string | null;
-};
-
-type SteamVerifyQueueRow = {
-  appid: string;
-  reason: string;
-  price_change_number: number | null;
-  last_modified: number | null;
-  attempts: number;
 };
 
 const FREE_SEEN_LOCK_NAMESPACE = 4101;
@@ -1024,168 +989,6 @@ export class PostgresGameDealRepository {
       "SELECT cheapshark_cooldown_until FROM game_deal_status WHERE id = 1",
     );
     return result.rows[0]?.cheapshark_cooldown_until ?? null;
-  }
-
-  async hasSteamAppCatalog(): Promise<boolean> {
-    const result = await this.pool.query<{ found: number }>("SELECT 1 AS found FROM steam_app_catalog LIMIT 1");
-    return !!result.rows[0];
-  }
-
-  async upsertSteamAppCatalog(
-    apps: SteamAppCatalogEntry[],
-  ): Promise<{ baselineCreated: boolean; changes: SteamAppCatalogChange[] }> {
-    const now = sqliteTimestamp();
-    const baselineCreated = !(await this.hasSteamAppCatalog());
-    const uniqueApps = [...new Map(apps.map((app) => [app.appid, app])).values()];
-    if (uniqueApps.length === 0) return { baselineCreated, changes: [] };
-
-    const appids = uniqueApps.map((app) => app.appid);
-    const previousResult = await this.pool.query<SteamAppCatalogRow>(
-      `
-      SELECT appid, name, last_modified, price_change_number
-      FROM steam_app_catalog
-      WHERE appid = ANY($1::text[])
-    `,
-      [appids],
-    );
-    const previousByAppid = new Map(previousResult.rows.map((row) => [row.appid, row]));
-    const changes = uniqueApps.flatMap((app) => {
-      const previous = previousByAppid.get(app.appid);
-      if (!previous || (previous.last_modified === app.lastModified && previous.price_change_number === app.priceChangeNumber)) {
-        return [];
-      }
-      return [
-        {
-          ...app,
-          previousLastModified: previous.last_modified,
-          previousPriceChangeNumber: previous.price_change_number,
-        },
-      ];
-    });
-
-    await this.pool.query(
-      `
-      WITH input AS (
-        SELECT appid, name, last_modified, price_change_number
-        FROM jsonb_to_recordset($1::jsonb) AS app(
-          appid text,
-          name text,
-          last_modified integer,
-          price_change_number integer
-        )
-      )
-      INSERT INTO steam_app_catalog (appid, name, last_modified, price_change_number, first_seen_at, last_seen_at)
-      SELECT appid, name, last_modified, price_change_number, $2, $2
-      FROM input
-      ON CONFLICT (appid) DO UPDATE SET
-        name = excluded.name,
-        last_modified = excluded.last_modified,
-        price_change_number = excluded.price_change_number,
-        last_seen_at = excluded.last_seen_at
-    `,
-      [
-        JSON.stringify(
-          uniqueApps.map((app) => ({
-            appid: app.appid,
-            name: app.name,
-            last_modified: app.lastModified,
-            price_change_number: app.priceChangeNumber,
-          })),
-        ),
-        now,
-      ],
-    );
-
-    return { baselineCreated, changes: baselineCreated ? [] : changes };
-  }
-
-  async enqueueSteamVerify(input: {
-    appid: string;
-    reason: string;
-    priceChangeNumber: number | null;
-    lastModified: number | null;
-    delayMs?: number;
-    lastError?: string | null;
-  }): Promise<void> {
-    const now = sqliteTimestamp();
-    const nextAttemptAt = new Date(Date.now() + (input.delayMs ?? 0)).toISOString();
-    await this.pool.query(
-      `
-      INSERT INTO steam_verify_queue
-        (appid, reason, price_change_number, last_modified, attempts, next_attempt_at, last_error, created_at, updated_at)
-      VALUES
-        ($1, $2, $3, $4, 0, $5, $6, $7, $7)
-      ON CONFLICT (appid) DO UPDATE SET
-        reason = excluded.reason,
-        price_change_number = excluded.price_change_number,
-        last_modified = excluded.last_modified,
-        next_attempt_at = excluded.next_attempt_at,
-        last_error = excluded.last_error,
-        updated_at = excluded.updated_at
-    `,
-      [
-        input.appid,
-        input.reason.slice(0, 200),
-        input.priceChangeNumber,
-        input.lastModified,
-        nextAttemptAt,
-        input.lastError?.slice(0, 1000) ?? null,
-        now,
-      ],
-    );
-  }
-
-  async listDueSteamVerifyQueue(limit: number): Promise<SteamAppCatalogChange[]> {
-    const safeLimit = clampLimit(limit);
-    const result = await this.pool.query<SteamVerifyQueueRow>(
-      `
-      SELECT appid, reason, price_change_number, last_modified, attempts
-      FROM steam_verify_queue
-      WHERE next_attempt_at <= $1
-      ORDER BY updated_at ASC
-      LIMIT ${safeLimit}
-    `,
-      [sqliteTimestamp()],
-    );
-    return result.rows.map((row) => ({
-      appid: row.appid,
-      name: "",
-      lastModified: row.last_modified,
-      priceChangeNumber: row.price_change_number,
-      previousLastModified: -1,
-      previousPriceChangeNumber: -1,
-    }));
-  }
-
-  async removeSteamVerifyQueue(appid: string): Promise<void> {
-    await this.pool.query("DELETE FROM steam_verify_queue WHERE appid = $1", [appid]);
-  }
-
-  async markSteamVerifyRetry(appid: string, reason: string, lastError: string | null): Promise<void> {
-    const current = await this.pool.query<{ attempts: number }>("SELECT attempts FROM steam_verify_queue WHERE appid = $1", [appid]);
-    const storedAttempts = Number(current.rows[0]?.attempts ?? 0);
-    // 旧SQLiteデータ移行で壊れた値が混在しても、バックオフ用カウンタでPostgreSQL整数範囲を超えないようにする。
-    const attempts = Number.isSafeInteger(storedAttempts) && storedAttempts >= 0 && storedAttempts < 60 ? storedAttempts + 1 : 1;
-    const delayMs = Math.min(60 * 60 * 1000, 60_000 * attempts);
-    await this.pool.query(
-      `
-      UPDATE steam_verify_queue
-      SET reason = $1,
-          attempts = $2,
-          next_attempt_at = $3,
-          last_error = $4,
-          updated_at = $5
-      WHERE appid = $6
-    `,
-      [
-        reason.slice(0, 200),
-        attempts,
-        new Date(Date.now() + delayMs).toISOString(),
-        lastError?.slice(0, 1000) ?? null,
-        sqliteTimestamp(),
-        appid,
-      ],
-    );
   }
 
   async getSteamPaidPriceHistory(appid: string): Promise<SteamPaidPriceHistory | null> {
