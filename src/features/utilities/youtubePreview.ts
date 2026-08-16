@@ -80,12 +80,16 @@ export type YouTubePreviewBuildOptions = {
   nowMs?: () => number;
   componentsOnly?: boolean;
   mediaResolver?: typeof resolveYouTubeVideoMedia;
+  mediaUrlOverride?: string;
+  mediaMode?: "vps" | "google" | "none";
   log?: { warn?: (...args: unknown[]) => void };
 };
 
 export type YouTubePreviewPayloadOptions = {
   mediaUrl?: string;
   files?: AttachmentBuilder[];
+  fallback?: boolean;
+  mediaMode?: "vps" | "google" | "none";
 };
 
 type CacheEntry = {
@@ -156,6 +160,22 @@ function safeMediaGalleryUrl(value: unknown): string | undefined {
   if (!raw) return undefined;
   if (raw === `attachment://${MEDIA_ATTACHMENT_FILENAME}`) return raw;
   return safeHttpsUrl(raw);
+}
+
+function isGoogleVideoUrl(value: string): boolean {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === "googlevideo.com" || host.endsWith(".googlevideo.com");
+  } catch {
+    return false;
+  }
+}
+
+function fallbackMediaUrl(options: YouTubePreviewPayloadOptions): string | undefined {
+  if (options.mediaMode === "none") return undefined;
+  const mediaUrl = safeHttpsUrl(options.mediaUrl);
+  if (!mediaUrl) return undefined;
+  return options.mediaMode === "google" && !isGoogleVideoUrl(mediaUrl) ? undefined : mediaUrl;
 }
 
 function canonicalUrl(pathname: string, search?: Record<string, string>): string {
@@ -744,9 +764,11 @@ export function getYouTubeNativeEmbedVideoUrl(embed: APIEmbed): string | undefin
 export function buildYouTubeNativeEmbedPayload(
   embed: APIEmbed,
   fallbackUrl?: string,
+  mediaUrlOverride?: string,
 ): YouTubePreviewPayload {
   const url = safeHttpsUrl(embed.url) ?? safeHttpsUrl(fallbackUrl) ?? "https://www.youtube.com";
-  const mediaUrl = getYouTubeNativeEmbedVideoUrl(embed)
+  const mediaUrl = safeMediaGalleryUrl(mediaUrlOverride)
+    ?? getYouTubeNativeEmbedVideoUrl(embed)
     ?? safeHttpsUrl(embed.image?.url)
     ?? safeHttpsUrl(embed.thumbnail?.url);
   const body = [
@@ -767,6 +789,23 @@ export function buildYouTubePreviewPayload(
   preview: YouTubePreview,
   options: YouTubePreviewPayloadOptions = {},
 ): YouTubePreviewPayload {
+  if (options.fallback) {
+    const gallery = buildMediaGallery(fallbackMediaUrl(options), preview.title);
+    const container: APIContainerComponent = {
+      type: ComponentType.Container,
+      components: [
+        { type: ComponentType.TextDisplay, content: buildBodyText(preview) },
+        ...(gallery ? [gallery] : []),
+        buildLinkRow(preview),
+      ],
+    };
+    return {
+      embeds: [],
+      flags: MessageFlags.IsComponentsV2,
+      components: [container],
+      allowedMentions: { parse: [], repliedUser: false },
+    };
+  }
   const mediaUrl = safeMediaGalleryUrl(options.mediaUrl) ?? safeHttpsUrl(preview.thumbnailUrl);
   const channelIcon = safeHttpsUrl(preview.channelIconUrl);
   const gallery = buildMediaGallery(mediaUrl, preview.title);
@@ -786,6 +825,41 @@ export function buildYouTubePreviewPayload(
     allowedMentions: { parse: [], repliedUser: false },
     ...(options.files?.length ? { files: options.files } : {}),
   };
+}
+
+export function replaceYouTubePreviewMedia(
+  components: readonly unknown[],
+  mediaUrl?: string,
+  options: { fallback?: boolean } = {},
+): APIMessageTopLevelComponent[] {
+  const next = structuredClone(components) as Array<Record<string, unknown>>;
+  const transformChildren = (children: unknown[]): Array<Record<string, unknown>> => children.flatMap((child) => {
+    if (!child || typeof child !== "object") return [];
+    const component = child as Record<string, unknown>;
+    if (options.fallback && component.type === ComponentType.Section) {
+      return Array.isArray(component.components) ? transformChildren(component.components) : [];
+    }
+    if (Array.isArray(component.components)) {
+      component.components = transformChildren(component.components);
+    }
+    return [component];
+  });
+  const containers: Array<Record<string, unknown>> = [];
+  const removeGalleries = (component: Record<string, unknown>): void => {
+    if (!Array.isArray(component.components)) return;
+    const children = transformChildren(component.components).filter((child) => child.type !== ComponentType.MediaGallery);
+    component.components = children;
+    if (component.type === ComponentType.Container) containers.push(component);
+    for (const child of children) removeGalleries(child);
+  };
+  for (const component of next) removeGalleries(component);
+  const container = containers[0];
+  if (container && mediaUrl && Array.isArray(container.components)) {
+    const children = container.components as Array<Record<string, unknown>>;
+    const index = children.findIndex((child) => child.type === ComponentType.ActionRow);
+    children.splice(index < 0 ? children.length : index, 0, buildMediaGallery(mediaUrl, "YouTube video")! as unknown as Record<string, unknown>);
+  }
+  return next as unknown as APIMessageTopLevelComponent[];
 }
 
 export function buildYouTubeFallbackReply(urls: readonly string[]): MessageCreateOptions {
@@ -937,7 +1011,17 @@ export async function buildYouTubeReplyPayloads(
     }
     const result = await fetchYouTubePreview(target, options);
     if (result.status === "ok") {
-      const media = await resolvePreviewMediaUrl(target, result.preview, options);
+      if (options.mediaMode) {
+        return buildYouTubePreviewPayload(result.preview, {
+          fallback: true,
+          mediaMode: options.mediaMode,
+          mediaUrl: options.mediaUrlOverride,
+        });
+      }
+      const mediaUrlOverride = safeMediaGalleryUrl(options.mediaUrlOverride);
+      const media = mediaUrlOverride
+        ? { kind: "external" as const, mediaUrl: mediaUrlOverride }
+        : await resolvePreviewMediaUrl(target, result.preview, options);
       return buildYouTubePreviewPayload(
         result.preview,
         media ? { mediaUrl: media.mediaUrl, files: media.files } : {},

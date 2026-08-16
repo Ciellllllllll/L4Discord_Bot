@@ -4,6 +4,8 @@ import { URL } from "node:url";
 import { MessageFlags, type APIEmbed, type Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
+import { PostgresYouTubeWatcherRepository } from "../youtubeWatcher/youtubeWatcher.repository.js";
+import { cacheYouTubeVideoForPost, saveYouTubeVideoCacheReferenceForPost, type YouTubeVideoCachePostMedia } from "../youtubeWatcher/youtubeVideoCache.service.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 import { COLD_LAUGH_KEYWORD } from "./coldLaughConstants.js";
 import { buildVxTwitterReplyPayloads, collectVxTwitterReplyTargets, type VxTwitterPreviewPayload } from "./vxtwitterPreview.js";
@@ -14,10 +16,18 @@ import {
   collectYouTubeReplyTargets,
   getYouTubeNativeEmbedVideoUrl,
   parseYouTubeUrl,
+  replaceYouTubePreviewMedia,
 } from "./youtubePreview.js";
 import { saveVxTwitterPreviewState } from "./vxtwitterPreviewState.js";
 
-const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
+const X_DOMAINS = new Set([
+  "x.com",
+  "twitter.com",
+  "mobile.twitter.com",
+  "vxtwitter.com",
+  "fxtwitter.com",
+  "fixupx.com",
+]);
 const YOUTUBE_DOMAINS = new Set([
   "youtube.com",
   "www.youtube.com",
@@ -28,11 +38,11 @@ const YOUTUBE_DOMAINS = new Set([
 ]);
 
 const X_URL_CANDIDATE_PATTERN =
-  /(?<url>(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
+  /(?<url>(?:https?:\/\/)?(?:www\.)?(?:vxtwitter\.com|fxtwitter\.com|fixupx\.com|x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
 const YOUTUBE_URL_CANDIDATE_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
 const LINK_IN_CONTENT_PATTERN =
-  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
+  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|vxtwitter\.com|fxtwitter\.com|fixupx\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
 const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -186,9 +196,13 @@ export function coldLaughHitsForMessageContent(content: string): number {
 }
 
 export function extractXLinks(content: string): string[] {
+  const text = String(content || "");
   const found: string[] = [];
-  for (const match of String(content || "").matchAll(X_URL_CANDIDATE_PATTERN)) {
+  for (const match of text.matchAll(X_URL_CANDIDATE_PATTERN)) {
     const raw = match.groups?.url ?? "";
+    if (!hasUrlCandidateBoundary(text, match.index ?? 0, raw)) {
+      continue;
+    }
     const trimmed = stripUrlTail(raw);
     if (trimmed && isXLikeUrl(trimmed)) {
       found.push(trimmed);
@@ -218,6 +232,8 @@ let lock = Promise.resolve();
 type LinkAndColdLaughDeps = {
   buildVxTwitterReplyPayloads?: typeof buildVxTwitterReplyPayloads;
   buildYouTubeReplyPayloads?: typeof buildYouTubeReplyPayloads;
+  cacheYouTubeVideoForPost?: typeof cacheYouTubeVideoForPost;
+  saveYouTubeVideoCacheReference?: typeof saveYouTubeVideoCacheReferenceForPost;
 };
 
 async function withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -244,6 +260,8 @@ export class LinkAndColdLaugh {
     this.deps = {
       buildVxTwitterReplyPayloads: deps.buildVxTwitterReplyPayloads ?? buildVxTwitterReplyPayloads,
       buildYouTubeReplyPayloads: deps.buildYouTubeReplyPayloads ?? buildYouTubeReplyPayloads,
+      cacheYouTubeVideoForPost: deps.cacheYouTubeVideoForPost ?? cacheYouTubeVideoForPost,
+      saveYouTubeVideoCacheReference: deps.saveYouTubeVideoCacheReference ?? saveYouTubeVideoCacheReferenceForPost,
     };
     void this.loadCounts();
   }
@@ -332,6 +350,22 @@ export class LinkAndColdLaugh {
       return;
     }
 
+    const cachedYouTubeMedia = new Map<string, YouTubeVideoCachePostMedia>();
+    if (this.ctx.config.BOT_PROFILE === "production") {
+      for (const target of youtubeReplyTargets) {
+        if (target.kind !== "video" || !target.id) continue;
+        try {
+          cachedYouTubeMedia.set(target.canonicalUrl, await this.deps.cacheYouTubeVideoForPost(this.ctx, {
+            videoId: target.id,
+            videoUrl: target.canonicalUrl,
+          }));
+        } catch (err) {
+          this.ctx.log.warn({ err: String(err), videoId: target.id }, "youtube video cache post failed");
+          cachedYouTubeMedia.set(target.canonicalUrl, { mediaMode: "none", lastError: "cache_post_error" });
+        }
+      }
+    }
+
     const nativeYouTubeEmbeds = new Map<string, APIEmbed | null>();
     await Promise.all(youtubeReplyTargets.map(async (target) => {
       nativeYouTubeEmbeds.set(
@@ -371,6 +405,72 @@ export class LinkAndColdLaugh {
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "vxtwitter reply error");
       }
+    }
+
+    if (this.ctx.config.BOT_PROFILE === "production") {
+      const cacheReferenceRepo = new PostgresYouTubeWatcherRepository(this.ctx.mainPgPool);
+      const buildFallback = async (target: ReturnType<typeof collectYouTubeReplyTargets>[number], media: YouTubeVideoCachePostMedia | undefined) => {
+        const [payload] = await this.deps.buildYouTubeReplyPayloads([target], {
+          apiKey: this.ctx.config.YOUTUBE_DATA_API_KEY,
+          requestTimeoutMs: this.ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+          componentsOnly: true,
+          ...(media ? { mediaMode: media.mediaMode, mediaUrlOverride: media.mediaUrl } : {
+            attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
+          }),
+          log: this.ctx.log,
+        });
+        if (payload && (payload as { flags?: number }).flags === MessageFlags.IsComponentsV2) {
+          return media
+            ? { ...payload, components: replaceYouTubePreviewMedia((payload as { components: unknown[] }).components, media.mediaUrl, { fallback: true }) }
+            : payload;
+        }
+        const fallback = buildYouTubeComponentsOnlyFallbackPayload(target.canonicalUrl);
+        return media
+          ? { ...fallback, components: replaceYouTubePreviewMedia(fallback.components, media.mediaUrl, { fallback: true }) }
+          : fallback;
+      };
+
+      for (const target of youtubeReplyTargets) {
+        const media = cachedYouTubeMedia.get(target.canonicalUrl);
+        const nativeEmbed = nativeYouTubeEmbeds.get(target.canonicalUrl);
+        const useNative = Boolean(nativeEmbed && (media?.mediaMode === "vps" || (!media && getYouTubeNativeEmbedVideoUrl(nativeEmbed))));
+        let payload: unknown;
+        let reply: Awaited<ReturnType<Message["reply"]>> | undefined;
+        try {
+          payload = useNative
+            ? buildYouTubeNativeEmbedPayload(nativeEmbed!, target.canonicalUrl, media?.mediaUrl)
+            : await buildFallback(target, media);
+          reply = await message.reply(payload as never);
+        } catch (err) {
+          if (useNative) {
+            try {
+              reply = await message.reply(await buildFallback(target, media));
+            } catch (retryError) {
+              this.ctx.log.warn({ err: String(retryError) }, "youtube preview reply retry error");
+              continue;
+            }
+          }
+          this.ctx.log.warn({ err: String(err) }, "youtube preview reply error");
+          continue;
+        }
+        if (media && target.kind === "video" && target.id && reply) {
+          try {
+            await this.deps.saveYouTubeVideoCacheReference(this.ctx, cacheReferenceRepo, {
+              guildId: message.guildId ?? this.ctx.config.GUILD_ID,
+              channelId: message.channelId,
+            }, {
+              videoId: target.id,
+              videoUrl: target.canonicalUrl,
+            }, {
+              message: reply as never,
+              media,
+            });
+          } catch (error) {
+            this.ctx.log.warn({ err: String(error), messageId: reply.id }, "youtube video cache reference save failed");
+          }
+        }
+      }
+      return;
     }
 
     const nativeYouTubeTargets = youtubeReplyTargets.filter((target) => {

@@ -18,7 +18,7 @@ import { ensurePostgresTicketDatabaseSchema } from "../features/tickets/ticketDb
 import { ensurePostgresVcTempSchema } from "../features/vc/vcTempPersistence.js";
 import { ensurePostgresVcTimeSchema } from "../features/vc/vcTimeSchema.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
-import { ensurePostgresYouTubeWatcherSchema } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
+import { ensurePostgresYouTubeWatcherSchema, migratePostgresYouTubeVideoCacheReferences, migratePostgresYouTubeWatcherDurableMedia } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
 
 type SqliteColumn = {
   cid: number | bigint;
@@ -59,6 +59,8 @@ const pacchiBooleanColumns = new Set([
   "pacchi_channel_settings.talk_enabled",
   "pacchi_channel_settings.learn_enabled",
 ]);
+
+const youtubeWatcherBooleanColumns = new Set(["youtube_watch_subscriptions.enabled"]);
 
 const snowflakeColumns = new Set([
   "guild_id",
@@ -113,10 +115,14 @@ function isPacchiBooleanColumn(table: string, column: string): boolean {
   return pacchiBooleanColumns.has(`${table}.${column}`);
 }
 
+function isBooleanColumn(table: string, column: string): boolean {
+  return isPacchiBooleanColumn(table, column) || youtubeWatcherBooleanColumns.has(`${table}.${column}`);
+}
+
 function pgType(table: string, column: SqliteColumn): string {
   const t = column.type.toUpperCase();
   if (snowflakeColumns.has(column.name)) return "text";
-  if (isPacchiBooleanColumn(table, column.name)) return "boolean";
+  if (isBooleanColumn(table, column.name)) return "boolean";
   if (t.includes("INT")) return "bigint";
   if (t.includes("REAL") || t.includes("FLOA") || t.includes("DOUB")) return "double precision";
   if (t.includes("BLOB")) return "bytea";
@@ -191,7 +197,7 @@ function normalizeValue(table: string, column: SqliteColumn, value: unknown): un
   if (value === undefined) return null;
   if (value === null) return null;
   if (snowflakeColumns.has(column.name)) return String(value);
-  if (isPacchiBooleanColumn(table, column.name)) {
+  if (isBooleanColumn(table, column.name)) {
     if (typeof value === "bigint") return value !== 0n;
     if (typeof value === "number") return value !== 0;
     if (typeof value === "string") return value !== "0";
@@ -276,6 +282,8 @@ async function ensureCanonicalSchemas(config: ReturnType<typeof loadConfig>): Pr
       { version: 10, name: "youtube_watcher_initial", apply: ensurePostgresYouTubeWatcherSchema },
       { version: 11, name: "pacchi_boolean_columns", apply: migratePostgresPacchiBooleanColumns },
       { version: 12, name: "drop_steam_app_list_tables", apply: (pool) => dropPostgresSteamAppListTables(pool, config.POSTGRES_MAIN_SCHEMA) },
+      { version: 13, name: "youtube_watcher_durable_media", apply: migratePostgresYouTubeWatcherDurableMedia },
+      { version: 14, name: "youtube_video_cache_references", apply: migratePostgresYouTubeVideoCacheReferences },
     ]);
   } finally {
     await mainPool.end();
@@ -313,7 +321,12 @@ async function migrateSource(pool: Awaited<ReturnType<typeof createPgPool>>, sou
   const sqlite = new Database(source.path, { readonly: true, fileMustExist: true });
   sqlite.defaultSafeIntegers(true);
   try {
-    for (const table of sqliteTables(sqlite)) {
+    const tables = sqliteTables(sqlite).sort((a, b) => {
+      if (a === "youtube_watch_subscriptions") return -1;
+      if (b === "youtube_watch_subscriptions") return 1;
+      return a.localeCompare(b);
+    });
+    for (const table of tables) {
       if (source.label === "main" && retiredMainTables.has(table)) {
         console.log(`[skip] ${source.label}.${table}: retired Steam AppList table`);
         continue;
@@ -351,6 +364,12 @@ async function main(): Promise<void> {
     await ensureCanonicalSchemas(config);
     for (const source of sources) {
       await migrateSource(pool, source);
+    }
+    const mainPool = await createPgPool(config.DATABASE_URL, config.POSTGRES_MAIN_SCHEMA);
+    try {
+      await migratePostgresYouTubeVideoCacheReferences(mainPool);
+    } finally {
+      await mainPool.end();
     }
   } finally {
     await pool.end();

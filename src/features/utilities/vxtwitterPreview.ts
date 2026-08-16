@@ -20,7 +20,14 @@ import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 import { translateVxTwitterTexts, type VxTwitterTextTranslations } from "./vxtwitterTranslation.js";
 
 const VX_DOMAIN = "vxtwitter.com";
-const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
+const X_DOMAINS = new Set([
+  "x.com",
+  "twitter.com",
+  "mobile.twitter.com",
+  "vxtwitter.com",
+  "fxtwitter.com",
+  "fixupx.com",
+]);
 const REQUEST_TIMEOUT_MS = 10_000;
 const USER_AGENT = "L4DiscordBot/0.1 VxTwitterPreview (+https://api.fxtwitter.com/)";
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
@@ -70,6 +77,7 @@ export type TweetPreview = {
     id?: string;
     url?: string;
     text: string;
+    media: TweetMedia[];
     author: {
       name?: string;
       screenName: string;
@@ -280,12 +288,18 @@ function normalizeQuote(raw: unknown): TweetPreview["quote"] | undefined {
   if (!quote) return undefined;
   const author = asRecord(quote.author);
   const screenName = firstString(author?.screen_name, author?.screenName, quote.screen_name, quote.screenName);
-  const text = firstString(quote.text, quote.full_text);
-  if (!screenName || !text) return undefined;
+  const text = firstString(quote.text, quote.full_text) ?? "";
+  const sensitive =
+    boolValue(quote.possibly_sensitive) === true
+    || boolValue(quote.sensitive) === true
+    || boolValue(quote.nsfw) === true;
+  const media = normalizeMedia(quote, sensitive);
+  if (!screenName || (!text && media.length === 0)) return undefined;
   return {
     id: firstString(quote.id, quote.tweetID),
-    url: firstString(quote.url),
+    url: safeHttpsUrl(quote.url),
     text,
+    media,
     author: {
       name: firstString(author?.name),
       screenName,
@@ -408,13 +422,24 @@ function buildBodyText(
     lines.push("");
     lines.push((displayMode === "translation" ? translations?.main?.translatedText : undefined)?.slice(0, 3000) ?? tweet.text.slice(0, 3000));
   }
-  if (tweet.quote) {
-    lines.push("");
-    const quoteText = displayMode === "translation" ? translations?.quote?.translatedText : undefined;
-    lines.push(`> 引用: @${tweet.quote.author.screenName} ${compactText(quoteText ?? tweet.quote.text, 180)}`);
-    if (tweet.quote.url) lines.push(`> ${tweet.quote.url}`);
-  }
   return lines.join("\n").slice(0, 4000);
+}
+
+function buildQuoteDisplay(
+  quote: NonNullable<TweetPreview["quote"]>,
+  translations: VxTwitterTextTranslations | undefined,
+  displayMode: VxTwitterDisplayMode,
+): APITextDisplayComponent {
+  const translatedText = displayMode === "translation" ? translations?.quote?.translatedText : undefined;
+  const text = compactText(translatedText ?? quote.text, 180);
+  const content = [
+    `> 引用: @${quote.author.screenName}${text ? ` ${text}` : ""}`,
+    ...(quote.url ? [`> ${quote.url}`] : []),
+  ].join("\n");
+  return {
+    type: ComponentType.TextDisplay,
+    content: content.slice(0, 4_000),
+  };
 }
 
 function buildBodyComponent(
@@ -466,8 +491,8 @@ function mediaDisplayUrl(media: TweetMedia): string {
   return media.url;
 }
 
-function buildMediaGallery(tweet: TweetPreview): APIMediaGalleryComponent | null {
-  const items = tweet.media
+function buildMediaGallery(mediaItems: readonly TweetMedia[]): APIMediaGalleryComponent | null {
+  const items = mediaItems
     .map((media) => ({
       media: { url: mediaDisplayUrl(media) },
       ...(media.description ? { description: media.description.slice(0, 1024) } : {}),
@@ -507,13 +532,17 @@ export function buildVxTwitterPreviewPayload(
   displayMode: VxTwitterDisplayMode = "translation",
 ): VxTwitterPreviewPayload {
   const body = buildBodyComponent(tweet, translations, displayMode);
-  const gallery = buildMediaGallery(tweet);
+  const gallery = buildMediaGallery(tweet.media);
+  const quoteDisplay = tweet.quote ? buildQuoteDisplay(tweet.quote, translations, displayMode) : null;
+  const quoteGallery = tweet.quote ? buildMediaGallery(tweet.quote.media ?? []) : null;
   const attribution = buildTranslationAttribution(translations);
   const meta = buildMetaDisplay(tweet);
   const components: APIComponentInContainer[] = [
     body,
     ...(attribution ? [attribution] : []),
     ...(gallery ? [gallery] : []),
+    ...(quoteDisplay ? [quoteDisplay] : []),
+    ...(quoteGallery ? [quoteGallery] : []),
     ...(meta ? [meta] : []),
     buildLinkRow(tweet, translations, displayMode),
   ];
@@ -533,6 +562,7 @@ export function buildVxTwitterPreviewPayload(
 export function buildVxTwitterFallbackReply(vxUrls: readonly string[]): MessageCreateOptions {
   return {
     content: vxUrls.join("\n"),
+    flags: MessageFlags.SuppressEmbeds,
     allowedMentions: { parse: [], repliedUser: false },
   };
 }

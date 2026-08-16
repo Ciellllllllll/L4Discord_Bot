@@ -15,7 +15,7 @@ assert.deepEqual(provider?.choices?.map((choice) => choice.value), [
   "openai_gpt54_mini",
   "deepseek",
 ]);
-assert.equal(BOT_SEMVER, "2.0.13");
+assert.equal(BOT_SEMVER, "2.0.14");
 assert.equal(SLASH_COMMAND_MIN_BOT_VERSION.switch, "2.0.10");
 
 console.log("switchCommand.spec.ts: all assertions passed");
