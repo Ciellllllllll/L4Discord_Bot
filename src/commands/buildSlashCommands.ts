@@ -4,6 +4,7 @@ import {
   type RESTPostAPIApplicationCommandsJSONBody,
 } from "discord.js";
 import type { AppConfig } from "../core/config.js";
+import { GIF_AUTO_REPLY_URL_MAX_LENGTH } from "../features/utilities/gifAutoReply.js";
 
 type BotProfile = AppConfig["BOT_PROFILE"];
 
@@ -43,6 +44,26 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
     new SlashCommandBuilder()
       .setName("bokete")
       .setDescription("Boketeを1件表示します")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("gif")
+      .setDescription("GIF自動返信を管理します")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addSubcommand((sub) => sub
+        .setName("set")
+        .setDescription("検知するGIFと返信するGIFを設定します")
+        .addStringOption((o) => o
+          .setName("trigger_url")
+          .setDescription("検知するGIFのHTTP(S) URL")
+          .setRequired(true)
+          .setMaxLength(GIF_AUTO_REPLY_URL_MAX_LENGTH))
+        .addStringOption((o) => o
+          .setName("response_url")
+          .setDescription("返信するGIFのHTTP(S) URL")
+          .setRequired(true)
+          .setMaxLength(GIF_AUTO_REPLY_URL_MAX_LENGTH)))
+      .addSubcommand((sub) => sub.setName("show").setDescription("現在のGIF自動返信設定を確認します"))
+      .addSubcommand((sub) => sub.setName("clear").setDescription("GIF自動返信設定を解除します"))
       .toJSON(),
 
     new SlashCommandBuilder()
