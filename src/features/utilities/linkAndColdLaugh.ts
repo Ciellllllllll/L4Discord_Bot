@@ -17,7 +17,14 @@ import {
 } from "./youtubePreview.js";
 import { saveVxTwitterPreviewState } from "./vxtwitterPreviewState.js";
 
-const X_DOMAINS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
+const X_DOMAINS = new Set([
+  "x.com",
+  "twitter.com",
+  "mobile.twitter.com",
+  "vxtwitter.com",
+  "fxtwitter.com",
+  "fixupx.com",
+]);
 const YOUTUBE_DOMAINS = new Set([
   "youtube.com",
   "www.youtube.com",
@@ -28,11 +35,11 @@ const YOUTUBE_DOMAINS = new Set([
 ]);
 
 const X_URL_CANDIDATE_PATTERN =
-  /(?<url>(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
+  /(?<url>(?:https?:\/\/)?(?:www\.)?(?:vxtwitter\.com|fxtwitter\.com|fixupx\.com|x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
 const YOUTUBE_URL_CANDIDATE_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
 const LINK_IN_CONTENT_PATTERN =
-  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
+  /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|vxtwitter\.com|fxtwitter\.com|fixupx\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;
 const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -186,9 +193,13 @@ export function coldLaughHitsForMessageContent(content: string): number {
 }
 
 export function extractXLinks(content: string): string[] {
+  const text = String(content || "");
   const found: string[] = [];
-  for (const match of String(content || "").matchAll(X_URL_CANDIDATE_PATTERN)) {
+  for (const match of text.matchAll(X_URL_CANDIDATE_PATTERN)) {
     const raw = match.groups?.url ?? "";
+    if (!hasUrlCandidateBoundary(text, match.index ?? 0, raw)) {
+      continue;
+    }
     const trimmed = stripUrlTail(raw);
     if (trimmed && isXLikeUrl(trimmed)) {
       found.push(trimmed);

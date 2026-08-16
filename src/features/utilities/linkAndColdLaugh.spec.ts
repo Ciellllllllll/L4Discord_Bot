@@ -79,6 +79,17 @@ async function run(): Promise<void> {
     "x.com/user/status/123",
     "twitter.com/user/status/456",
   ]);
+  assert.deepEqual(extractXLinks([
+    "https://vxtwitter.com/vx/status/101",
+    "fxtwitter.com/fx/status/102",
+    "fixupx.com/fixup/status/103",
+    "fixtwitter.com/unsafe/status/104",
+    "notvxtwitter.com/lookalike/status/105",
+  ].join(" ")), [
+    "https://vxtwitter.com/vx/status/101",
+    "fxtwitter.com/fx/status/102",
+    "fixupx.com/fixup/status/103",
+  ]);
   assert.deepEqual(extractYouTubeLinks(mixed), [
     "youtube.com/watch?v=abc",
     "youtu.be/def",
@@ -161,6 +172,54 @@ async function run(): Promise<void> {
   assert.equal((replies[0] as { content?: string }).content, "https://vxtwitter.com/profile");
   assert.equal((replies[1] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
   assert.equal("content" in (replies[1] as object), false);
+
+  const mirrorReplies: unknown[] = [];
+  let mirrorSuppressCalls = 0;
+  await new LinkAndColdLaugh(createCtx() as never).onMessage({
+    ...message,
+    content: "https://fxtwitter.com/profile",
+    suppressEmbeds: async (value: boolean) => {
+      assert.equal(value, true);
+      mirrorSuppressCalls += 1;
+    },
+    reply: async (payload: unknown) => {
+      mirrorReplies.push(payload);
+    },
+  } as never);
+  assert.equal(mirrorSuppressCalls, 1);
+  assert.equal((mirrorReplies[0] as { content?: string }).content, "https://vxtwitter.com/profile");
+  assert.equal((mirrorReplies[0] as { flags?: number }).flags, MessageFlags.SuppressEmbeds);
+
+  const mirrorStatusTargets: string[] = [];
+  const mirrorStatusReplies: unknown[] = [];
+  await new LinkAndColdLaugh(createCtx() as never, {
+    buildVxTwitterReplyPayloads: async (targets) => {
+      mirrorStatusTargets.push(...targets.map((target) => typeof target === "string" ? target : target.vxUrl));
+      return [{
+        embeds: [],
+        flags: MessageFlags.IsComponentsV2,
+        components: [{ type: ComponentType.TextDisplay, content: "mirror status card" }],
+        allowedMentions: { parse: [], repliedUser: false },
+      }];
+    },
+  }).onMessage({
+    ...message,
+    content: [
+      "https://vxtwitter.com/vx/status/201",
+      "https://fxtwitter.com/fx/status/202",
+      "https://fixupx.com/fixup/status/203",
+    ].join(" "),
+    reply: async (payload: unknown) => {
+      mirrorStatusReplies.push(payload);
+      return { id: "mirror-status-reply" };
+    },
+  } as never);
+  assert.deepEqual(mirrorStatusTargets, [
+    "https://vxtwitter.com/vx/status/201",
+    "https://vxtwitter.com/fx/status/202",
+    "https://vxtwitter.com/fixup/status/203",
+  ]);
+  assert.equal((mirrorStatusReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
 
   const youtubeDisabledReplies: unknown[] = [];
   const youtubeDisabledMessage = {
