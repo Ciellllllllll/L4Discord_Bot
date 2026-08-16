@@ -99,8 +99,37 @@ assert.equal(fallbackConfig.LOCAL_LLM_TEMPERATURE, fallbackConfig.AI_TEMPERATURE
 assert.equal(fallbackConfig.YOUTUBE_PREVIEW_ENABLED, true);
 assert.equal(fallbackConfig.YOUTUBE_DATA_API_KEY, "");
 assert.equal(fallbackConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 10000);
+assert.equal(fallbackConfig.ADHD_VIDEO_PUBLIC_BASE_URL, undefined);
+assert.equal(fallbackConfig.ADHD_VIDEO_MIN_FREE_BYTES, 1024 * 1024 * 1024);
+assert.equal(fallbackConfig.ADHD_VIDEO_CACHE_MAX_BYTES, 20 * 1024 * 1024 * 1024);
+assert.equal(fallbackConfig.ADHD_VIDEO_RETENTION_DAYS, 30);
+assert.equal(fallbackConfig.ADHD_VIDEO_FILES_DIR.endsWith("data\\debug\\adhd-videos"), true);
 assert.equal(fallbackConfig.BOKETE_API_BASE_URL, "https://bokete-api-worker.cielgameee.workers.dev");
 assert.equal(fallbackConfig.BOKETE_REQUEST_TIMEOUT_MS, 10000);
+
+assert.equal(loadConfig(baseEnv({ PRODUCTION_ADHD_VIDEO_PUBLIC_BASE_URL: "" })).ADHD_VIDEO_PUBLIC_BASE_URL, undefined);
+assert.throws(
+  () => loadConfig(baseEnv({ PRODUCTION_ADHD_VIDEO_PUBLIC_BASE_URL: "http://media.example/adhd/" })),
+  /ADHD_VIDEO_PUBLIC_BASE_URL/,
+);
+
+const productionVideoConfig = loadConfig(baseEnv({
+  ADHD_VIDEO_FILES_DIR: "data/common-videos",
+  ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/common/",
+  ADHD_VIDEO_MIN_FREE_BYTES: "1234",
+  ADHD_VIDEO_CACHE_MAX_BYTES: "5678",
+  ADHD_VIDEO_RETENTION_DAYS: "12",
+  PRODUCTION_ADHD_VIDEO_FILES_DIR: "data/production-videos",
+  PRODUCTION_ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/production/",
+  PRODUCTION_ADHD_VIDEO_MIN_FREE_BYTES: "91011",
+  PRODUCTION_ADHD_VIDEO_CACHE_MAX_BYTES: "21474836480",
+  PRODUCTION_ADHD_VIDEO_RETENTION_DAYS: "30",
+}));
+assert.equal(productionVideoConfig.ADHD_VIDEO_FILES_DIR.endsWith("data\\production-videos"), true);
+assert.equal(productionVideoConfig.ADHD_VIDEO_PUBLIC_BASE_URL, "https://media.example/production/");
+assert.equal(productionVideoConfig.ADHD_VIDEO_MIN_FREE_BYTES, 91011);
+assert.equal(productionVideoConfig.ADHD_VIDEO_CACHE_MAX_BYTES, 20 * 1024 * 1024 * 1024);
+assert.equal(productionVideoConfig.ADHD_VIDEO_RETENTION_DAYS, 30);
 
 const boketeProductionConfig = loadConfig(baseEnv({
   BOT_PROFILE: "production",

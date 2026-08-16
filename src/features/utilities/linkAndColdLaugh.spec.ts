@@ -7,7 +7,7 @@ import {
   extractYouTubeLinks,
   stripLinksForColdLaughContent,
 } from "./linkAndColdLaugh.js";
-import { buildYouTubePreviewPayload } from "./youtubePreview.js";
+import { buildYouTubeComponentsOnlyFallbackPayload, buildYouTubePreviewPayload } from "./youtubePreview.js";
 
 function createDb(settings: Record<string, unknown> = {}): unknown {
   return {
@@ -477,6 +477,100 @@ async function run(): Promise<void> {
     content: "youtube.com/watch?v=default-limit",
   } as never);
   assert.equal((defaultLimitOptions[0] as { attachmentSizeLimitBytes?: number }).attachmentSizeLimitBytes, 10 * 1024 * 1024);
+
+  const productionEvents: string[] = [];
+  const productionReplies: unknown[] = [];
+  const savedReferences: unknown[] = [];
+  await new LinkAndColdLaugh(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async (_ctx, target) => {
+      productionEvents.push(`cache:${target.videoId}`);
+      return { mediaMode: "vps", mediaUrl: `https://media.example/${target.videoId}.mp4`, lastError: null };
+    },
+    saveYouTubeVideoCacheReference: async (_ctx, _repo, target, _input, notification) => {
+      savedReferences.push({ target, notification });
+      return notification.media;
+    },
+    buildYouTubeReplyPayloads: async () => {
+      throw new Error("VPS媒体ではnative Embedを使ってよい");
+    },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=cache-before-native",
+    embeds: [{ toJSON: () => ({ ...nativeEmbed, url: "https://www.youtube.com/watch?v=cache-before-native" }) }],
+    reply: async (payload: unknown) => {
+      productionEvents.push("reply");
+      productionReplies.push(payload);
+      return { id: "production-reply", components: [], edit: async () => undefined };
+    },
+  } as never);
+  assert.deepEqual(productionEvents, ["cache:cache-before-native", "reply"]);
+  assert.equal(JSON.stringify(productionReplies[0]).includes("https://media.example/cache-before-native.mp4"), true);
+  assert.equal((savedReferences[0] as { notification: { message: { id: string } } }).notification.message.id, "production-reply");
+
+  let recoveryReplyCount = 0;
+  let recoveryFallbackBuilds = 0;
+  await new LinkAndColdLaugh(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async () => ({ mediaMode: "vps", mediaUrl: "https://media.example/recovery.mp4", lastError: null }),
+    saveYouTubeVideoCacheReference: async () => { throw new Error("reference recovery failed"); },
+    buildYouTubeReplyPayloads: async () => { recoveryFallbackBuilds += 1; return []; },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=reference-recovery",
+    embeds: [{ toJSON: () => ({ ...nativeEmbed, url: "https://www.youtube.com/watch?v=reference-recovery" }) }],
+    reply: async () => { recoveryReplyCount += 1; return { id: "recovery-reply", components: [], edit: async () => undefined }; },
+  } as never);
+  assert.equal(recoveryReplyCount, 1);
+  assert.equal(recoveryFallbackBuilds, 0);
+
+  const fallbackPayloads: unknown[] = [];
+  await new LinkAndColdLaugh(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async () => ({
+      mediaMode: "google",
+      mediaUrl: "https://rr.example.googlevideo.com/direct.mp4",
+      lastError: "cache_persist_error",
+    }),
+    saveYouTubeVideoCacheReference: async (_ctx, _repo, _target, _input, notification) => notification.media,
+    buildYouTubeReplyPayloads: async () => [buildYouTubeComponentsOnlyFallbackPayload("https://www.youtube.com/watch?v=google-fallback")],
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=google-fallback",
+    reply: async (payload: unknown) => {
+      fallbackPayloads.push(payload);
+      return { id: "google-reply", components: [], edit: async () => undefined };
+    },
+  } as never);
+  const fallbackJson = JSON.stringify(fallbackPayloads[0]);
+  assert.equal(fallbackJson.includes("rr.example.googlevideo.com/direct.mp4"), true);
+  assert.equal(fallbackJson.includes("i.ytimg.com"), false);
+  assert.equal(fallbackJson.includes("attachment://"), false);
+
+  let nonVideoCacheCalls = 0;
+  await new LinkAndColdLaugh(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async () => {
+      nonVideoCacheCalls += 1;
+      return { mediaMode: "none", lastError: null };
+    },
+    buildYouTubeReplyPayloads: async () => [],
+  }).onMessage({
+    ...message,
+    content: "youtube.com/playlist?list=playlist-1 youtube.com/@channel-1",
+    reply: async () => ({ id: "playlist-reply" }),
+  } as never);
+  assert.equal(nonVideoCacheCalls, 0);
+
+  let debugCacheCalls = 0;
+  await new LinkAndColdLaugh(createCtx({ BOT_PROFILE: "debug" }) as never, {
+    cacheYouTubeVideoForPost: async () => {
+      debugCacheCalls += 1;
+      return { mediaMode: "none", lastError: null };
+    },
+    buildYouTubeReplyPayloads: async () => [],
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=debug-video",
+    reply: async () => ({ id: "debug-reply" }),
+  } as never);
+  assert.equal(debugCacheCalls, 0);
 }
 
 try {

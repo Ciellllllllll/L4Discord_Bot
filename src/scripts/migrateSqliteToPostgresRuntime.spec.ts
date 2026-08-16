@@ -59,6 +59,34 @@ function createMainFixture(path: string): void {
         executor_user_id INTEGER NOT NULL,
         emoji_id INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS youtube_watch_subscriptions (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        youtube_channel_id TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        discord_channel_id TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS youtube_watch_posts (
+        subscription_id TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        channel_title TEXT NOT NULL,
+        published_at TEXT NOT NULL,
+        video_url TEXT NOT NULL,
+        thumbnail_url TEXT,
+        discord_message_id TEXT,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        durable_media_url TEXT,
+        media_finalized_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (subscription_id, video_id)
+      );
     `);
     db.prepare(`
       INSERT INTO pacchi_settings (
@@ -97,6 +125,11 @@ function createMainFixture(path: string): void {
     );
     db.prepare("INSERT INTO senryu_records (id, guild_id, channel_id, message_id, author_id, kamigo, nakashichi, shimogo, formatted, source_content, spoiler, detected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run("senryu-1", "987654321098765432", "987654321098765433", "987654321098765436", "987654321098765435", "上五", "中七です", "下五", "上五 中七です 下五", "content", 1, "2026-01-01T00:03:00.000Z");
+    db.prepare("INSERT INTO youtube_watch_subscriptions (id, guild_id, youtube_channel_id, source_url, discord_channel_id, enabled, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("youtube-subscription-1", "987654321098765432", "youtube-channel-1", "https://www.youtube.com/channel/youtube-channel-1", "987654321098765433", 1, null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
+    const insertYouTubePost = db.prepare("INSERT INTO youtube_watch_posts (subscription_id, video_id, title, channel_title, published_at, video_url, thumbnail_url, discord_message_id, status, error_message, durable_media_url, media_finalized_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    insertYouTubePost.run("youtube-subscription-1", "youtube-vps", "VPS動画", "YouTube", "2026-01-01T00:00:00.000Z", "https://www.youtube.com/watch?v=youtube-vps", null, "youtube-message-vps", "sent", null, "https://media.example/youtube-vps.mp4", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
+    insertYouTubePost.run("youtube-subscription-1", "youtube-none", "未保存動画", "YouTube", "2026-01-01T00:00:00.000Z", "https://www.youtube.com/watch?v=youtube-none", null, "youtube-message-none", "sent", null, null, null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
     const insertSnowflakeFixture = db.prepare("INSERT INTO snowflake_verify_fixture (guild_id, executor_user_id, emoji_id) VALUES (?, ?, ?)");
     db.transaction(() => {
       const first = 987654321000000000n;
@@ -209,6 +242,27 @@ async function assertPollsStateRevisionSchema(adminPool: Awaited<ReturnType<type
     [schema],
   );
   assert.deepEqual(result.rows, [{ data_type: "bigint", is_nullable: "NO", column_default: "0", version: 7 }]);
+}
+
+async function assertYouTubeVideoCacheReferences(adminPool: Awaited<ReturnType<typeof createPgPool>>, schema: string): Promise<void> {
+  const references = await adminPool.query<{ message_id: string; video_id: string; media_mode: string; youtube_url: string }>(
+    `SELECT message_id, video_id, media_mode, youtube_url
+     FROM ${quotePgIdent(schema)}.youtube_video_cache_references
+     ORDER BY message_id`,
+  );
+  assert.deepEqual(references.rows, [
+    { message_id: "youtube-message-none", video_id: "youtube-none", media_mode: "none", youtube_url: "https://www.youtube.com/watch?v=youtube-none" },
+    { message_id: "youtube-message-vps", video_id: "youtube-vps", media_mode: "vps", youtube_url: "https://www.youtube.com/watch?v=youtube-vps" },
+  ]);
+  const constraints = await adminPool.query<{ definition: string }>(
+    `SELECT pg_get_constraintdef(constraint_row.oid) AS definition
+     FROM pg_constraint AS constraint_row
+     JOIN pg_class AS table_class ON table_class.oid = constraint_row.conrelid
+     JOIN pg_namespace AS namespace ON namespace.oid = table_class.relnamespace
+     WHERE namespace.nspname = $1 AND table_class.relname = 'youtube_video_cache_references' AND constraint_row.contype = 'c'`,
+    [schema],
+  );
+  assert.match(constraints.rows[0]?.definition ?? "", /media_mode.*vps.*google.*none/i);
 }
 
 async function assertKyselySchema(label: string, db: Kysely<unknown>, expectedSchema: string): Promise<void> {
@@ -370,8 +424,9 @@ async function run(): Promise<void> {
     const mainMigrationVersions = await adminPool.query<{ version: number }>(
       `SELECT version FROM ${quotePgIdent(schemas.main)}.postgres_schema_migrations ORDER BY version`,
     );
-    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 12 }, (_, index) => index + 1));
+    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 14 }, (_, index) => index + 1));
     await assertPollsStateRevisionSchema(adminPool, schemas.main);
+    await assertYouTubeVideoCacheReferences(adminPool, schemas.main);
     await assertKyselySchema(
       "main",
       createPostgresMainKysely({ connectionString, schema: schemas.main }) as Kysely<unknown>,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  AttachmentBuilder,
   ButtonStyle,
   ComponentType,
   EmbedType,
@@ -21,6 +22,7 @@ import {
   normalizeYouTubePlaylistResponse,
   normalizeYouTubeVideoResponse,
   parseYouTubeUrl,
+  replaceYouTubePreviewMedia,
   type YouTubeReplyTarget,
 } from "./youtubePreview.js";
 
@@ -501,6 +503,16 @@ async function run(): Promise<void> {
     (component) => component.type === ComponentType.MediaGallery,
   );
   assert.equal(nativeVideoGallery?.items[0]?.media.url, nativeVideoEmbed.video?.proxy_url);
+  const durableNativePayload = buildYouTubeNativeEmbedPayload(
+    nativeVideoEmbed,
+    undefined,
+    "https://media.example.com/adhd/native-video.mp4",
+  );
+  const durableNativeContainer = durableNativePayload.components[0] as APIContainerComponent;
+  const durableNativeGallery = durableNativeContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(durableNativeGallery?.items[0]?.media.url, "https://media.example.com/adhd/native-video.mp4");
   const nativeVideoRow = nativeVideoContainer.components.find((component) => component.type === ComponentType.ActionRow);
   assert.equal(nativeVideoRow?.components[0]?.type, ComponentType.Button);
   const nativeVideoButton = nativeVideoRow?.components[0];
@@ -703,6 +715,38 @@ async function run(): Promise<void> {
   assert.deepEqual(mediaResolverCalls, ["https://www.youtube.com/watch?v=with-media"]);
   assert.equal(resolvedVideoGallery?.items[0]?.media.url, "attachment://youtube-preview.mp4");
   assert.equal(resolvedVideoPayloads[0]?.files?.length, 1);
+
+  let durableOverrideResolverCalls = 0;
+  const durableOverridePayloads = await buildYouTubeReplyPayloads([{
+    kind: "video",
+    originalUrl: "https://youtu.be/durable-override",
+    canonicalUrl: "https://www.youtube.com/watch?v=durable-override",
+    id: "durable-override",
+  }], {
+    apiKey: "key",
+    mediaUrlOverride: "https://media.example.com/adhd/durable-override.mp4",
+    fetcher: async () => jsonResponse({
+      items: [{
+        snippet: {
+          title: "Durable override",
+          thumbnails: { high: { url: "https://i.ytimg.com/vi/durable-override/hqdefault.jpg" } },
+        },
+        contentDetails: {},
+        statistics: {},
+      }],
+    }),
+    mediaResolver: async () => {
+      durableOverrideResolverCalls += 1;
+      return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/temporary.mp4" };
+    },
+  });
+  const durableOverrideContainer = durableOverridePayloads[0]?.components?.[0] as APIContainerComponent;
+  const durableOverrideGallery = durableOverrideContainer.components.find(
+    (component) => component.type === ComponentType.MediaGallery,
+  );
+  assert.equal(durableOverrideResolverCalls, 0);
+  assert.equal(durableOverrideGallery?.items[0]?.media.url, "https://media.example.com/adhd/durable-override.mp4");
+  assert.equal(durableOverridePayloads[0]?.files, undefined);
 
   const oversizedResolverPayloads = await buildYouTubeReplyPayloads([
     {
@@ -1134,6 +1178,98 @@ async function run(): Promise<void> {
   assert.equal(nonVideoResolverCalls, 1);
   assert.equal(oembedMediaGallery?.items[0]?.media.url, "attachment://youtube-preview.mp4");
   assert.equal(oembedMediaPayloads[0]?.files?.length, 1);
+
+  const cacheFallbackPayload = buildYouTubePreviewPayload({
+    kind: "video",
+    url: "https://www.youtube.com/watch?v=fallback",
+    title: "Fallback video",
+    thumbnailUrl: "https://i.ytimg.com/vi/fallback/hqdefault.jpg",
+    channelIconUrl: "https://yt3.ggpht.com/fallback.jpg",
+  }, {
+    fallback: true,
+    mediaMode: "google",
+    mediaUrl: "https://rr1---sn.googlevideo.com/videoplayback?expire=1",
+    files: [new AttachmentBuilder(Buffer.from("not-used"), { name: "not-used.mp4" })],
+  });
+  const fallbackJson = JSON.stringify(cacheFallbackPayload);
+  assert.equal(fallbackJson.includes("attachment://"), false);
+  assert.equal(fallbackJson.includes("i.ytimg.com"), false);
+  assert.equal(fallbackJson.includes("yt3.ggpht.com"), false);
+  assert.equal(fallbackJson.includes('"type":11'), false);
+  assert.equal(fallbackJson.includes("rr1---sn.googlevideo.com"), true);
+  assert.equal("files" in cacheFallbackPayload, false);
+
+  const resolverFailurePayload = buildYouTubePreviewPayload({
+    kind: "video",
+    url: "https://www.youtube.com/watch?v=none",
+    title: "No video",
+    thumbnailUrl: "https://i.ytimg.com/vi/none/hqdefault.jpg",
+    channelIconUrl: "https://yt3.ggpht.com/none.jpg",
+  }, { fallback: true, mediaMode: "none" });
+  const resolverFailureJson = JSON.stringify(resolverFailurePayload);
+  assert.equal(resolverFailureJson.includes('"type":11'), false);
+  assert.equal(resolverFailureJson.includes("MediaGallery"), false);
+  assert.equal(resolverFailurePayload.components[0]?.type, ComponentType.Container);
+  if (resolverFailurePayload.components[0]?.type === ComponentType.Container) {
+    assert.equal(resolverFailurePayload.components[0].components.some((item) => item.type === ComponentType.MediaGallery), false);
+    assert.equal(resolverFailurePayload.components[0].components.at(-1)?.type, ComponentType.ActionRow);
+  }
+
+  let noneFallbackResolverCalls = 0;
+  const noneFallbackReply = await buildYouTubeReplyPayloads([{
+    kind: "video",
+    originalUrl: "https://youtu.be/none-fallback",
+    canonicalUrl: "https://www.youtube.com/watch?v=none-fallback",
+    id: "none-fallback",
+  }], {
+    apiKey: "key",
+    componentsOnly: true,
+    mediaMode: "none",
+    fetcher: async () => jsonResponse({
+      items: [{
+        snippet: {
+          title: "None fallback",
+          thumbnails: { high: { url: "https://i.ytimg.com/vi/none-fallback/hqdefault.jpg" } },
+        },
+        contentDetails: {},
+        statistics: {},
+      }],
+    }),
+    mediaResolver: async () => {
+      noneFallbackResolverCalls += 1;
+      return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback?expire=1" };
+    },
+  });
+  const noneFallbackJson = JSON.stringify(noneFallbackReply[0]);
+  assert.equal(noneFallbackJson.includes("rr.example.googlevideo.com"), false);
+  assert.equal(noneFallbackJson.includes("i.ytimg.com"), false);
+  assert.equal("files" in noneFallbackReply[0]!, false);
+  assert.equal(noneFallbackResolverCalls, 0);
+
+  const transformedFallback = replaceYouTubePreviewMedia([{
+    type: ComponentType.Container,
+    components: [{
+      type: ComponentType.Section,
+      components: [{ type: ComponentType.TextDisplay, content: "本文を維持" }],
+      accessory: { type: ComponentType.Thumbnail, media: { url: "https://yt3.ggpht.com/old.jpg" } },
+    }, {
+      type: ComponentType.MediaGallery,
+      items: [{ media: { url: "https://expired.example/video.mp4" } }],
+    }, {
+      type: ComponentType.ActionRow,
+      components: [{ type: ComponentType.Button, style: ButtonStyle.Link, label: "YouTubeで開く", url: "https://www.youtube.com/watch?v=old" }],
+    }],
+  }], undefined, { fallback: true });
+  const transformedJson = JSON.stringify(transformedFallback);
+  assert.equal(transformedJson.includes('"type":11'), false);
+  assert.equal(transformedJson.includes("本文を維持"), true);
+  assert.equal(transformedJson.includes("YouTubeで開く"), true);
+  assert.equal(transformedJson.includes("MediaGallery"), false);
+
+  const restoredFallback = replaceYouTubePreviewMedia(transformedFallback, "https://media.example/fallback.mp4", { fallback: true });
+  const restoredJson = JSON.stringify(restoredFallback);
+  assert.equal(restoredJson.includes("https://media.example/fallback.mp4"), true);
+  assert.equal(restoredJson.includes('"type":11'), false);
 }
 
 run()
