@@ -3,10 +3,12 @@ import { ComponentType, EmbedType, type APIEmbed } from "discord.js";
 import type { PreviewDocumentTranslations } from "../shared/previewTranslationGate.js";
 import {
   buildYouTubeComponentsOnlyFallbackPayload,
+  buildYouTubePreviewPayload,
   buildYouTubeReplyPayloads,
   prepareYouTubeLinkExpansion,
   sendYouTubeLinkExpansion,
 } from "./youtubeLinkExpansion.js";
+import { PREVIEW_YOUTUBE_MEDIA_REFRESH_ID } from "./youtubeMediaRefresh.js";
 import type { YouTubeReplyTarget } from "./youtubePreviewSource.js";
 
 const target: YouTubeReplyTarget = {
@@ -39,6 +41,17 @@ assert.equal(JSON.stringify(built).includes("訳題"), true);
 assert.equal(JSON.stringify(built).includes("https://media.example/video.mp4"), true);
 assert.equal(JSON.stringify(built?.previewState?.document).includes("https://media.example/video.mp4"), false);
 assert.equal(JSON.stringify(built?.previewState?.document).includes("https://i.ytimg.com/original.jpg"), true);
+assert.equal(JSON.stringify(built).includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID), true);
+
+for (const preview of [
+  { kind: "playlist" as const, url: "https://www.youtube.com/playlist?list=PL1234567890", title: "Playlist" },
+  { kind: "channel" as const, url: "https://www.youtube.com/@example", title: "Channel" },
+]) {
+  assert.equal(
+    JSON.stringify(buildYouTubePreviewPayload(preview)).includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID),
+    false,
+  );
+}
 
 const events: string[] = [];
 const native: APIEmbed = {

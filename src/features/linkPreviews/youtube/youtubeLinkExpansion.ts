@@ -38,6 +38,7 @@ import {
   type YouTubeReplyTarget,
   type YouTubeSourceFetchOptions,
 } from "./youtubePreviewSource.js";
+import { addYouTubeMediaRefreshButton } from "./youtubeMediaRefresh.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MEDIA_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
@@ -120,7 +121,7 @@ function payloadFromDocument(
     ? replaceYouTubePreviewMedia(components, mediaUrl, { fallback: options.fallback })
     : components;
   return {
-    embeds: [], flags: MessageFlags.IsComponentsV2, components: replaced,
+    embeds: [], flags: MessageFlags.IsComponentsV2, components: addYouTubeMediaRefreshButton(replaced),
     allowedMentions: { parse: [], repliedUser: false },
     ...(options.files?.length && !options.fallback ? { files: options.files } : {}),
     ...(state ? { previewState: state } : {}),

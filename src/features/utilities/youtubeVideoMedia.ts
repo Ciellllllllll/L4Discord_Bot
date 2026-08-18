@@ -240,7 +240,7 @@ export async function resolveYouTubeVideoMedia(
   });
 }
 
-function isGoogleVideoMediaUrl(value: string): boolean {
+export function isGoogleVideoMediaUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
     const host = parsed.hostname.toLowerCase();

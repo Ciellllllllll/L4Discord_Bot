@@ -30,6 +30,7 @@ import {
   type YouTubePreviewResult,
   type YouTubeReplyTarget,
 } from "./youtubePreviewSource.js";
+import { addYouTubeMediaRefreshButton } from "./youtubeMediaRefresh.js";
 
 const NATIVE_EMBED_WAIT_MS = 3_000;
 
@@ -182,12 +183,13 @@ function payload(
   media: { replace: boolean; url?: string; fallback?: boolean },
 ): YouTubeWatcherNotificationPayload {
   const rendered = buildPreviewComponents(document, translations);
+  const withMedia = media.replace
+    ? replacePreviewMedia(rendered, media.url, { fallback: media.fallback, description: "YouTube video" })
+    : rendered;
   return {
     embeds: [],
     flags: MessageFlags.IsComponentsV2,
-    components: media.replace
-      ? replacePreviewMedia(rendered, media.url, { fallback: media.fallback, description: "YouTube video" })
-      : rendered,
+    components: addYouTubeMediaRefreshButton(withMedia),
     allowedMentions: { parse: [] },
   };
 }

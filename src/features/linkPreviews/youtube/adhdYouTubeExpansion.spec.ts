@@ -6,6 +6,7 @@ import {
   probeYouTubeNativeEmbed,
   sendYouTubeWatcherNotification,
 } from "./adhdYouTubeExpansion.js";
+import { PREVIEW_YOUTUBE_MEDIA_REFRESH_ID } from "./youtubeMediaRefresh.js";
 
 const entry = {
   videoId: "video-adhd",
@@ -126,6 +127,8 @@ function hasMedia(payload: { components?: readonly unknown[] }, url: string): bo
   assert.equal(textFrom(plan.firstPayload).includes(`<t:${Math.floor(Date.parse(entry.publishedAt) / 1_000)}:F>`), true);
   assert.equal(textFrom(plan.firstPayload).includes("translation-model"), true);
   assert.equal(JSON.stringify(plan.firstPayload).includes("preview:show-original"), true);
+  assert.equal(JSON.stringify(plan.firstPayload).includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID), true);
+  assert.equal(JSON.stringify(plan.retryPayload).includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID), true);
   assert.equal(hasMedia(plan.firstPayload, nativeEmbed.video!.proxy_url!), false);
   assert.equal(hasMedia(plan.retryPayload, nativeEmbed.video!.proxy_url!), false);
   assert.equal(hasMedia(plan.firstPayload, googleVideoUrl), true);
@@ -284,6 +287,7 @@ for (const mediaResolver of [
   assert.equal(textFrom(plan.firstPayload).includes("RSS title"), true);
   assert.equal(textFrom(plan.firstPayload).includes("RSS channel"), true);
   assert.equal(JSON.stringify(plan.firstPayload).includes("preview:show-original"), false);
+  assert.equal(JSON.stringify(plan.firstPayload).includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID), true);
   assert.equal(plan.state, undefined);
   assert.equal(hasMedia(plan.firstPayload, entry.thumbnailUrl), false);
 }

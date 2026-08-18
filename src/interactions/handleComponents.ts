@@ -62,6 +62,7 @@ import { parseCustomId } from "./parseCustomId.js";
 import { handleVxTwitterPreviewButton } from "../features/utilities/vxtwitterPreviewInteractions.js";
 import { handlePreviewInteraction } from "../features/linkPreviews/shared/previewInteractions.js";
 import { refreshPreviewTranslationState } from "../features/linkPreviews/linkPreviewMessageHandler.js";
+import { handleYouTubeMediaRefresh } from "../features/linkPreviews/youtube/youtubeMediaRefresh.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
   if (await handleSetupUiOpenButton(interaction, ctx)) return true;
@@ -131,6 +132,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
       channelId,
     ),
   })) return;
+  if (await handleYouTubeMediaRefresh(interaction, ctx)) return;
   if (await handleVxTwitterPreviewButton(interaction, ctx)) return;
   if (await handleAnonymousSurveyViewButton(interaction, ctx)) return;
   if (await handleAnonymousSurveyButton(interaction, ctx)) return;

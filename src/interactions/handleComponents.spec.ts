@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ButtonStyle, ComponentType } from "discord.js";
+import { PREVIEW_YOUTUBE_MEDIA_REFRESH_ID } from "../features/linkPreviews/youtube/youtubeMediaRefresh.js";
 import { routeButton } from "./handleComponents.js";
 
 test("button routing gives a legacy id backed by common v1 state to the common handler first", async () => {
@@ -164,4 +165,43 @@ test("button routing falls through from common legacy v0 state to the old X hand
     log: { warn() {} },
   } as never);
   assert.deepEqual(calls, ["defer", "edit"]);
+});
+
+test("button routing gives YouTube media refresh to its handler immediately after common preview buttons", async () => {
+  const calls: string[] = [];
+  const message = {
+    id: "message-youtube",
+    author: { id: "bot-1" },
+    components: [{
+      toJSON: () => ({
+        type: ComponentType.Container,
+        components: [{
+          type: ComponentType.ActionRow,
+          components: [{
+            type: ComponentType.Button,
+            style: ButtonStyle.Secondary,
+            label: "動画を再取得",
+            custom_id: PREVIEW_YOUTUBE_MEDIA_REFRESH_ID,
+          }],
+        }],
+      }),
+    }],
+    async fetch() { calls.push("fetch"); return message; },
+  };
+  const interaction = {
+    customId: PREVIEW_YOUTUBE_MEDIA_REFRESH_ID,
+    guildId: "guild-1",
+    channelId: "channel-1",
+    deferred: false,
+    replied: false,
+    message,
+    async deferUpdate() { interaction.deferred = true; calls.push("defer"); },
+    async followUp() { calls.push("followUp"); },
+  };
+  await routeButton(interaction as never, {
+    config: { GUILD_ID: "guild-1", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
+    client: { user: { id: "bot-1" } },
+    log: { warn() {} },
+  } as never);
+  assert.deepEqual(calls, ["defer", "fetch", "followUp"]);
 });
