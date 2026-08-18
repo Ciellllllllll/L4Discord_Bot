@@ -18,6 +18,8 @@ import {
   fetchFixTweetPreview,
   normalizeFixTweetResponse,
   parseXStatusUrl,
+  VX_PREVIEW_SHOW_ORIGINAL_ID,
+  VX_PREVIEW_SHOW_TRANSLATION_ID,
 } from "./vxtwitterPreview.js";
 
 function collectContainerText(container: APIContainerComponent | undefined): string {
@@ -33,6 +35,8 @@ function collectContainerText(container: APIContainerComponent | undefined): str
 }
 
 async function run(): Promise<void> {
+  assert.equal(VX_PREVIEW_SHOW_ORIGINAL_ID, "vxpreview:show-original");
+  assert.equal(VX_PREVIEW_SHOW_TRANSLATION_ID, "vxpreview:show-translation");
   assert.deepEqual(parseXStatusUrl("x.com/user/status/1234567890"), {
     id: "1234567890",
     screenName: "user",
@@ -283,16 +287,20 @@ async function run(): Promise<void> {
   assert.ok(
     attributionIndex > 0
       && galleryIndexes.length === 2
-      && galleryIndexes[0]! > attributionIndex
       && quoteIndex > galleryIndexes[0]!
       && galleryIndexes[1]! > quoteIndex
       && metaIndex > galleryIndexes[1]!
-      && rowIndex > metaIndex,
+      && attributionIndex > metaIndex
+      && rowIndex > attributionIndex,
   );
   assert.equal(row?.components.length, 2);
   assert.equal((row?.components[0] as { label?: string } | undefined)?.label, "Xで開く");
   assert.equal((row?.components[1] as { label?: string } | undefined)?.label, "原文を表示");
-  assert.equal((row?.components[1] as { custom_id?: string } | undefined)?.custom_id, "vxpreview:show-original");
+  assert.equal((row?.components[1] as { custom_id?: string } | undefined)?.custom_id, "preview:show-original");
+  assert.equal(payload.previewState?.document.source, "x");
+  assert.equal(payload.previewState?.document.blocks.some((block) => (
+    block.type === "text" && block.lines.some((line) => line.parts.some((part) => part.translationKey === "main"))
+  )), true);
 
   const originalPayload = buildVxTwitterPreviewPayload(preview.tweet, "https://vxtwitter.com/main/status/123", {
     main: {
@@ -324,7 +332,7 @@ async function run(): Promise<void> {
     | APIActionRowComponent<APIButtonComponent>
     | undefined;
   assert.equal((originalRow?.components[1] as { label?: string } | undefined)?.label, "翻訳を表示");
-  assert.equal((originalRow?.components[1] as { custom_id?: string } | undefined)?.custom_id, "vxpreview:show-translation");
+  assert.equal((originalRow?.components[1] as { custom_id?: string } | undefined)?.custom_id, "preview:show-translation");
   assert.equal(row?.components[0]?.style, ButtonStyle.Link);
   assert.equal(row?.components[0]?.label, "Xで開く");
 
