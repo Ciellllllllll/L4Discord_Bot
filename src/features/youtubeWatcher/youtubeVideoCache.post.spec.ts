@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { ComponentType } from "discord.js";
 import { cacheYouTubeVideoForPost, saveYouTubeVideoCacheReferenceForPost, YouTubeVideoCacheReferenceRecoveryError } from "./youtubeVideoCache.service.js";
+import { persistYouTubeVideo } from "./youtubeWatcher.videoStore.js";
 
 const input = {
   videoId: "video-1",
@@ -55,6 +56,153 @@ assert.deepEqual(callOrder, [
   "lock:end",
 ]);
 
+let cacheResolverCalls = 0;
+let cachePersistReceivedResolver = false;
+const cacheResolver = async () => {
+  cacheResolverCalls += 1;
+  return { status: "ok" as const, mediaUrl: "https://rr.example.googlevideo.com/shared.mp4" };
+};
+const sharedCacheMedia = await cacheYouTubeVideoForPost({
+  config: {
+    BOT_PROFILE: "production",
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    ADHD_VIDEO_MIN_FREE_BYTES: 1_000,
+    ADHD_VIDEO_CACHE_MAX_BYTES: 2_000,
+    ADHD_VIDEO_RETENTION_DAYS: 7,
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, input, {
+  repo: { withVideoCacheLock: async <T>(run: (repo: unknown) => Promise<T>): Promise<T> => run({} as never) },
+  persistVideo: async (
+    candidate: Parameters<typeof persistYouTubeVideo>[0],
+    options: Parameters<typeof persistYouTubeVideo>[1],
+  ) => {
+    cachePersistReceivedResolver = typeof options.mediaResolver === "function";
+    const resolved = await options.mediaResolver!(candidate.videoUrl, {
+      timeoutMs: options.timeoutMs,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+    });
+    return resolved.status === "ok"
+      ? { status: "fallback", reason: "download_error", googleVideoUrl: resolved.mediaUrl, evictedVideoIds: [] }
+      : { status: "fallback", reason: resolved.reason, evictedVideoIds: [] };
+  },
+  mediaResolver: cacheResolver,
+  resolveMedia: cacheResolver,
+  maintenance: { fallbackVideos: async () => undefined, restoreCachedVideo: async () => undefined },
+} as never);
+assert.equal(cachePersistReceivedResolver, true);
+assert.equal(cacheResolverCalls, 1);
+assert.deepEqual(sharedCacheMedia, {
+  mediaMode: "google",
+  mediaUrl: "https://rr.example.googlevideo.com/shared.mp4",
+  lastError: "download_error",
+});
+
+let notificationResolverCalls = 0;
+const notificationCachedMedia = await cacheYouTubeVideoForPost({
+  config: {
+    BOT_PROFILE: "production",
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    ADHD_VIDEO_MIN_FREE_BYTES: 1_000,
+    ADHD_VIDEO_CACHE_MAX_BYTES: 2_000,
+    ADHD_VIDEO_RETENTION_DAYS: 7,
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, input, {
+  repo: { withVideoCacheLock: async <T>(run: (repo: unknown) => Promise<T>): Promise<T> => run({} as never) },
+  persistVideo: async (
+    candidate: Parameters<typeof persistYouTubeVideo>[0],
+    options: Parameters<typeof persistYouTubeVideo>[1],
+  ) => {
+    const resolved = await options.mediaResolver!(candidate.videoUrl, {
+      timeoutMs: options.timeoutMs,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+    });
+    assert.equal(resolved.status, "ok");
+    return {
+      status: "cached",
+      mediaUrl: "https://media.example/adhd/video-1.mp4",
+      evictedVideoIds: [],
+    };
+  },
+  mediaResolver: async () => {
+    notificationResolverCalls += 1;
+    return notificationResolverCalls === 1
+      ? { status: "fallback", reason: "temporary" }
+      : { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/notification.mp4" };
+  },
+  maintenance: { fallbackVideos: async () => undefined, restoreCachedVideo: async () => undefined },
+} as never);
+let notificationUpserts = 0;
+const notificationFinalMedia = await saveYouTubeVideoCacheReferenceForPost({
+  config: {
+    BOT_PROFILE: "production",
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, {
+  withVideoCacheLock: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  upsertVideoCacheReference: async () => {
+    notificationUpserts += 1;
+    if (notificationUpserts === 1) throw new Error("database unavailable");
+  },
+} as never, { guildId: "guild-1", channelId: "channel-1" }, input, {
+  message: {
+    id: "message-notification-resolution-share",
+    components: [{ toJSON: () => ({ type: ComponentType.Container, components: [] }) }],
+    edit: async () => undefined,
+  },
+  media: notificationCachedMedia,
+}, {
+  videoExists: async () => false,
+  resolveMedia: async () => { throw new Error("cache resolution must be shared"); },
+});
+assert.equal(notificationResolverCalls, 2);
+assert.deepEqual(notificationFinalMedia, {
+  mediaMode: "google",
+  mediaUrl: "https://rr.example.googlevideo.com/notification.mp4",
+  lastError: "reference_save_error",
+});
+
+let rejectedCacheResolverCalls = 0;
+const rejectedCacheMedia = await cacheYouTubeVideoForPost({
+  config: {
+    BOT_PROFILE: "production",
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    ADHD_VIDEO_MIN_FREE_BYTES: 1_000,
+    ADHD_VIDEO_CACHE_MAX_BYTES: 2_000,
+    ADHD_VIDEO_RETENTION_DAYS: 7,
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, input, {
+  repo: { withVideoCacheLock: async <T>(run: (repo: unknown) => Promise<T>): Promise<T> => run({} as never) },
+  persistVideo: async (
+    candidate: Parameters<typeof persistYouTubeVideo>[0],
+    options: Parameters<typeof persistYouTubeVideo>[1],
+  ) => {
+    await options.mediaResolver!(candidate.videoUrl, {
+      timeoutMs: options.timeoutMs,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+    });
+    throw new Error("unreachable");
+  },
+  mediaResolver: async () => {
+    rejectedCacheResolverCalls += 1;
+    throw new Error("resolver unavailable");
+  },
+  maintenance: { fallbackVideos: async () => undefined, restoreCachedVideo: async () => undefined },
+} as never);
+assert.equal(rejectedCacheResolverCalls, 2);
+assert.deepEqual(rejectedCacheMedia, { mediaMode: "none", lastError: "googlevideo_pending:inner_tube_error" });
+
 const referenceOrder: string[] = [];
 const missingVpsMedia = await saveYouTubeVideoCacheReferenceForPost({
   config: {
@@ -91,6 +239,154 @@ assert.deepEqual(missingVpsMedia, {
 assert.deepEqual(referenceOrder, [
   "lock:start", "exists:false", "resolve", "edit:fallback", "upsert:google", "lock:end",
 ]);
+
+const missingVpsPendingMedia = await saveYouTubeVideoCacheReferenceForPost({
+  config: {
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, {
+  withVideoCacheLock: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  upsertVideoCacheReference: async () => undefined,
+} as never, { guildId: "guild-1", channelId: "channel-1" }, input, {
+  message: {
+    id: "message-missing-vps-pending",
+    components: [{ toJSON: () => ({ type: ComponentType.Container, components: [] }) }],
+    edit: async () => undefined,
+  },
+  media: { mediaMode: "vps", mediaUrl: "https://media.example/video-1.mp4", lastError: null },
+}, {
+  videoExists: async () => false,
+  resolveMedia: async () => ({ status: "fallback", reason: "unavailable" }),
+});
+assert.deepEqual(missingVpsPendingMedia, {
+  mediaMode: "none",
+  lastError: "googlevideo_pending:unavailable",
+});
+
+let missingVpsResolveCalls = 0;
+let missingVpsUpsertCalls = 0;
+await saveYouTubeVideoCacheReferenceForPost({
+  config: {
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, {
+  withVideoCacheLock: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  upsertVideoCacheReference: async () => {
+    missingVpsUpsertCalls += 1;
+    if (missingVpsUpsertCalls === 1) throw new Error("database unavailable");
+  },
+} as never, { guildId: "guild-1", channelId: "channel-1" }, input, {
+  message: {
+    id: "message-missing-vps-save-retry",
+    components: [{ toJSON: () => ({ type: ComponentType.Container, components: [] }) }],
+    edit: async () => undefined,
+  },
+  media: { mediaMode: "vps", mediaUrl: "https://media.example/video-1.mp4", lastError: null },
+}, {
+  videoExists: async () => false,
+  resolveMedia: async () => {
+    missingVpsResolveCalls += 1;
+    return { status: "fallback", reason: "unavailable" };
+  },
+});
+assert.equal(missingVpsResolveCalls, 1);
+assert.equal(missingVpsUpsertCalls, 2);
+
+let referenceSaveAttempts = 0;
+let referenceSaveFallbackEdit: unknown;
+const referenceSaveFallback = await saveYouTubeVideoCacheReferenceForPost({
+  config: {
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, {
+  withVideoCacheLock: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  upsertVideoCacheReference: async () => {
+    referenceSaveAttempts += 1;
+    if (referenceSaveAttempts === 1) throw new Error("database unavailable");
+  },
+  updateVideoCacheReferenceMedia: async () => undefined,
+} as never, { guildId: "guild-1", channelId: "channel-1" }, input, {
+  message: {
+    id: "message-reference-fallback",
+    components: [{ toJSON: () => ({
+      type: ComponentType.Container,
+      components: [{
+        type: ComponentType.MediaGallery,
+        items: [{ media: { url: "https://media.example/video-1.mp4" } }],
+      }],
+    }) }],
+    edit: async (payload: unknown) => { referenceSaveFallbackEdit = payload; },
+  },
+  media: { mediaMode: "vps", mediaUrl: "https://media.example/video-1.mp4", lastError: null },
+}, {
+  videoExists: async () => true,
+  resolveMedia: async () => ({ status: "fallback", reason: "unavailable" }),
+});
+assert.deepEqual(referenceSaveFallback, { mediaMode: "none", lastError: "googlevideo_pending:unavailable" });
+assert.equal(referenceSaveAttempts, 2);
+const referenceSaveFallbackJson = JSON.stringify(referenceSaveFallbackEdit);
+assert.equal(referenceSaveFallbackJson.includes("https://i.ytimg.com/vi/video-1/hqdefault.jpg"), false);
+assert.equal(referenceSaveFallbackJson.includes("https://media.example/video-1.mp4"), false);
+
+let pendingReferenceResolverCalls = 0;
+let pendingReferenceUpserts = 0;
+const pendingReferenceMedia = await saveYouTubeVideoCacheReferenceForPost({
+  config: { ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos", YOUTUBE_REQUEST_TIMEOUT_MS: 3_000 },
+  log: { warn: () => undefined },
+} as never, {
+  withVideoCacheLock: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  upsertVideoCacheReference: async () => {
+    pendingReferenceUpserts += 1;
+    if (pendingReferenceUpserts === 1) throw new Error("temporary database failure");
+  },
+  updateVideoCacheReferenceMedia: async () => undefined,
+} as never, { guildId: "guild-1", channelId: "channel-1" }, input, {
+  message: {
+    id: "message-pending-reference",
+    components: [{ toJSON: () => ({ type: ComponentType.Container, components: [] }) }],
+    edit: async () => undefined,
+  },
+  media: { mediaMode: "none", lastError: "googlevideo_pending:timeout" },
+}, {
+  videoExists: async () => false,
+  resolveMedia: async () => { pendingReferenceResolverCalls += 1; return { status: "fallback", reason: "unused" }; },
+});
+assert.equal(pendingReferenceResolverCalls, 0);
+assert.deepEqual(pendingReferenceMedia, { mediaMode: "none", lastError: "googlevideo_pending:timeout" });
+
+let debugSavedMedia: unknown;
+const debugReferenceMedia = await saveYouTubeVideoCacheReferenceForPost({
+  config: {
+    BOT_PROFILE: "debug",
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, {
+  withVideoCacheLock: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  upsertVideoCacheReference: async (reference: { mediaMode: string }) => { debugSavedMedia = reference; },
+  updateVideoCacheReferenceMedia: async () => undefined,
+} as never, { guildId: "guild-1", channelId: "channel-1" }, input, {
+  message: {
+    id: "message-debug-reference",
+    components: [{ toJSON: () => ({ type: ComponentType.Container, components: [] }) }],
+    edit: async () => undefined,
+  },
+  media: { mediaMode: "none", lastError: "googlevideo_pending:timeout" },
+}, {
+  videoExists: async () => { throw new Error("debug must not inspect VPS files"); },
+});
+assert.equal((debugSavedMedia as { mediaMode?: string }).mediaMode, "none");
+assert.deepEqual(debugReferenceMedia, { mediaMode: "none", lastError: "googlevideo_pending:timeout" });
 
 let outerReferenceUpserts = 0;
 let lockedReferenceUpserts = 0;

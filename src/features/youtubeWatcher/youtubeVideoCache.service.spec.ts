@@ -65,6 +65,29 @@ async function run(): Promise<void> {
   assert.equal(edits.every((payload) => JSON.stringify(payload).includes('"type":11') === false), true);
   assert.deepEqual(updates.map(([id, mode]) => [id, mode]), [["message-1", "google"], ["message-2", "google"]]);
 
+  let thumbnailFallbackEdit: unknown;
+  const thumbnailFallbackUpdates: Array<[string, string, string | null]> = [];
+  const thumbnailFallbackService = createYouTubeVideoCacheMaintenanceService({
+    repo: {
+      listVpsVideoCacheReferences: async () => [ref("thumbnail-fallback")],
+      listVideoCacheReferences: async () => [],
+      updateVideoCacheReferenceMedia: async (id, mode, error) => { thumbnailFallbackUpdates.push([id, mode, error]); },
+      deleteVideoCacheReference: async () => undefined,
+    },
+    client: {
+      user: { id: "bot-1" },
+      channels: { fetch: async () => ({ messages: { fetch: async () => message(async (payload) => { thumbnailFallbackEdit = payload; }) } }) },
+    },
+    resolveMedia: async () => ({ status: "fallback", reason: "unavailable" }),
+    cleanup: async () => ({ evictedVideoIds: [] }),
+    videoExists: async () => false,
+  });
+  await thumbnailFallbackService.fallbackVideos(["video-1"]);
+  const thumbnailFallbackJson = JSON.stringify(thumbnailFallbackEdit);
+  assert.equal(thumbnailFallbackJson.includes("https://i.ytimg.com/vi/video-1/hqdefault.jpg"), false);
+  assert.equal(thumbnailFallbackJson.includes("https://expired.example/video.mp4"), false);
+  assert.deepEqual(thumbnailFallbackUpdates, [["thumbnail-fallback", "none", "googlevideo_pending:unavailable"]]);
+
   const deletedService = createYouTubeVideoCacheMaintenanceService({
     repo: {
       listVpsVideoCacheReferences: async () => [ref("missing-message")],
@@ -252,6 +275,158 @@ async function run(): Promise<void> {
   await restoreService.restoreCachedVideo("video-1", "https://media.example/video-1.mp4");
   assert.deepEqual(restored, [["google", "vps"], ["none", "vps"]]);
 
+  const dailyReferences = [
+    { ...ref("daily-1", "none"), lastError: "googlevideo_pending:timeout" },
+    { ...ref("daily-2", "none"), lastError: "googlevideo_pending:timeout" },
+  ];
+  const dailyUpdates: Array<[string, string, string | null]> = [];
+  const dailyEdits: unknown[] = [];
+  let dailyResolverCalls = 0;
+  let dailyCleanupCalls = 0;
+  let dailyCutoff: Date | undefined;
+  const dailyService = createYouTubeVideoCacheMaintenanceService({
+    repo: {
+      listDueGoogleVideoRetries: async (cutoff, limit) => {
+        dailyCutoff = cutoff;
+        assert.equal(limit, 100);
+        return dailyReferences;
+      },
+      listVpsVideoCacheReferences: async () => [],
+      listVideoCacheReferences: async () => [],
+      updateVideoCacheReferenceMedia: async (id, mode, error) => { dailyUpdates.push([id, mode, error]); },
+      deleteVideoCacheReference: async () => undefined,
+    },
+    client: { user: { id: "bot-1" }, channels: { fetch: async () => ({ messages: { fetch: async () => message(async (payload) => { dailyEdits.push(payload); }) } }) } },
+    resolveMedia: async () => { dailyResolverCalls += 1; return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/daily.mp4" }; },
+    cleanup: async () => { dailyCleanupCalls += 1; return { evictedVideoIds: [] }; },
+    videoExists: async () => true,
+    enableVpsMaintenance: false,
+    now: () => new Date("2026-08-18T12:00:00Z"),
+  });
+  await dailyService.runMaintenance();
+  assert.equal(dailyCutoff?.toISOString(), "2026-08-17T12:00:00.000Z");
+  assert.equal(dailyResolverCalls, 1);
+  assert.equal(dailyEdits.length, 2);
+  assert.deepEqual(dailyUpdates, [["daily-1", "google", null], ["daily-2", "google", null]]);
+  assert.equal(dailyCleanupCalls, 0);
+
+  const dailyFailureUpdates: Array<[string, string, string | null]> = [];
+  let dailyFailureEdits = 0;
+  const dailyFailureService = createYouTubeVideoCacheMaintenanceService({
+    repo: {
+      listDueGoogleVideoRetries: async () => [{ ...ref("daily-failure", "none"), lastError: "googlevideo_pending:timeout" }],
+      listVpsVideoCacheReferences: async () => [], listVideoCacheReferences: async () => [],
+      updateVideoCacheReferenceMedia: async (id, mode, error) => { dailyFailureUpdates.push([id, mode, error]); },
+      deleteVideoCacheReference: async () => undefined,
+    },
+    client: { user: { id: "bot-1" }, channels: { fetch: async () => ({ messages: { fetch: async () => message(async () => { dailyFailureEdits += 1; }) } }) } },
+    resolveMedia: async () => ({ status: "fallback", reason: "timeout" }),
+    cleanup: async () => ({ evictedVideoIds: [] }), videoExists: async () => true,
+    enableVpsMaintenance: false,
+  });
+  await dailyFailureService.runMaintenance();
+  assert.equal(dailyFailureEdits, 0);
+  assert.deepEqual(dailyFailureUpdates, [["daily-failure", "none", "googlevideo_pending:timeout"]]);
+
+  const dailyEditFailureUpdates: Array<[string, string, string | null]> = [];
+  const dailyEditFailureService = createYouTubeVideoCacheMaintenanceService({
+    repo: {
+      listDueGoogleVideoRetries: async () => [{ ...ref("daily-edit-failure", "none"), lastError: "googlevideo_pending:timeout" }],
+      listVpsVideoCacheReferences: async () => [], listVideoCacheReferences: async () => [],
+      updateVideoCacheReferenceMedia: async (id, mode, error) => { dailyEditFailureUpdates.push([id, mode, error]); },
+      deleteVideoCacheReference: async () => undefined,
+    },
+    client: { user: { id: "bot-1" }, channels: { fetch: async () => ({ messages: { fetch: async () => message(async () => { throw new Error("Discord temporary failure"); }) } }) } },
+    resolveMedia: async () => ({ status: "ok", mediaUrl: "https://rr.example.googlevideo.com/daily.mp4" }),
+    cleanup: async () => ({ evictedVideoIds: [] }), videoExists: async () => true,
+    enableVpsMaintenance: false,
+  });
+  await dailyEditFailureService.runMaintenance();
+  assert.deepEqual(dailyEditFailureUpdates, [[
+    "daily-edit-failure", "none", "googlevideo_pending:Discord temporary failure",
+  ]]);
+
+  const dailyDeletedReferences: string[] = [];
+  const dailyDeletedService = createYouTubeVideoCacheMaintenanceService({
+    repo: {
+      listDueGoogleVideoRetries: async () => [{ ...ref("daily-deleted", "none"), lastError: "googlevideo_pending:timeout" }],
+      listVpsVideoCacheReferences: async () => [], listVideoCacheReferences: async () => [],
+      updateVideoCacheReferenceMedia: async () => undefined,
+      deleteVideoCacheReference: async (id) => { dailyDeletedReferences.push(id); },
+    },
+    client: { user: { id: "bot-1" }, channels: { fetch: async () => { throw { code: 10003 }; } } },
+    resolveMedia: async () => ({ status: "ok", mediaUrl: "https://rr.example.googlevideo.com/daily.mp4" }),
+    cleanup: async () => ({ evictedVideoIds: [] }), videoExists: async () => true,
+    enableVpsMaintenance: false,
+  });
+  await dailyDeletedService.runMaintenance();
+  assert.deepEqual(dailyDeletedReferences, ["daily-deleted"]);
+
+  const maintenanceLocks: string[] = [];
+  const vpsLockedRepo = {
+    listVpsVideoCacheReferences: async () => { maintenanceLocks.push("vps:list"); return []; },
+    listVideoCacheReferences: async () => [],
+    updateVideoCacheReferenceMedia: async () => undefined,
+    deleteVideoCacheReference: async () => undefined,
+  };
+  const retryLockedRepo = {
+    listDueGoogleVideoRetries: async () => {
+      maintenanceLocks.push("retry:list");
+      return [{ ...ref("separate-lock-retry", "none"), lastError: "googlevideo_pending:timeout" }];
+    },
+    listVpsVideoCacheReferences: async () => [],
+    listVideoCacheReferences: async () => [],
+    updateVideoCacheReferenceMedia: async () => undefined,
+    deleteVideoCacheReference: async () => undefined,
+  };
+  const separateLockService = createYouTubeVideoCacheMaintenanceService({
+    repo: {
+      ...vpsLockedRepo,
+      withVideoCacheLock: async (run) => {
+        maintenanceLocks.push("vps:lock:start");
+        const result = await run(vpsLockedRepo);
+        maintenanceLocks.push("vps:lock:end");
+        return result;
+      },
+      withGoogleVideoRetryLock: async (run) => {
+        maintenanceLocks.push("retry:lock:start");
+        const result = await run(retryLockedRepo);
+        maintenanceLocks.push("retry:lock:end");
+        return result;
+      },
+    },
+    client: { user: { id: "bot-1" }, channels: { fetch: async () => null } },
+    resolveMedia: async () => { maintenanceLocks.push("retry:resolve"); return { status: "fallback", reason: "timeout" }; },
+    cleanup: async () => { maintenanceLocks.push("vps:cleanup"); return { evictedVideoIds: [] }; },
+    videoExists: async () => true,
+  });
+  await separateLockService.runMaintenance();
+  assert.deepEqual(maintenanceLocks, [
+    "vps:lock:start", "vps:cleanup", "vps:list", "vps:lock:end",
+    "retry:lock:start", "retry:list", "retry:resolve", "retry:lock:end",
+  ]);
+
+  let nonBlockingTimer: (() => void) | undefined;
+  const nonBlockingStartup = createYouTubeVideoCacheMaintenanceService({
+    repo: {
+      listDueGoogleVideoRetries: async () => await new Promise<never>(() => undefined),
+      listVpsVideoCacheReferences: async () => [], listVideoCacheReferences: async () => [],
+      updateVideoCacheReferenceMedia: async () => undefined, deleteVideoCacheReference: async () => undefined,
+    },
+    client: { user: { id: "bot-1" }, channels: { fetch: async () => null } },
+    resolveMedia: async () => ({ status: "fallback", reason: "unused" }),
+    cleanup: async () => ({ evictedVideoIds: [] }), videoExists: async () => true,
+    enableVpsMaintenance: false,
+    setInterval: (callback) => { nonBlockingTimer = callback; return "nonblocking-timer" as never; },
+    clearInterval: () => undefined,
+  });
+  const startupResult = await Promise.race([
+    nonBlockingStartup.start().then(() => "started" as const),
+    new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 25)),
+  ]);
+  assert.equal(startupResult, "started");
+  assert.equal(typeof nonBlockingTimer, "function");
+
   const scheduled: Array<() => void> = [];
   const cleared: unknown[] = [];
   let cleanupCalls = 0;
@@ -285,6 +460,7 @@ async function run(): Promise<void> {
   });
   const retryController = await retryStartService.start();
   await retryStartService.start();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(startupErrors, ["initial cleanup failed"]);
   assert.equal(retryTimers.length, 1);
   retryTimers[0]!();

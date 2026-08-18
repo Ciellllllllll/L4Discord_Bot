@@ -31,6 +31,12 @@ export type YouTubeVideoCacheReferenceRecoveryCandidate = {
 
 export type YouTubeVideoCacheMediaMode = "vps" | "google" | "none";
 
+export const YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX = "googlevideo_pending:";
+
+export function youtubeGoogleVideoPendingError(reason: string): string {
+  return `${YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX}${reason}`;
+}
+
 export type YouTubeVideoCacheReference = {
   messageId: string;
   videoId: string;
@@ -279,6 +285,17 @@ export class PostgresYouTubeWatcherRepository {
     return result.rows.map(mapVideoCacheReference);
   }
 
+  async listDueGoogleVideoRetries(cutoff: Date, limit: number): Promise<YouTubeVideoCacheReference[]> {
+    const result = await this.pool.query(
+      `SELECT message_id, video_id, guild_id, channel_id, youtube_url, media_mode, last_error, created_at, updated_at
+       FROM youtube_video_cache_references
+       WHERE media_mode = 'none' AND LEFT(last_error, char_length($1)) = $1 AND updated_at <= $2
+       ORDER BY updated_at ASC LIMIT $3`,
+      [YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX, cutoff, limit],
+    );
+    return result.rows.map(mapVideoCacheReference);
+  }
+
   async updateVideoCacheReferenceMedia(messageId: string, mediaMode: YouTubeVideoCacheMediaMode, lastError: string | null): Promise<void> {
     await this.pool.query(
       "UPDATE youtube_video_cache_references SET media_mode = $1, last_error = $2, updated_at = CURRENT_TIMESTAMP WHERE message_id = $3",
@@ -290,14 +307,17 @@ export class PostgresYouTubeWatcherRepository {
     await this.pool.query("DELETE FROM youtube_video_cache_references WHERE message_id = $1", [messageId]);
   }
 
-  async withVideoCacheLock<T>(run: (repo: PostgresYouTubeWatcherRepository) => Promise<T>): Promise<T> {
-    if (!("connect" in this.pool)) throw new Error("withVideoCacheLock requires a PostgreSQL pool");
+  private async withSessionLock<T>(
+    lockName: "youtube_video_cache" | "youtube_googlevideo_retry",
+    run: (repo: PostgresYouTubeWatcherRepository) => Promise<T>,
+  ): Promise<T> {
+    if (!("connect" in this.pool)) throw new Error("session lock requires a PostgreSQL pool");
     const client = await (this.pool as Pool).connect();
     let locked = false;
     let callbackError: unknown;
     let releaseError: Error | undefined;
     try {
-      await client.query("SELECT pg_advisory_lock(hashtext('youtube_video_cache'))");
+      await client.query(`SELECT pg_advisory_lock(hashtext('${lockName}'))`);
       locked = true;
       return await run(new PostgresYouTubeWatcherRepository(client));
     } catch (error) {
@@ -305,7 +325,7 @@ export class PostgresYouTubeWatcherRepository {
       throw error;
     } finally {
       try {
-        if (locked) await client.query("SELECT pg_advisory_unlock(hashtext('youtube_video_cache'))");
+        if (locked) await client.query(`SELECT pg_advisory_unlock(hashtext('${lockName}'))`);
       } catch (unlockError) {
         releaseError = unlockError instanceof Error ? unlockError : new Error(String(unlockError));
         if (!callbackError) throw releaseError;
@@ -313,6 +333,14 @@ export class PostgresYouTubeWatcherRepository {
         client.release(releaseError);
       }
     }
+  }
+
+  async withVideoCacheLock<T>(run: (repo: PostgresYouTubeWatcherRepository) => Promise<T>): Promise<T> {
+    return this.withSessionLock("youtube_video_cache", run);
+  }
+
+  async withGoogleVideoRetryLock<T>(run: (repo: PostgresYouTubeWatcherRepository) => Promise<T>): Promise<T> {
+    return this.withSessionLock("youtube_googlevideo_retry", run);
   }
 
   async setError(subscriptionId: string, error: string | null): Promise<void> {

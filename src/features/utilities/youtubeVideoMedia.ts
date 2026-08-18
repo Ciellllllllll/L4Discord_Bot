@@ -37,6 +37,7 @@ export type ResolveYouTubeVideoMediaOptions = {
   maxBytes?: number;
   nowMs?: () => number;
   clientFactory?: YouTubeClientFactory;
+  bypassCache?: boolean;
 };
 
 export type ResolveYouTubeVideoMediaResult =
@@ -190,7 +191,7 @@ export async function resolveYouTubeVideoMedia(
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const cacheKey = makeCacheKey(videoId, maxBytes);
   const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > now) return cached.result;
+  if (!options.bypassCache && cached && cached.expiresAt > now) return cached.result;
   if (cached) cache.delete(cacheKey);
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -237,4 +238,41 @@ export async function resolveYouTubeVideoMedia(
     status: "fallback",
     reason: sawFormat || !lastError ? "no_suitable_format" : "inner_tube_error",
   });
+}
+
+function isGoogleVideoMediaUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return parsed.protocol === "https:"
+      && (host === "googlevideo.com" || host.endsWith(".googlevideo.com"));
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveYouTubeVideoMediaWithRetry(
+  url: string,
+  options: ResolveYouTubeVideoMediaOptions = {},
+  deps: {
+    resolver?: typeof resolveYouTubeVideoMedia;
+    wait?: (delayMs: number) => Promise<void>;
+  } = {},
+): Promise<ResolveYouTubeVideoMediaResult> {
+  const resolver = deps.resolver ?? resolveYouTubeVideoMedia;
+  const wait = deps.wait ?? ((delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  let lastResult: ResolveYouTubeVideoMediaResult = { status: "fallback", reason: "inner_tube_error" };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const result = await resolver(url, attempt === 0 ? options : { ...options, bypassCache: true });
+      lastResult = result.status === "ok" && !isGoogleVideoMediaUrl(result.mediaUrl)
+        ? { status: "fallback", reason: "invalid_google_url" }
+        : result;
+      if (lastResult.status === "ok") return lastResult;
+    } catch {
+      lastResult = { status: "fallback", reason: "inner_tube_error" };
+    }
+    if (attempt === 0) await wait(500);
+  }
+  return lastResult;
 }
