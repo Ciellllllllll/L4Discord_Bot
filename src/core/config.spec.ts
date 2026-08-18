@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { loadConfig } from "./config.js";
 
 function baseEnv(extra: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
@@ -103,7 +104,7 @@ assert.equal(fallbackConfig.ADHD_VIDEO_PUBLIC_BASE_URL, undefined);
 assert.equal(fallbackConfig.ADHD_VIDEO_MIN_FREE_BYTES, 1024 * 1024 * 1024);
 assert.equal(fallbackConfig.ADHD_VIDEO_CACHE_MAX_BYTES, 20 * 1024 * 1024 * 1024);
 assert.equal(fallbackConfig.ADHD_VIDEO_RETENTION_DAYS, 30);
-assert.equal(fallbackConfig.ADHD_VIDEO_FILES_DIR.endsWith("data\\debug\\adhd-videos"), true);
+assert.equal(fallbackConfig.ADHD_VIDEO_FILES_DIR.endsWith(join("data", "debug", "adhd-videos")), true);
 assert.equal(fallbackConfig.BOKETE_API_BASE_URL, "https://bokete-api-worker.cielgameee.workers.dev");
 assert.equal(fallbackConfig.BOKETE_REQUEST_TIMEOUT_MS, 10000);
 
@@ -125,7 +126,7 @@ const productionVideoConfig = loadConfig(baseEnv({
   PRODUCTION_ADHD_VIDEO_CACHE_MAX_BYTES: "21474836480",
   PRODUCTION_ADHD_VIDEO_RETENTION_DAYS: "30",
 }));
-assert.equal(productionVideoConfig.ADHD_VIDEO_FILES_DIR.endsWith("data\\production-videos"), true);
+assert.equal(productionVideoConfig.ADHD_VIDEO_FILES_DIR.endsWith(join("data", "production-videos")), true);
 assert.equal(productionVideoConfig.ADHD_VIDEO_PUBLIC_BASE_URL, "https://media.example/production/");
 assert.equal(productionVideoConfig.ADHD_VIDEO_MIN_FREE_BYTES, 91011);
 assert.equal(productionVideoConfig.ADHD_VIDEO_CACHE_MAX_BYTES, 20 * 1024 * 1024 * 1024);
