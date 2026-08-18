@@ -131,16 +131,18 @@ export async function probeYouTubeNativeEmbed(
       const finish = (embed: APIEmbed | null): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        timeout.removeEventListener("abort", onTimeout);
         events.off?.("messageUpdate", onUpdate);
         resolve(embed);
       };
+      const onTimeout = (): void => finish(null);
       const onUpdate = (_oldMessage: unknown, newMessage: unknown): void => {
         if (!newMessage || typeof newMessage !== "object" || (newMessage as { id?: string }).id !== probe.id) return;
         const embed = nativeEmbedFromMessage(newMessage as Pick<Message, "embeds">);
         if (embed) finish(embed);
       };
-      const timer = setTimeout(() => finish(null), NATIVE_EMBED_WAIT_MS);
+      const timeout = AbortSignal.timeout(NATIVE_EMBED_WAIT_MS);
+      timeout.addEventListener("abort", onTimeout, { once: true });
       events.on?.("messageUpdate", onUpdate);
     });
   } finally {

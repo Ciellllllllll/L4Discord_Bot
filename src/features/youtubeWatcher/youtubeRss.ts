@@ -67,12 +67,10 @@ export async function fetchYouTubeChannelFeed(
   channelId: string,
   options: { fetcher?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<{ ok: true; entries: YouTubeFeedEntry[] } | { ok: false; error: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
   try {
     const url = new URL(FEED_URL);
     url.searchParams.set("channel_id", channelId);
-    const response = await (options.fetcher ?? fetch)(url.toString(), { signal: controller.signal });
+    const response = await (options.fetcher ?? fetch)(url.toString(), { signal: AbortSignal.timeout(options.timeoutMs ?? 10_000) });
     if (!response.ok) return { ok: false, error: `RSSの取得に失敗しました。(HTTP ${response.status})` };
     try {
       return { ok: true, entries: parseYouTubeChannelFeed(await response.text()) };
@@ -80,8 +78,6 @@ export async function fetchYouTubeChannelFeed(
       return { ok: false, error: error instanceof Error ? error.message : "RSSの解析に失敗しました。" };
     }
   } catch (error) {
-    return { ok: false, error: error instanceof Error && error.name === "AbortError" ? "RSSの取得がタイムアウトしました。" : "RSSの取得に失敗しました。" };
-  } finally {
-    clearTimeout(timer);
+    return { ok: false, error: error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError") ? "RSSの取得がタイムアウトしました。" : "RSSの取得に失敗しました。" };
   }
 }

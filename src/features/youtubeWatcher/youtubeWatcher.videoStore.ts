@@ -238,13 +238,7 @@ async function fetchWithTimeout(
   init: RequestInit,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetcher(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetcher(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 async function verifyPublicVideo(
@@ -336,21 +330,17 @@ export async function persistYouTubeVideo(
     return fallback(`media_resolver_${resolved.reason}`, evictedVideoIds);
   }
 
-  const downloadController = new AbortController();
-  const downloadTimer = setTimeout(() => downloadController.abort(), options.timeoutMs);
-  downloadTimer.unref();
+  const downloadSignal = AbortSignal.timeout(options.timeoutMs);
   let response: Response;
   try {
     response = await fetcher(resolved.mediaUrl, {
       headers: { Accept: "video/mp4,video/*;q=0.9,*/*;q=0.1" },
-      signal: downloadController.signal,
+      signal: downloadSignal,
     });
   } catch {
-    clearTimeout(downloadTimer);
     return fallback("download_error", evictedVideoIds, resolved.mediaUrl);
   }
   const cancelDownload = async (): Promise<void> => {
-    clearTimeout(downloadTimer);
     await response.body?.cancel().catch(() => undefined);
   };
   if (!response.ok) {
@@ -367,7 +357,6 @@ export async function persistYouTubeVideo(
     return fallback("missing_source_content_length", evictedVideoIds, resolved.mediaUrl);
   }
   if (!response.body) {
-    clearTimeout(downloadTimer);
     return fallback("missing_source_body", evictedVideoIds, resolved.mediaUrl);
   }
 
@@ -404,7 +393,7 @@ export async function persistYouTubeVideo(
       Readable.fromWeb(response.body as never),
       enforceContentLength,
       createWriteStream(partPath, { flags: "wx" }),
-      { signal: downloadController.signal },
+      { signal: downloadSignal },
     );
     if ((await stat(partPath)).size !== contentLength) {
       return fallback("incomplete_download", evictedVideoIds, resolved.mediaUrl);
@@ -413,7 +402,6 @@ export async function persistYouTubeVideo(
   } catch {
     return fallback("download_error", evictedVideoIds, resolved.mediaUrl);
   } finally {
-    clearTimeout(downloadTimer);
     await rm(partPath, { force: true }).catch(() => undefined);
   }
 

@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { existsSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { loadConfig, type AppConfig } from "../core/config.js";

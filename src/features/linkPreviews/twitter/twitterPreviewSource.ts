@@ -289,12 +289,10 @@ export async function fetchFixTweetPreview(
   input: Pick<ParsedXStatusUrl, "id" | "screenName">,
   fetcher: FetchLike = fetch,
 ): Promise<FixTweetPreviewResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const response = await fetcher(
       `https://api.fxtwitter.com/${encodeURIComponent(input.screenName)}/status/${encodeURIComponent(input.id)}`,
-      { signal: controller.signal, headers: { "User-Agent": USER_AGENT, Accept: "application/json" } },
+      { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { "User-Agent": USER_AGENT, Accept: "application/json" } },
     );
     const text = await response.text();
     if (!response.ok) return { status: "fallback", reason: `http_${response.status}` };
@@ -304,9 +302,7 @@ export async function fetchFixTweetPreview(
       return { status: "fallback", reason: "invalid_json" };
     }
   } catch (err) {
-    return { status: "fallback", reason: err instanceof Error ? err.name : "fetch_error" };
-  } finally {
-    clearTimeout(timer);
+    return { status: "fallback", reason: err instanceof Error ? (err.name === "TimeoutError" ? "AbortError" : err.name) : "fetch_error" };
   }
 }
 

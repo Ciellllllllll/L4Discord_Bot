@@ -1,4 +1,3 @@
-import "dotenv/config";
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import { loadConfig } from "../core/config.js";

@@ -31,7 +31,7 @@ jobs:
 
             npm ci
             npm run build
-            node --import dotenv/config -e "import('./dist/core/config.js').then(({ loadConfig }) => { const config = loadConfig(); console.log(JSON.stringify({ profile: config.BOT_PROFILE, databaseUrlConfigured: Boolean(config.DATABASE_URL) })); })"
+            node --env-file-if-exists=.env -e "import('./dist/core/config.js').then(({ loadConfig }) => { const config = loadConfig(); console.log(JSON.stringify({ profile: config.BOT_PROFILE, databaseUrlConfigured: Boolean(config.DATABASE_URL) })); })"
 
             if command -v go >/dev/null 2>&1; then
               cd workers/japanese-worker

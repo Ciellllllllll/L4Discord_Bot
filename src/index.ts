@@ -1,5 +1,4 @@
 import { execSync } from "node:child_process";
-import "dotenv/config";
 
 if (process.platform === "win32") {
   try {

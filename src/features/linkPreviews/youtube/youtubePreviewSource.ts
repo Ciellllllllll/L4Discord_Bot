@@ -218,15 +218,12 @@ function oembedUrl(urlValue: string): string {
   url.searchParams.set("url", urlValue); url.searchParams.set("format", "json"); return url.toString();
 }
 async function fetchJson(url: string, fetcher: NonNullable<YouTubeSourceFetchOptions["fetcher"]>, timeout: number): Promise<{ ok: true; value: unknown } | { ok: false; reason: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await fetcher(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+    const response = await fetcher(url, { signal: AbortSignal.timeout(timeout), headers: { Accept: "application/json" } });
     const text = await response.text();
     if (!response.ok) return { ok: false, reason: `http_${response.status}` };
     try { return { ok: true, value: JSON.parse(text) as unknown }; } catch { return { ok: false, reason: "invalid_json" }; }
-  } catch (error) { return { ok: false, reason: error instanceof Error ? error.name : "fetch_error" }; }
-  finally { clearTimeout(timer); }
+  } catch (error) { return { ok: false, reason: error instanceof Error ? (error.name === "TimeoutError" ? "AbortError" : error.name) : "fetch_error" }; }
 }
 
 async function fetchWithDataApi(target: YouTubeReplyTarget, apiKey: string, fetcher: NonNullable<YouTubeSourceFetchOptions["fetcher"]>, timeout: number): Promise<YouTubePreviewResult> {

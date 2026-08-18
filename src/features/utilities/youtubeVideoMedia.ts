@@ -1,5 +1,6 @@
 import { ClientType, Innertube, Platform } from "youtubei.js";
 import type { Types } from "youtubei.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
@@ -138,19 +139,10 @@ class TimeoutError extends Error {
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new TimeoutError()), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
+  return Promise.race([
+    promise,
+    delay(timeoutMs, undefined, { ref: false }).then(() => { throw new TimeoutError(); }),
+  ]);
 }
 
 function isTimeoutError(err: unknown): boolean {
@@ -260,7 +252,7 @@ export async function resolveYouTubeVideoMediaWithRetry(
   } = {},
 ): Promise<ResolveYouTubeVideoMediaResult> {
   const resolver = deps.resolver ?? resolveYouTubeVideoMedia;
-  const wait = deps.wait ?? ((delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const wait = deps.wait ?? ((delayMs) => delay(delayMs));
   let lastResult: ResolveYouTubeVideoMediaResult = { status: "fallback", reason: "inner_tube_error" };
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
