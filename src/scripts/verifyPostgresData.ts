@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { createHash } from "node:crypto";
 import Database from "better-sqlite3";
 import type { QueryResult } from "pg";
@@ -47,6 +46,8 @@ const snowflakeColumns = new Set([
   "review_message_id",
   "hold_thread_id",
 ]);
+
+const retiredMainTables = new Set(["steam_app_catalog", "steam_verify_queue"]);
 
 function quoteSqliteIdent(name: string): string {
   return `"${String(name).replace(/"/g, '""')}"`;
@@ -283,6 +284,11 @@ async function verifySource(pool: Awaited<ReturnType<typeof createPgPool>>, sour
   const sqlite = new Database(source.path, { readonly: true, fileMustExist: true });
   try {
     for (const table of sqliteTables(sqlite)) {
+      if (source.label === "main" && retiredMainTables.has(table)) {
+        console.log(`[skip] ${source.label}.${table}: retired Steam AppList table`);
+        continue;
+      }
+
       const columns = sqliteColumns(sqlite, table);
       const sqliteCount = (sqlite.prepare(`SELECT COUNT(*) AS count FROM ${quoteSqliteIdent(table)}`).get() as { count: number }).count;
       if (!(await pgTableExists(pool, source.schema, table))) {

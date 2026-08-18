@@ -26,6 +26,26 @@ async function run(): Promise<void> {
   assert.ok(adhd);
   assert.equal(adhd.default_member_permissions, PermissionFlagsBits.Administrator.toString());
   assert.deepEqual(adhd.options?.map((option) => option.name), ["add", "remove", "list", "scan_now"]);
+
+  const bokete = chatInputCommand("bokete");
+  assert.ok(bokete);
+  assert.equal("description" in bokete ? bokete.description : undefined, "Boketeを1件表示します");
+  assert.equal(bokete.default_member_permissions, undefined);
+
+  const gif = chatInputCommand("gif");
+  assert.ok(gif);
+  assert.equal(gif.default_member_permissions, PermissionFlagsBits.Administrator.toString());
+  assert.deepEqual(gif.options?.map((option) => option.name), ["set", "show", "clear"]);
+  const set = gif.options?.find((option) => option.name === "set");
+  const setOptions = set && "options" in set ? set.options ?? [] : [];
+  assert.deepEqual(setOptions.map((option) => option.name), [
+    "trigger_url",
+    "response_url",
+  ]);
+  assert.deepEqual(
+    setOptions.map((option) => "max_length" in option ? option.max_length : undefined),
+    [900, 900],
+  );
 }
 
 void run()

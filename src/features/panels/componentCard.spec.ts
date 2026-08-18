@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, type APISectionComponent } from "discord.js";
 import { ComponentCardBuilder, componentCardsPayload } from "./componentCard.js";
@@ -16,7 +16,7 @@ function run(): void {
   assert.equal("setColor" in ComponentCardBuilder.prototype, false);
   const productionFiles = execFileSync("git", ["ls-files", "--", "src"], { encoding: "utf8" })
     .split(/\r?\n/)
-    .filter((file) => file.endsWith(".ts") && !file.endsWith(".spec.ts"));
+    .filter((file) => file.endsWith(".ts") && !file.endsWith(".spec.ts") && existsSync(file));
   assert.deepEqual(
     productionFiles.filter((file) => /\.setColor\s*\(/.test(readFileSync(file, "utf8"))),
     [],

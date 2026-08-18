@@ -518,18 +518,6 @@ export function formatDuration(totalSeconds: number): string {
   return `${s}秒`;
 }
 
-export function buildPoem(pattern: string, words: string[]): string | null {
-  if (!/^[1-9][0-9]*$/.test(pattern)) return null;
-  if (pattern.length > 5) return null;
-  const safeWords = words.map((w) => sanitizeForReply(w)).filter((w): w is string => Boolean(w));
-  const fallback = ["月あかり", "静かな朝", "風が吹く", "ぱっちぃ", "それはそう"];
-  const source = safeWords.length > 0 ? safeWords : fallback;
-  return [...pattern].map((digit, index) => {
-    const word = source[(index + Math.floor(Math.random() * source.length)) % source.length] ?? "ぱっちぃ";
-    return `${word} ${digit}`;
-  }).join("\n");
-}
-
 export function janken(userHand: string): string {
   const hands = ["グー", "チョキ", "パー"] as const;
   const bot = pick(hands);

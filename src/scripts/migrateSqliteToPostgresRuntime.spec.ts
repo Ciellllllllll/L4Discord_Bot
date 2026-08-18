@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -16,6 +16,8 @@ import {
 } from "../core/db/kysely.js";
 import { PostgresVcRankingRepository } from "../adapters/legacyDb/postgresVcRankingRepository.js";
 import { ensureLolWatcherSchema, PostgresLolWatcherRepository } from "../features/lolWatcher/lolWatcher.repository.js";
+import { ensureSqliteAiProviderSourceSchema } from "../features/ai/aiProviderRepository.js";
+import { ensureSqliteGameDealSourceSchema } from "../features/gameDeals/gameDealSourceSchema.js";
 import { ensurePacchiSchema } from "../features/pacchi/pacchi.schema.js";
 import { PostgresPacchiRepository } from "../features/pacchi/postgresPacchiRepository.js";
 import { createPostgresSenryuRepository } from "../features/senryu/senryu.repository.js";
@@ -29,8 +31,13 @@ import { getOptionalPostgresTestUrl } from "../test/postgresTestEnv.js";
 function createMainFixture(path: string): void {
   const db = new Database(path);
   try {
+    for (const file of ["017_game_deals.up.sql", "018_game_deals_steam_source_status.up.sql", "019_cheapshark_deals.up.sql"]) {
+      db.exec(readFileSync(join(process.cwd(), "migrations", "sqlite", file), "utf8"));
+    }
     ensurePacchiSchema(db);
     ensureLolWatcherSchema(db);
+    ensureSqliteAiProviderSourceSchema(db);
+    ensureSqliteGameDealSourceSchema(db);
     db.exec(`
       CREATE TABLE IF NOT EXISTS senryu_records (
         id TEXT PRIMARY KEY,
@@ -52,6 +59,34 @@ function createMainFixture(path: string): void {
         executor_user_id INTEGER NOT NULL,
         emoji_id INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS youtube_watch_subscriptions (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        youtube_channel_id TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        discord_channel_id TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS youtube_watch_posts (
+        subscription_id TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        channel_title TEXT NOT NULL,
+        published_at TEXT NOT NULL,
+        video_url TEXT NOT NULL,
+        thumbnail_url TEXT,
+        discord_message_id TEXT,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        durable_media_url TEXT,
+        media_finalized_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (subscription_id, video_id)
+      );
     `);
     db.prepare(`
       INSERT INTO pacchi_settings (
@@ -69,8 +104,32 @@ function createMainFixture(path: string): void {
       .run("User#JP1", "user#jp1", "987654321098765435", "987654321098765433", 1, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
     db.prepare("INSERT INTO lol_watcher_status (key, value, updated_at) VALUES (?, ?, ?)")
       .run("notification_channel_id", "987654321098765433", "2026-01-01T00:00:00.000Z");
+    db.prepare("INSERT INTO steam_app_catalog (appid, name, last_modified, price_change_number, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run("123", "Migrated Game", 100, 2, "2026-01-01T00:00:00.000Z", "2026-01-01T00:01:00.000Z");
+    db.prepare("INSERT INTO steam_verify_queue (appid, reason, price_change_number, last_modified, attempts, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("123", "price_change_detected", 2, 100, 1, "2026-01-01T00:02:00.000Z", null, "2026-01-01T00:01:00.000Z", "2026-01-01T00:01:00.000Z");
+    db.prepare("INSERT INTO ai_guild_provider_settings (guild_id, preferred_provider, preferred_openai_model, updated_at) VALUES (?, ?, ?, ?)")
+      .run("987654321098765432", "deepseek", "gpt54_mini", "2026-01-01T00:00:00.000Z");
+    db.prepare(`
+      INSERT INTO game_deal_subscription_notifications (
+        id, subscription_id, user_id, guild_id, target_platform, target_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "notification-1",
+      "subscription-1",
+      "987654321098765435",
+      "987654321098765432",
+      "steam",
+      "123",
+      "2026-01-01T00:00:00.000Z",
+    );
     db.prepare("INSERT INTO senryu_records (id, guild_id, channel_id, message_id, author_id, kamigo, nakashichi, shimogo, formatted, source_content, spoiler, detected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run("senryu-1", "987654321098765432", "987654321098765433", "987654321098765436", "987654321098765435", "上五", "中七です", "下五", "上五 中七です 下五", "content", 1, "2026-01-01T00:03:00.000Z");
+    db.prepare("INSERT INTO youtube_watch_subscriptions (id, guild_id, youtube_channel_id, source_url, discord_channel_id, enabled, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("youtube-subscription-1", "987654321098765432", "youtube-channel-1", "https://www.youtube.com/channel/youtube-channel-1", "987654321098765433", 1, null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
+    const insertYouTubePost = db.prepare("INSERT INTO youtube_watch_posts (subscription_id, video_id, title, channel_title, published_at, video_url, thumbnail_url, discord_message_id, status, error_message, durable_media_url, media_finalized_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    insertYouTubePost.run("youtube-subscription-1", "youtube-vps", "VPS動画", "YouTube", "2026-01-01T00:00:00.000Z", "https://www.youtube.com/watch?v=youtube-vps", null, "youtube-message-vps", "sent", null, "https://media.example/youtube-vps.mp4", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
+    insertYouTubePost.run("youtube-subscription-1", "youtube-none", "未保存動画", "YouTube", "2026-01-01T00:00:00.000Z", "https://www.youtube.com/watch?v=youtube-none", null, "youtube-message-none", "sent", null, null, null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
     const insertSnowflakeFixture = db.prepare("INSERT INTO snowflake_verify_fixture (guild_id, executor_user_id, emoji_id) VALUES (?, ?, ?)");
     db.transaction(() => {
       const first = 987654321000000000n;
@@ -185,6 +244,27 @@ async function assertPollsStateRevisionSchema(adminPool: Awaited<ReturnType<type
   assert.deepEqual(result.rows, [{ data_type: "bigint", is_nullable: "NO", column_default: "0", version: 7 }]);
 }
 
+async function assertYouTubeVideoCacheReferences(adminPool: Awaited<ReturnType<typeof createPgPool>>, schema: string): Promise<void> {
+  const references = await adminPool.query<{ message_id: string; video_id: string; media_mode: string; youtube_url: string }>(
+    `SELECT message_id, video_id, media_mode, youtube_url
+     FROM ${quotePgIdent(schema)}.youtube_video_cache_references
+     ORDER BY message_id`,
+  );
+  assert.deepEqual(references.rows, [
+    { message_id: "youtube-message-none", video_id: "youtube-none", media_mode: "none", youtube_url: "https://www.youtube.com/watch?v=youtube-none" },
+    { message_id: "youtube-message-vps", video_id: "youtube-vps", media_mode: "vps", youtube_url: "https://www.youtube.com/watch?v=youtube-vps" },
+  ]);
+  const constraints = await adminPool.query<{ definition: string }>(
+    `SELECT pg_get_constraintdef(constraint_row.oid) AS definition
+     FROM pg_constraint AS constraint_row
+     JOIN pg_class AS table_class ON table_class.oid = constraint_row.conrelid
+     JOIN pg_namespace AS namespace ON namespace.oid = table_class.relnamespace
+     WHERE namespace.nspname = $1 AND table_class.relname = 'youtube_video_cache_references' AND constraint_row.contype = 'c'`,
+    [schema],
+  );
+  assert.match(constraints.rows[0]?.definition ?? "", /media_mode.*vps.*google.*none/i);
+}
+
 async function assertKyselySchema(label: string, db: Kysely<unknown>, expectedSchema: string): Promise<void> {
   try {
     const result = await sql<{ schema: string | null }>`SELECT current_schema() AS schema`.execute(db);
@@ -270,8 +350,9 @@ async function run(): Promise<void> {
 
   const childEnv = {
     ...process.env,
-    DB_DRIVER: "postgres",
+    BOT_PROFILE: "production",
     DATABASE_URL: connectionString,
+    PRODUCTION_DATABASE_URL: connectionString,
     DISCORD_TOKEN: "test-token",
     DISCORD_CLIENT_ID: "client",
     GUILD_ID: "987654321098765432",
@@ -340,7 +421,12 @@ async function run(): Promise<void> {
     const verifyChild = runPostgresDataVerification(childEnv);
     assert.equal(verifyChild.status, 0, `${verifyChild.stdout}\n${verifyChild.stderr}`);
     await assertMigrationHistory(adminPool, schemas);
+    const mainMigrationVersions = await adminPool.query<{ version: number }>(
+      `SELECT version FROM ${quotePgIdent(schemas.main)}.postgres_schema_migrations ORDER BY version`,
+    );
+    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 15 }, (_, index) => index + 1));
     await assertPollsStateRevisionSchema(adminPool, schemas.main);
+    await assertYouTubeVideoCacheReferences(adminPool, schemas.main);
     await assertKyselySchema(
       "main",
       createPostgresMainKysely({ connectionString, schema: schemas.main }) as Kysely<unknown>,
@@ -378,6 +464,27 @@ async function run(): Promise<void> {
       assert.equal(settings.enabled, false);
       assert.equal(settings.defaultTalkEnabled, true);
       assert.equal(settings.defaultLearnEnabled, false);
+      const pacchiBooleanColumns = await mainPool.query<{ data_type: string }>(
+        `SELECT data_type
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND (table_name, column_name) IN (
+             ('pacchi_settings', 'enabled'),
+             ('pacchi_settings', 'default_talk_enabled'),
+             ('pacchi_settings', 'default_learn_enabled'),
+             ('pacchi_channel_settings', 'talk_enabled'),
+             ('pacchi_channel_settings', 'learn_enabled')
+           )`,
+      );
+      assert.deepEqual(pacchiBooleanColumns.rows.map((row) => row.data_type).sort(), ["boolean", "boolean", "boolean", "boolean", "boolean"]);
+      await pacchi.setRate("987654321098765432", "normal");
+      await pacchi.setChannelSettings("987654321098765432", "987654321098765433", true, false);
+      assert.deepEqual(await pacchi.getChannelSettings("987654321098765432", "987654321098765433"), {
+        guildId: "987654321098765432",
+        channelId: "987654321098765433",
+        talkEnabled: true,
+        learnEnabled: false,
+      });
       assert.equal((await pacchi.topWords("987654321098765432", 1))[0]?.word, "移行語");
       assert.equal(await pacchi.startSleep("987654321098765432", "987654321098765435"), "2026-01-01T01:00:00.000Z");
       assert.ok(await pacchi.endSleep("987654321098765432", "987654321098765435"));
@@ -387,6 +494,27 @@ async function run(): Promise<void> {
       assert.equal(await lol.getNotificationChannelId(), "987654321098765433");
       await lol.disableAccount("user#jp1");
       assert.equal((await lol.getAccount("user#jp1"))?.enabled, false);
+
+      assert.deepEqual(
+        (await mainPool.query<{ catalog: string | null; queue: string | null }>(
+          "SELECT to_regclass('steam_app_catalog') AS catalog, to_regclass('steam_verify_queue') AS queue",
+        )).rows,
+        [{ catalog: null, queue: null }],
+      );
+      assert.deepEqual(
+        (await mainPool.query<{ preferred_provider: string; preferred_openai_model: string }>(
+          "SELECT preferred_provider, preferred_openai_model FROM ai_guild_provider_settings WHERE guild_id = $1",
+          ["987654321098765432"],
+        )).rows,
+        [{ preferred_provider: "deepseek", preferred_openai_model: "gpt54_mini" }],
+      );
+      assert.deepEqual(
+        (await mainPool.query<{ guild_id: string; target_platform: string; target_id: string }>(
+          "SELECT guild_id, target_platform, target_id FROM game_deal_subscription_notifications WHERE id = $1",
+          ["notification-1"],
+        )).rows,
+        [{ guild_id: "987654321098765432", target_platform: "steam", target_id: "123" }],
+      );
 
       const senryu = await mainPool.query<{ spoiler: boolean }>("SELECT spoiler FROM senryu_records WHERE id = $1", ["senryu-1"]);
       assert.equal(senryu.rows[0]?.spoiler, true);

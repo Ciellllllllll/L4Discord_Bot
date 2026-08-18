@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { copyAiHistoryFromMainToDedicatedDb } from "../features/ai/copyAiHistoryFromMain.js";
 import { copyRemindersFromMainToReminderDb } from "../features/reminders/copyRemindersFromMain.js";
 import { ensureAiHistorySchema } from "../features/ai/aiHistorySchema.js";
@@ -56,7 +55,7 @@ function main(): void {
       }
       console.log(`Done. user_version=${getSqliteUserVersion(db)}`);
     } else {
-      console.error("Usage: tsx src/scripts/migrateSqlite.ts [up|down]");
+      console.error("Usage: npm run migrate | npm run migrate:down");
       process.exit(1);
     }
   } finally {

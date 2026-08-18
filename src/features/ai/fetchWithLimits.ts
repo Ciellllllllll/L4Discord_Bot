@@ -51,20 +51,14 @@ export async function fetchWithLimits(
   options: FetchWithLimitsOptions,
 ): Promise<Response> {
   const { timeoutMs, maxResponseBytes, outerSignal } = options;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const signal =
-    outerSignal ? AbortSignal.any([outerSignal, controller.signal]) : controller.signal;
-  try {
-    const { signal: _ignored, ...rest } = init;
-    const res = await fetch(url, { ...rest, signal });
-    const buf = await readResponseArrayBufferWithLimit(res, maxResponseBytes);
-    return new Response(buf, {
-      status: res.status,
-      statusText: res.statusText,
-      headers: res.headers,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = outerSignal ? AbortSignal.any([outerSignal, timeoutSignal]) : timeoutSignal;
+  const { signal: _ignored, ...rest } = init;
+  const res = await fetch(url, { ...rest, signal });
+  const buf = await readResponseArrayBufferWithLimit(res, maxResponseBytes);
+  return new Response(buf, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
 }

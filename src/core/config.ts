@@ -89,20 +89,18 @@ const profileOverridableKeys = [
   "LOCAL_LLM_MAX_CONCURRENT",
   "LOCAL_LLM_MAX_QUEUE",
   "LOCAL_LLM_TEMPERATURE",
-  "STEAM_WEB_API_KEY",
   "YOUTUBE_PREVIEW_ENABLED",
   "YOUTUBE_DATA_API_KEY",
   "YOUTUBE_REQUEST_TIMEOUT_MS",
-  "YOUTUBE_YTDLP_ENABLED",
-  "YOUTUBE_YTDLP_PATH",
-  "YOUTUBE_YTDLP_TIMEOUT_MS",
   "ADHD_WATCHER_ENABLED",
   "ADHD_POLL_INTERVAL_MS",
   "ADHD_RSS_REQUEST_TIMEOUT_MS",
-  "GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS",
-  "GAME_DEAL_STEAM_VERIFY_INTERVAL_MS",
+  "ADHD_VIDEO_FILES_DIR",
+  "ADHD_VIDEO_PUBLIC_BASE_URL",
+  "ADHD_VIDEO_MIN_FREE_BYTES",
+  "ADHD_VIDEO_CACHE_MAX_BYTES",
+  "ADHD_VIDEO_RETENTION_DAYS",
   "GAME_DEAL_STEAM_NOW_INTERVAL_MS",
-  "GAME_DEAL_STEAM_VERIFY_BATCH_SIZE",
   "GAME_DEAL_EPIC_INTERVAL_MS",
   "GAME_DEAL_SUBSCRIPTION_INTERVAL_MS",
   "WEREWOLF_CHANNEL_ID",
@@ -119,7 +117,6 @@ const profileOverridableKeys = [
   "OPENAI_MODEL_GPT56",
   "OPENAI_MODEL_GPT54_MINI",
   "OPENAI_REASONING_EFFORT",
-  "OPENAI_DAILY_TOKEN_LIMIT",
   "OPENAI_FALLBACK_THRESHOLD",
   "OPENAI_USAGE_CACHE_MS",
   "OPENAI_MAX_COMPLETION_TOKENS",
@@ -144,6 +141,8 @@ const profileOverridableKeys = [
   "DOGCEO_ENABLED",
   "DOGCEO_IMAGE_RANDOM_URL",
   "DOGCEO_REQUEST_TIMEOUT_MS",
+  "BOKETE_API_BASE_URL",
+  "BOKETE_REQUEST_TIMEOUT_MS",
   "SENRYU_KUROMOJI_DICT_PATH",
   "JAPANESE_WORKER_ENABLED",
   "JAPANESE_WORKER_URL",
@@ -164,7 +163,6 @@ const profileOverridableKeys = [
   "DEEPLOL_MATCH_URL_TEMPLATE",
   "DEEPLOL_POLL_INTERVAL_MS",
   "DEEPLOL_ACTIVE_STALE_MS",
-  "DB_DRIVER",
   "DATABASE_URL",
   "POSTGRES_MAIN_SCHEMA",
   "POSTGRES_TICKET_SCHEMA",
@@ -176,20 +174,9 @@ const profileOverridableKeys = [
   "POSTGRES_REMINDER_SCHEMA",
 ] as const;
 
-function normalizeBotProfile(v: unknown): BotProfile {
-  const s = String(v || "production").trim().toLowerCase();
-  if (s === "prod") return "production";
-  if (s === "dev" || s === "development") return "debug";
-  if (botProfiles.includes(s as BotProfile)) return s as BotProfile;
-  throw new Error(`Invalid PROFILE/BOT_PROFILE: ${String(v)}. Use "production" or "debug".`);
-}
-
 function resolveBotProfile(env: NodeJS.ProcessEnv): BotProfile {
-  if (env.PROFILE || env.BOT_PROFILE || env.APP_ENV) {
-    return normalizeBotProfile(env.PROFILE || env.BOT_PROFILE || env.APP_ENV);
-  }
-  if (env.NODE_ENV === "development") return "debug";
-  return "production";
+  if (botProfiles.includes(env.BOT_PROFILE as BotProfile)) return env.BOT_PROFILE as BotProfile;
+  throw new Error(`Invalid BOT_PROFILE: ${String(env.BOT_PROFILE)}. Use "production" or "debug".`);
 }
 
 function profilePrefix(profile: BotProfile): "PRODUCTION" | "DEBUG" {
@@ -210,6 +197,7 @@ function profileDataDefaults(profile: BotProfile): Record<string, string> {
     REMINDER_DATABASE_PATH: `${base}/reminder.db`,
     USER_PROMPT_DIR: `${base}/AI/prompt/user`,
     COLD_LAUGH_STORE_PATH: `${base}/server/json/cold_laugh_counts.json`,
+    ADHD_VIDEO_FILES_DIR: `${base}/adhd-videos`,
   };
 }
 
@@ -219,14 +207,12 @@ function applyProfileOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = {
     ...profileDataDefaults(profile),
     ...env,
-    PROFILE: profile,
     BOT_PROFILE: profile,
   };
 
   for (const key of profileOverridableKeys) {
     const prefixedKey = `${prefix}_${key}`;
-    const suffixedKey = `${key}_${prefix}`;
-    const value = env[prefixedKey] ?? env[suffixedKey];
+    const value = env[prefixedKey];
     if (value !== undefined) {
       next[key] = value;
     }
@@ -236,12 +222,8 @@ function applyProfileOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 const envSchema = z.object({
-  BOT_PROFILE: z.enum(botProfiles).default("production"),
-  DB_DRIVER: z.preprocess(
-    (v) => (v === "" || v === undefined ? "postgres" : String(v).toLowerCase()),
-    z.enum(["sqlite", "postgres"]).default("sqlite"),
-  ),
-  DATABASE_URL: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().url().optional()),
+  BOT_PROFILE: z.enum(botProfiles),
+  DATABASE_URL: z.string().url(),
   POSTGRES_MAIN_SCHEMA: z.string().min(1).default("main"),
   POSTGRES_TICKET_SCHEMA: z.string().min(1).default("ticket"),
   POSTGRES_MESSAGE_LOG_SCHEMA: z.string().min(1).default("message_log"),
@@ -330,7 +312,6 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.enum(["none", "low", "medium", "high", "xhigh"]).default("high"),
   ),
-  OPENAI_DAILY_TOKEN_LIMIT: z.coerce.number().int().positive().default(2_500_000),
   OPENAI_FALLBACK_THRESHOLD: z.coerce.number().int().positive().default(2_400_000),
   OPENAI_USAGE_CACHE_MS: z.coerce.number().int().min(0).default(30_000),
   OPENAI_MAX_COMPLETION_TOKENS: z.coerce.number().int().positive().default(8_192),
@@ -431,29 +412,24 @@ const envSchema = z.object({
   REACTION_ROLE_OUTPUT_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   GAME_DEAL_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
   GAME_DEAL_NOTIFY_ROLE_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
-  STEAM_WEB_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
   YOUTUBE_PREVIEW_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
   YOUTUBE_DATA_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
   YOUTUBE_REQUEST_TIMEOUT_MS: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.coerce.number().int().min(1_000).max(30_000).default(10_000),
   ),
-  YOUTUBE_YTDLP_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
-  YOUTUBE_YTDLP_PATH: z.preprocess(
-    (v) => (v === "" || v === undefined || v === null ? undefined : v),
-    z.string().min(1).default("yt-dlp"),
-  ),
-  YOUTUBE_YTDLP_TIMEOUT_MS: z.preprocess(
-    (v) => (v === "" || v === undefined || v === null ? undefined : v),
-    z.coerce.number().int().min(1_000).max(30_000).default(15_000),
-  ),
   ADHD_WATCHER_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
   ADHD_POLL_INTERVAL_MS: z.coerce.number().int().min(60_000).default(60_000),
   ADHD_RSS_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
-  GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
-  GAME_DEAL_STEAM_VERIFY_INTERVAL_MS: z.coerce.number().int().min(10_000).default(60_000),
+  ADHD_VIDEO_FILES_DIR: z.string().min(1).default("data/production/adhd-videos"),
+  ADHD_VIDEO_PUBLIC_BASE_URL: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().url().startsWith("https://").optional(),
+  ),
+  ADHD_VIDEO_MIN_FREE_BYTES: z.coerce.number().int().nonnegative().default(1024 * 1024 * 1024),
+  ADHD_VIDEO_CACHE_MAX_BYTES: z.coerce.number().int().positive().default(20 * 1024 * 1024 * 1024),
+  ADHD_VIDEO_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   GAME_DEAL_STEAM_NOW_INTERVAL_MS: z.coerce.number().int().min(60_000).default(1_800_000),
-  GAME_DEAL_STEAM_VERIFY_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(20),
   GAME_DEAL_EPIC_INTERVAL_MS: z.coerce.number().int().min(60_000).default(3_600_000),
   GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: z.coerce.number().int().min(60_000).default(3_600_000),
   WEREWOLF_CHANNEL_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
@@ -473,6 +449,11 @@ const envSchema = z.object({
     z.string().url().default("https://dog.ceo/api/breeds/image/random"),
   ),
   DOGCEO_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  BOKETE_API_BASE_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("https://bokete-api-worker.cielgameee.workers.dev"),
+  ),
+  BOKETE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
     // 川柳（5-7-5）検出（kuromoji）。未設定・空は false
 
   SENRYU_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
@@ -584,11 +565,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
   const data = parsed.data;
-  if (data.OPENAI_FALLBACK_THRESHOLD > data.OPENAI_DAILY_TOKEN_LIMIT) {
-    throw new Error("OPENAI_FALLBACK_THRESHOLD must be less than or equal to OPENAI_DAILY_TOKEN_LIMIT.");
-  }
-  if (data.DB_DRIVER !== "postgres") throw new Error("DB_DRIVER=postgres is required; SQLite runtime is no longer supported.");
-  if (!data.DATABASE_URL) throw new Error("DATABASE_URL is required for the PostgreSQL runtime.");
   const discordToken = data.DISCORD_TOKEN.trim();
   const guildId = data.GUILD_ID.trim();
   const ownerId = data.OWNER_ID.trim();
@@ -626,6 +602,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     PROMPT_FILE_PATH: R(data.PROMPT_FILE_PATH),
     USER_PROMPT_DIR: R(data.USER_PROMPT_DIR),
     COLD_LAUGH_STORE_PATH: R(data.COLD_LAUGH_STORE_PATH),
+    ADHD_VIDEO_FILES_DIR: R(data.ADHD_VIDEO_FILES_DIR),
     SENRYU_KUROMOJI_DICT_PATH: data.SENRYU_KUROMOJI_DICT_PATH ? R(data.SENRYU_KUROMOJI_DICT_PATH) : undefined,
   };
 }

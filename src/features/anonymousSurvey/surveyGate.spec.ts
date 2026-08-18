@@ -28,7 +28,6 @@ function makeCtx(db: ReturnType<typeof createKysely>): BotContext {
   return {
     db,
     config: {
-      DB_DRIVER: "postgres",
       GUILD_ID: "guild",
       OWNER_ID: "owner",
       ADMIN_ROLE_ID: "admin-role",

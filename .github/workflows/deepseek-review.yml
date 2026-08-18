@@ -45,10 +45,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Run DeepSeek review
         if: steps.target.outputs.should-run == 'true'
+        continue-on-error: true
         run: node scripts/deepseek-review.mjs
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

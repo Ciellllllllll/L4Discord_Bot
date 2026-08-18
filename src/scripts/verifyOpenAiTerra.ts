@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { loadConfig } from "../core/config.js";
 import { AiRequestError } from "../features/ai/aiRequestError.js";
 import { openAiResponsesChat } from "../features/ai/openaiResponses.js";

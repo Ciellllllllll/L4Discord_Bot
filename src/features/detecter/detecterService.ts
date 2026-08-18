@@ -14,6 +14,7 @@ import {
   type TextChannel,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type { BotContext } from "../../bot/context.js";
 import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
@@ -249,7 +250,7 @@ export class DetecterService {
     const retries = [250, 800, 1500];
     for (const wait of retries) {
       if (wait > 0) {
-        await new Promise((r) => setTimeout(r, wait));
+        await delay(wait);
       }
       try {
         const audits = await input.guild.fetchAuditLogs({ limit: 50, type: input.action });

@@ -63,8 +63,6 @@ function steamEvidenceText(evidenceJson: string): string {
             return "Steam appdetails";
           case "steam_search":
             return "Steam search";
-          case "cheapshark":
-            return "CheapShark補助";
           case "db_paid_history":
             return "DB paid history";
           default:

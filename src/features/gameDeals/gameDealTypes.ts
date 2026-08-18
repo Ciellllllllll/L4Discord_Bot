@@ -17,7 +17,6 @@ export type GameDealStatus = {
   lastSteamSearchStatus: string | null;
   lastSteamSearchError: string | null;
   steamSearchCooldownUntil: string | null;
-  cheapSharkCooldownUntil?: string | null;
 };
 
 export type GameDealFreeItem = {
@@ -26,26 +25,6 @@ export type GameDealFreeItem = {
   dedupeKey: string;
   embed: ComponentCardBuilder;
   components?: ActionRowBuilder<ButtonBuilder>[];
-};
-
-export type SteamAppCatalogEntry = {
-  appid: string;
-  name: string;
-  lastModified: number | null;
-  priceChangeNumber: number | null;
-};
-
-export type SteamAppCatalogChange = SteamAppCatalogEntry & {
-  previousLastModified: number | null;
-  previousPriceChangeNumber: number | null;
-};
-
-export type SteamPaidPriceHistory = {
-  appid: string;
-  title: string | null;
-  normalPriceCents: number | null;
-  normalPriceDisplay: string | null;
-  source: string;
 };
 
 export type SteamFreeEvent = {
@@ -98,20 +77,4 @@ export type GameDealSourceStatus = {
 export type GameDealScanResult = {
   items: GameDealFreeItem[];
   sources: GameDealSourceStatus[];
-};
-
-export type DealWatchItem = {
-  id: number;
-  guildId: string;
-  channelId: string | null;
-  steamAppId: string;
-  title: string | null;
-  lastDealId: string | null;
-  lastSalePrice: number | null;
-  lastNormalPrice: number | null;
-  lastSavings: number | null;
-  lastChange: number | null;
-  lastCheckedAt: string | null;
-  lastNotifiedAt: string | null;
-  enabled: boolean;
 };

@@ -1,49 +1,20 @@
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
-import { createPacchiRepository } from "./pacchi.repository.js";
+import type { PacchiRepositoryLike } from "./pacchi.repository.js";
 import { buildPacchiGeneratedReply } from "./pacchi.generator.js";
 
 async function run(): Promise<void> {
-  const db = new Database(":memory:");
-  const repo = createPacchiRepository(db);
   const guildId = "guild";
-  repo.learn(guildId, ["話題"], null);
-  repo.learnMorph(guildId, [
-    {
-      surface: "原神",
-      base: "原神",
-      reading: "ゲンシン",
-      pos: ["名詞", "固有名詞", "一般"],
-      isProperNoun: true,
-      isOov: false,
-      source: "spec",
+  const repo = {
+    async pickWord() { return "話題"; },
+    async relatedWords() { return []; },
+    async randomSentencePattern() { return { surface_pattern: "{NOUN}は{ADJECTIVE}かも" }; },
+    async topLexiconByPos(_guildId: string, pos: string) {
+      if (pos === "固有名詞") return [{ base: "原神", count: 1, is_proper_noun: 1 }];
+      if (pos === "名詞") return [{ base: "猫", count: 1, is_proper_noun: 0 }];
+      if (pos === "形容詞") return [{ base: "速い", count: 1, is_proper_noun: 0 }];
+      return [];
     },
-    {
-      surface: "猫",
-      base: "猫",
-      reading: "ネコ",
-      pos: ["名詞", "普通名詞", "一般"],
-      isProperNoun: false,
-      isOov: false,
-      source: "spec",
-    },
-    {
-      surface: "速い",
-      base: "速い",
-      reading: "ハヤイ",
-      pos: ["形容詞"],
-      isProperNoun: false,
-      isOov: false,
-      source: "spec",
-    },
-  ]);
-  repo.learnSentencePattern(guildId, {
-    surfacePattern: "{NOUN}は{ADJECTIVE}かも",
-    slots: ["NOUN", "ADJECTIVE"],
-    ending: "かも",
-    sourceKind: "spec",
-    safeLevel: 1,
-  });
+  } as unknown as PacchiRepositoryLike;
 
   const originalRandom = Math.random;
   Math.random = () => 0;
@@ -67,8 +38,6 @@ async function run(): Promise<void> {
   } finally {
     Math.random = originalRandom;
   }
-
-  db.close();
 }
 
 void run()

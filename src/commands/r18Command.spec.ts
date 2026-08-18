@@ -92,7 +92,7 @@ async function run(): Promise<void> {
   try {
     const ctx = makeCtx(db);
     const { interaction, replies } = makeInteraction({ guildId: "guild", enabled: true });
-    await handleSlashCommand(interaction, ctx);
+    await handleSlashCommand(interaction, ctx, { skipSurvey: true });
 
     const row = await readR18Setting(db);
     assert.equal(row?.enabled, 1);
@@ -111,14 +111,14 @@ async function run(): Promise<void> {
       .execute();
 
     const { interaction: offInteraction } = makeInteraction({ guildId: "guild", enabled: false });
-    await handleSlashCommand(offInteraction, ctx);
+    await handleSlashCommand(offInteraction, ctx, { skipSurvey: true });
     const ownRow = await readR18Setting(db);
     const otherRow = await readR18Setting(db, "guild", "other-user");
     assert.equal(ownRow?.enabled, 0);
     assert.equal(otherRow?.enabled, 1);
 
     const { interaction: dmInteraction, replies: dmReplies } = makeInteraction({ guildId: null, enabled: true });
-    await handleSlashCommand(dmInteraction, ctx);
+    await handleSlashCommand(dmInteraction, ctx, { skipSurvey: true });
     assert.equal(dmReplies.length, 1);
     assert.equal(dmReplies[0]?.flags, MessageFlags.Ephemeral);
 
@@ -127,7 +127,7 @@ async function run(): Promise<void> {
       userId: "outside-user",
       enabled: true,
     });
-    await handleSlashCommand(otherGuildInteraction, ctx);
+    await handleSlashCommand(otherGuildInteraction, ctx, { skipSurvey: true });
     assert.equal(otherGuildReplies.length, 1);
     assert.equal(otherGuildReplies[0]?.flags, MessageFlags.Ephemeral);
     assert.equal(await countR18SettingsForUser(db, "outside-user"), 0);

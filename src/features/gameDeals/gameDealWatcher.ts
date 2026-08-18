@@ -4,8 +4,8 @@ import type { BotContext } from "../../bot/context.js";
 import { componentCardsPayload } from "../panels/componentCard.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
 import { checkSubscriptions, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
-import { createGameDealRepository, GAME_DEALS_POSTGRES_DISABLED_MESSAGE } from "./postgresGameDealRepository.js";
-import { processSteamVerifyQueue, scanSteamAppListChanges, scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
+import { createGameDealRepository } from "./postgresGameDealRepository.js";
+import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealSubscriptionHit } from "./gameDealTypes.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 60 * 1000;
@@ -170,24 +170,9 @@ export async function groupSubscriptionNotificationHits(
   return { detectedCount, groups };
 }
 
-export async function scanAndNotifyGameDeals(ctx: BotContext): Promise<void> {
-  if (!createGameDealRepository(ctx)) {
-    ctx.log.warn("game deal manual scan skipped because PostgreSQL repository is not available");
-    return;
-  }
-  const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE);
-  const steamNowItems = await scanSteamNowFullDiscountItems(ctx, undefined, { onlyUnnotified: true });
-  const scan = await scanCurrentFreeGamesDetailed(ctx);
-  await notifyFreeGameDealItems(ctx, [...steamItems, ...steamNowItems, ...scan.items.filter((item) => item.platform === "epic")]);
-}
-
 async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeItem[], signal?: AbortSignal): Promise<number> {
   const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
-  if (!repo) {
-    ctx.log.warn({ itemCount: freeItems.length }, "game deal free notification skipped because PostgreSQL repository is not available");
-    return 0;
-  }
   if (freeItems.length === 0) return 0;
   if (!configuredChannelId) {
     ctx.log.warn(
@@ -274,10 +259,6 @@ async function scanAndNotifySubscriptions(ctx: BotContext, signal?: AbortSignal)
   const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
   let detectedCount = 0;
-  if (!repo) {
-    ctx.log.warn("game deal subscription scan skipped because PostgreSQL repository is not available");
-    return 0;
-  }
 
   const subscriptions = await repo.listActiveSubscriptions();
   const hits = await checkSubscriptions(ctx, subscriptions, { signal }).catch((err) => {
@@ -331,47 +312,17 @@ async function scanAndNotifySubscriptions(ctx: BotContext, signal?: AbortSignal)
 }
 
 export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_INTERVAL_MS): GameDealWatcherController {
-  if (!createGameDealRepository(ctx)) {
-    ctx.log.warn("game deal watcher disabled because PostgreSQL repository is not available");
-    return createGameDealWatcherController({
-      intervalMs,
-      startDelayMs: 0,
-      stopGraceMs: DEFAULT_STOP_GRACE_MS,
-      tick: async () => undefined,
-    });
-  }
-  let lastSteamAppListAt = 0;
-  let lastSteamVerifyAt = 0;
   let lastSteamNowAt = 0;
   let lastEpicAt = 0;
   let lastSubscriptionAt = 0;
   const tick = async (signal: AbortSignal) => {
     throwIfAborted(signal);
     const repo = createGameDealRepository(ctx);
-    if (!repo) {
-      ctx.log.warn("game deal watcher tick skipped because PostgreSQL repository is not available");
-      return;
-    }
     await repo.markScanStarted();
-    await repo.updateDealStatus({ lastScanAt: new Date().toISOString() });
     let detectedCount = 0;
     let notifiedCount = 0;
     try {
       const now = Date.now();
-      if (now - lastSteamAppListAt >= ctx.config.GAME_DEAL_STEAM_APP_LIST_INTERVAL_MS) {
-        lastSteamAppListAt = now;
-        await scanSteamAppListChanges(ctx, signal).catch((err) => { if (!signal.aborted) ctx.log.warn({ err }, "steam app list scheduled scan failed"); });
-      }
-      throwIfAborted(signal);
-      if (now - lastSteamVerifyAt >= ctx.config.GAME_DEAL_STEAM_VERIFY_INTERVAL_MS) {
-        lastSteamVerifyAt = now;
-        const steamItems = await processSteamVerifyQueue(ctx, ctx.config.GAME_DEAL_STEAM_VERIFY_BATCH_SIZE, signal).catch((err) => {
-          if (!signal.aborted) ctx.log.warn({ err }, "steam verify scheduled scan failed");
-          return [];
-        });
-        detectedCount += steamItems.length;
-        notifiedCount += await notifyFreeGameDealItems(ctx, steamItems, signal);
-      }
       throwIfAborted(signal);
       if (now - lastSteamNowAt >= ctx.config.GAME_DEAL_STEAM_NOW_INTERVAL_MS) {
         lastSteamNowAt = now;
@@ -401,7 +352,6 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
       throwIfAborted(signal);
       const successAt = new Date().toISOString();
       await repo.markScanSuccess(detectedCount, successAt);
-      await repo.updateDealStatus({ lastScanAt: successAt, lastSuccessAt: successAt, lastError: null, lastDetectedCount: detectedCount });
       ctx.log.info({ detectedCount, notifiedCount }, "game deal watcher tick completed");
     } catch (err) {
       if (signal.aborted) {
@@ -409,7 +359,6 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
         return;
       }
       await repo.markScanError(err instanceof Error ? err.message : String(err));
-      await repo.updateDealStatus({ lastError: err instanceof Error ? err.message : String(err) });
       ctx.log.warn({ err }, "game deal watcher tick failed");
     }
   };
@@ -435,10 +384,6 @@ export async function handleGameDealButton(interaction: ButtonInteraction, ctx: 
   const [domain, action, notificationId] = interaction.customId.split(":");
   if (domain !== "gameDeals" || !action || !notificationId) return false;
   const repo = createGameDealRepository(ctx);
-  if (!repo) {
-    await interaction.reply({ content: GAME_DEALS_POSTGRES_DISABLED_MESSAGE, flags: MessageFlags.Ephemeral });
-    return true;
-  }
   const row = await repo.getNotification(notificationId);
   if (!row) {
     await interaction.reply({ content: "この通知は処理できません。", flags: MessageFlags.Ephemeral });

@@ -1,5 +1,4 @@
 import { execSync } from "node:child_process";
-import "dotenv/config";
 
 if (process.platform === "win32") {
   try {
@@ -8,7 +7,6 @@ if (process.platform === "win32") {
 }
 
 import { PostgresVcRankingRepository } from "./adapters/legacyDb/postgresVcRankingRepository.js";
-import { SqliteVcRankingRepository } from "./adapters/legacyDb/sqliteVcRankingRepository.js";
 import { createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
 import { closeDatabaseRuntime, createDatabaseRuntime } from "./bot/databaseRuntime.js";
@@ -20,9 +18,9 @@ import { loadConfig } from "./core/config.js";
 import { createLogger } from "./core/logger.js";
 import { getReleaseBundleForLog } from "./core/releaseVersions.js";
 import { copyAutomodFromGuildSettingsIfMissing } from "./features/moderation/copyAutomodFromGuildSettings.js";
-import { bindPostgresSenryuRepository, bindSenryuRepository } from "./features/senryu/senryu.message-handler.js";
+import { bindPostgresSenryuRepository } from "./features/senryu/senryu.message-handler.js";
 import { VcTemporaryChannelManager } from "./features/vc/vcTemporaryChannelManager.js";
-import { createPostgresVcTempPersistence, createSqliteVcTempPersistence } from "./features/vc/vcTempPersistence.js";
+import { createPostgresVcTempPersistence } from "./features/vc/vcTempPersistence.js";
 
 let mainStarted = false;
 
@@ -38,22 +36,13 @@ async function main(): Promise<void> {
   log.debug(
     {
       botProfile: config.BOT_PROFILE,
-      dbDriver: config.DB_DRIVER,
       effectiveBotVersion: config.BOT_VERSION,
       guildId: config.GUILD_ID,
-      databasePath: config.DATABASE_PATH,
-      messageLogDbPath: config.MESSAGE_LOG_DB_PATH,
-      messageAttachmentStoreDbPath: config.MESSAGE_ATTACHMENT_STORE_DB_PATH,
       messageAttachmentFilesDir: config.MESSAGE_ATTACHMENT_FILES_DIR,
       messageAttachmentArchiveEnabled: config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED,
       gameDealChannelId: config.GAME_DEAL_CHANNEL_ID ?? null,
       gameDealNotifyRoleId: config.GAME_DEAL_NOTIFY_ROLE_ID ?? null,
-      ticketDbPath: config.TICKET_DATABASE_PATH,
-      vcTimeDbPath: config.VC_TIME_DATABASE_PATH,
       vcRankingTimeZone: config.VC_TIME_RANKING_TIMEZONE,
-      aiHistoryDbPath: config.AI_HISTORY_DATABASE_PATH,
-      automoderationDbPath: config.AUTOMODERATION_DATABASE_PATH,
-      reminderDbPath: config.REMINDER_DATABASE_PATH,
       release: getReleaseBundleForLog(),
     },
     "config loaded (BOT_VERSION = code default or env override; release bundle from TypeScript)",
@@ -62,8 +51,7 @@ async function main(): Promise<void> {
 
   const runtime = await createDatabaseRuntime(config, log);
   const {
-    sqlite, ticketSqlite, messageLogSqlite, messageAttachmentStoreSqlite, vcTimeSqlite,
-    aiHistorySqlite, automodSqlite, db, ticketDb, aiHistoryDb, automodDb, messageLogPgPool, mainPgPool,
+    db, ticketDb, aiHistoryDb, automodDb, messageLogPgPool, mainPgPool,
     vcTimePgPool, messageAttachmentPgPool, aiRouter,
   } = runtime;
 
@@ -87,40 +75,27 @@ async function main(): Promise<void> {
     log,
     client,
     config,
-    vcTimePgPool ? createPostgresVcTempPersistence(vcTimePgPool) : createSqliteVcTempPersistence(sqlite!),
+    createPostgresVcTempPersistence(vcTimePgPool),
   );
-  if (mainPgPool) bindPostgresSenryuRepository(mainPgPool);
-  else bindSenryuRepository(sqlite!);
+  bindPostgresSenryuRepository(mainPgPool);
 
   const ctx: BotContext = {
     config,
     db,
-    sqlite,
     ticketDb,
-    ticketSqlite,
-    messageLogSqlite,
-    messageLogPgPool: messageLogPgPool ?? undefined,
-    messageAttachmentStoreSqlite,
-    messageAttachmentPgPool: messageAttachmentPgPool ?? undefined,
-    vcTimeSqlite,
+    messageLogPgPool,
+    messageAttachmentPgPool,
+    vcTimePgPool,
     aiHistoryDb,
-    aiHistorySqlite,
     automodDb,
-    automodSqlite,
     log,
     client,
     aiRouter,
-    gameDealPgPool: mainPgPool ?? undefined,
-    vcRanking: vcTimePgPool
-      ? new PostgresVcRankingRepository(vcTimePgPool, config.VC_TIME_RANKING_TIMEZONE)
-      : new SqliteVcRankingRepository(vcTimeSqlite!, config.VC_TIME_RANKING_TIMEZONE),
+    mainPgPool,
+    vcRanking: new PostgresVcRankingRepository(vcTimePgPool, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
   };
-  log.debug(
-    config.DB_DRIVER === "postgres"
-      ? "repositories: PostgreSQL schemas selected for tickets, message log, attachments, VC, AI history, automoderation, reminders"
-      : "repositories: tickets (ticket.db), message log (message.db), VC ranking (vc_time.db), AI history (AI_History.db), automoderation (Automoderation.db), reminders (reminder.db, on first use)",
-  );
+  log.debug("repositories: PostgreSQL schemas selected for tickets, message log, attachments, VC, AI history, automoderation, reminders");
 
   try {
     await copyAutomodFromGuildSettingsIfMissing(ctx, config.GUILD_ID);
@@ -129,7 +104,7 @@ async function main(): Promise<void> {
   }
 
   const runtimeHandlers = await initializeRuntimeHandlersWithCleanup({
-    registerHandlers: () => registerRuntimeHandlers(ctx, { vcTimePgPool }),
+    registerHandlers: () => registerRuntimeHandlers(ctx),
     closeDatabase: () => closeDatabaseRuntime(runtime),
     destroyClient: () => client.destroy(),
     warn: (err, message) => log.warn({ err }, message),

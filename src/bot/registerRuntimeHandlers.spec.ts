@@ -1,6 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createRuntimeResourceLifecycle, createRuntimeShutdown, initializeJapaneseRuntime, respondToInteractionError, shutdownModerationFlowRuntimes, startClientReadyBackgroundServices } from "./registerRuntimeHandlers.js";
+import { createRuntimeResourceLifecycle, createRuntimeShutdown, initializeJapaneseRuntime, respondToInteractionError, shouldStartYouTubeVideoCacheMaintenance, shutdownModerationFlowRuntimes, startClientReadyBackgroundServices, startPreviewStateCleanup } from "./registerRuntimeHandlers.js";
+
+test("preview state cleanup runs common and legacy cleanup immediately and every hour", async () => {
+  const calls: string[] = [];
+  let scheduled: (() => void) | undefined;
+  const timer = startPreviewStateCleanup({
+    deleteCommon: async () => { calls.push("common"); },
+    deleteLegacy: async () => { calls.push("legacy"); },
+    logWarning: () => undefined,
+    setInterval: (callback, delay) => {
+      assert.equal(delay, 60 * 60 * 1_000);
+      scheduled = callback;
+      return { marker: "cleanup" } as unknown as NodeJS.Timeout;
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["common", "legacy"]);
+  scheduled?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["common", "legacy", "common", "legacy"]);
+  assert.equal((timer as unknown as { marker: string }).marker, "cleanup");
+});
 
 test("interaction errors reply, edit deferred replies, and fall back to follow-up", async () => {
   const calls: string[] = [];
@@ -198,4 +219,68 @@ test("Japanese runtime startup failure shuts down the lifecycle before propagati
   );
   assert.deepEqual(calls, ["vc", "client"]);
   assert.equal(lifecycle.isClosed(), true);
+});
+
+test("YouTube cache maintenance starts in debug and production when either preview path is enabled", async () => {
+  assert.equal(shouldStartYouTubeVideoCacheMaintenance({
+    BOT_PROFILE: "production", YOUTUBE_PREVIEW_ENABLED: true, ADHD_WATCHER_ENABLED: false,
+  } as never), true);
+  assert.equal(shouldStartYouTubeVideoCacheMaintenance({
+    BOT_PROFILE: "production", YOUTUBE_PREVIEW_ENABLED: false, ADHD_WATCHER_ENABLED: true,
+  } as never), true);
+  assert.equal(shouldStartYouTubeVideoCacheMaintenance({
+    BOT_PROFILE: "production", YOUTUBE_PREVIEW_ENABLED: false, ADHD_WATCHER_ENABLED: false,
+  } as never), false);
+  assert.equal(shouldStartYouTubeVideoCacheMaintenance({
+    BOT_PROFILE: "debug", YOUTUBE_PREVIEW_ENABLED: true, ADHD_WATCHER_ENABLED: true,
+  } as never), true);
+  assert.equal(shouldStartYouTubeVideoCacheMaintenance({
+    BOT_PROFILE: "debug", YOUTUBE_PREVIEW_ENABLED: false, ADHD_WATCHER_ENABLED: false,
+  } as never), false);
+});
+
+test("cache maintenance starts before the watcher and lifecycle shutdown stops it", async () => {
+  const calls: string[] = [];
+  const lifecycle = createRuntimeResourceLifecycle({
+    vcTemp: { stopSweep: () => { calls.push("vc"); } },
+    client: { destroy: () => { calls.push("client"); } },
+  });
+  const started = await startClientReadyBackgroundServices({
+    lifecycle,
+    startPresence: () => ({ marker: "presence" } as never),
+    startReminder: () => ({ marker: "reminder" } as never),
+    startGameDeal: () => ({ stop: async () => { calls.push("deals"); } }),
+    startYouTubeVideoCacheMaintenance: async () => {
+      calls.push("maintenance:start");
+      return { stop: () => { calls.push("maintenance:stop"); } };
+    },
+    startLolWatcher: async () => { calls.push("lol"); return null; },
+    startYouTubeWatcher: () => { calls.push("youtube"); return { stop: () => { calls.push("youtube:stop"); } }; },
+    logError: () => undefined,
+  });
+  assert.equal(started, true);
+  assert.deepEqual(calls.slice(0, 3), ["maintenance:start", "lol", "youtube"]);
+  await lifecycle.shutdown();
+  assert.equal(calls.includes("maintenance:stop"), true);
+});
+
+test("cache maintenance startup failure clears already registered resources", async () => {
+  const calls: string[] = [];
+  const lifecycle = createRuntimeResourceLifecycle({
+    vcTemp: { stopSweep: () => undefined },
+    client: { destroy: () => undefined },
+    clearInterval: (timer) => { calls.push((timer as unknown as { marker: string }).marker); },
+  });
+  const started = await startClientReadyBackgroundServices({
+    lifecycle,
+    startPresence: () => ({ marker: "presence" } as never),
+    startReminder: () => ({ marker: "reminder" } as never),
+    startGameDeal: () => ({ stop: async () => { calls.push("deals"); } }),
+    startYouTubeVideoCacheMaintenance: async () => { throw new Error("cleanup unavailable"); },
+    startLolWatcher: async () => { calls.push("lol"); return null; },
+    startYouTubeWatcher: () => null,
+    logError: () => undefined,
+  });
+  assert.equal(started, false);
+  assert.deepEqual(calls, ["presence", "reminder", "deals"]);
 });

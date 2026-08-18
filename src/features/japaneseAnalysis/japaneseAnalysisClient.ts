@@ -67,15 +67,13 @@ async function postJson<T>(
   body: unknown,
   validate: (value: unknown) => T | null,
 ): Promise<WorkerResult<T>> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   const fetchImpl = options.fetchImpl ?? fetch;
   try {
     const response = await fetchImpl(new URL(path, options.baseUrl), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(options.timeoutMs),
     });
     if (!response.ok) {
       return { ok: false, reason: "http_error", error: response.status };
@@ -92,12 +90,10 @@ async function postJson<T>(
     }
     return { ok: true, data };
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
       return { ok: false, reason: "timeout", error };
     }
     return { ok: false, reason: "unreachable", error };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -118,14 +114,12 @@ export function analyzeMorph(
 export async function checkJapaneseWorkerHealth(
   options: JapaneseAnalysisClientOptions,
 ): Promise<WorkerResult<JapaneseWorkerHealth>> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   const fetchImpl = options.fetchImpl ?? fetch;
   const started = Date.now();
   try {
     const response = await fetchImpl(new URL("/health", options.baseUrl), {
       method: "GET",
-      signal: controller.signal,
+      signal: AbortSignal.timeout(options.timeoutMs),
     });
     if (!response.ok) {
       return { ok: false, reason: "http_error", error: response.status };
@@ -141,11 +135,9 @@ export async function checkJapaneseWorkerHealth(
     }
     return { ok: true, data: { ok: true, ms: Date.now() - started } };
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
       return { ok: false, reason: "timeout", error };
     }
     return { ok: false, reason: "unreachable", error };
-  } finally {
-    clearTimeout(timer);
   }
 }
