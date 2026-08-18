@@ -424,7 +424,7 @@ async function run(): Promise<void> {
     const mainMigrationVersions = await adminPool.query<{ version: number }>(
       `SELECT version FROM ${quotePgIdent(schemas.main)}.postgres_schema_migrations ORDER BY version`,
     );
-    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 14 }, (_, index) => index + 1));
+    assert.deepEqual(mainMigrationVersions.rows.map((row) => row.version), Array.from({ length: 15 }, (_, index) => index + 1));
     await assertPollsStateRevisionSchema(adminPool, schemas.main);
     await assertYouTubeVideoCacheReferences(adminPool, schemas.main);
     await assertKyselySchema(

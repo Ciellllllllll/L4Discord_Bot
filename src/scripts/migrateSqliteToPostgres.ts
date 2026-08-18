@@ -18,6 +18,7 @@ import { ensurePostgresTicketDatabaseSchema } from "../features/tickets/ticketDb
 import { ensurePostgresVcTempSchema } from "../features/vc/vcTempPersistence.js";
 import { ensurePostgresVcTimeSchema } from "../features/vc/vcTimeSchema.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
+import { migratePostgresPreviewTranslationStates } from "../features/linkPreviews/shared/previewState.repository.js";
 import { ensurePostgresYouTubeWatcherSchema, migratePostgresYouTubeVideoCacheReferences, migratePostgresYouTubeWatcherDurableMedia } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
 
 type SqliteColumn = {
@@ -284,6 +285,7 @@ async function ensureCanonicalSchemas(config: ReturnType<typeof loadConfig>): Pr
       { version: 12, name: "drop_steam_app_list_tables", apply: (pool) => dropPostgresSteamAppListTables(pool, config.POSTGRES_MAIN_SCHEMA) },
       { version: 13, name: "youtube_watcher_durable_media", apply: migratePostgresYouTubeWatcherDurableMedia },
       { version: 14, name: "youtube_video_cache_references", apply: migratePostgresYouTubeVideoCacheReferences },
+      { version: 15, name: "preview_translation_states", apply: migratePostgresPreviewTranslationStates },
     ]);
   } finally {
     await mainPool.end();

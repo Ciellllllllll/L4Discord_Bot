@@ -211,5 +211,19 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
       updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_vx_twitter_preview_states_expires ON vx_twitter_preview_states (expires_at);
+
+    CREATE TABLE IF NOT EXISTS preview_translation_states (
+      message_id text PRIMARY KEY,
+      guild_id text NOT NULL,
+      channel_id text NOT NULL,
+      source_kind text NOT NULL CHECK (source_kind IN ('x', 'youtube')),
+      source_url text NOT NULL,
+      document jsonb NOT NULL,
+      translations jsonb NOT NULL,
+      expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_preview_translation_states_expires ON preview_translation_states (expires_at);
   `);
 }

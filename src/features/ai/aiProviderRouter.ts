@@ -19,6 +19,7 @@ export type AiTask =
   | "senryu_review"
   | "pacchi_final_check"
   | "vx_translation"
+  | "preview_translation"
   | "ping";
 
 export type AiFallbackReason =
@@ -103,6 +104,7 @@ const TASK_MAX_OUTPUT: Record<AiTask, number> = {
   senryu_review: 512,
   pacchi_final_check: 512,
   vx_translation: 512,
+  preview_translation: 4_096,
   ping: 1_024,
 };
 
