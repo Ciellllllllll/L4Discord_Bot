@@ -33,7 +33,7 @@ import { routeButton, routeChannelSelectMenu, routeModal, routeStringSelectMenu 
 import { handleExtendedAutoReplies } from "../message/extendedAutoReply.js";
 import { handlePrefixMessage } from "../message/prefixHandlers.js";
 import { handleAiChatMonitorMessage } from "../features/ai/aiQueryService.js";
-import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDeletePostgres, ingestMessageUpdatePostgres } from "../features/messageLog/index.js";
+import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDeletePostgres, ingestMessageUpdatePostgres } from "../features/messageLog/messageLogsCore.js";
 import { scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { deleteExpiredVxTwitterPreviewStates } from "../features/utilities/vxtwitterPreviewState.js";
 import { deleteExpiredPreviewTranslationStates } from "../features/linkPreviews/shared/previewState.repository.js";
@@ -91,9 +91,8 @@ export function createRuntimeShutdown(options: RuntimeResources & RuntimeCoreRes
 }
 
 /** Discord client を閉じる前に、処罰系フローが保持する期限タイマーと対象ロックを解放する。 */
-export function shutdownModerationFlowRuntimes(): void {
-  shutdownExecutionFlowRuntime();
-  shutdownTimeoutExtendFlowRuntime();
+export async function shutdownModerationFlowRuntimes(): Promise<void> {
+  await Promise.all([shutdownExecutionFlowRuntime(), shutdownTimeoutExtendFlowRuntime()]);
 }
 
 export function shouldStartYouTubeVideoCacheMaintenance(config: Pick<BotContext["config"], "BOT_PROFILE" | "YOUTUBE_PREVIEW_ENABLED" | "ADHD_WATCHER_ENABLED">): boolean {

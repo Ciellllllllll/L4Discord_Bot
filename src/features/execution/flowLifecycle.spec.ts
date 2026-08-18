@@ -2,57 +2,14 @@ import assert from "node:assert/strict";
 import {
   FlowDeadlineTimers,
   FlowTargetLocks,
-  remainingDeadlineDelayMs,
-  scheduleRestoredDeadline,
-  tallyChoices,
-  pickSingleWinner,
   persistTerminalState,
   PollFlowStateStore,
-  FlowOrchestrator,
-  saveOpenPollState,
-  publishReservedPollMessage,
   claimPollAdminApproval,
   commitClaimedPollTerminal,
 } from "./flowLifecycle.js";
+import { tallyChoices, pickSingleWinner } from "./twoStagePollRuntime.js";
 import Database from "better-sqlite3";
 import { createKysely } from "../../core/db/kysely.js";
-
-{
-  const timers = new FlowDeadlineTimers<ReturnType<typeof setTimeout>>({
-    setTimeout() { return {} as ReturnType<typeof setTimeout>; },
-    clearTimeout() {},
-  });
-  const orchestrator = new FlowOrchestrator({
-    namespace: "test",
-    timers,
-    parse: (value: unknown) => value as { phase: string; target_id: string },
-    targetId: (state) => state.target_id,
-    clearTimers: () => undefined,
-    retainTarget: () => true,
-    releaseTarget: () => undefined,
-    releaseAllTargets: () => undefined,
-    listOpen: async () => [],
-    findOpen: async () => null,
-    cancelMalformed: async () => undefined,
-    settleTerminal: async () => undefined,
-    abort: async () => true,
-    transitionPoll1: async () => undefined,
-    transitionPoll2: async () => undefined,
-    adminPending: () => false,
-    adminDeadline: () => 0,
-    claimed: () => false,
-    unpublished: () => false,
-    poll1Deadline: () => null,
-    poll2Deadline: () => null,
-    restoredDeadlineExpiredHeading: "expired",
-    adminTimeoutHeading: "admin timeout",
-    duplicateTargetHeading: "duplicate",
-    claimedHeading: "claimed",
-    unpublishedHeading: "unpublished",
-    log: () => undefined,
-  });
-  assert.equal(orchestrator.timerKey("poll1", "flow-1"), "poll1:flow-1");
-}
 
 {
   const sqlite = new Database(":memory:");
@@ -75,80 +32,6 @@ import { createKysely } from "../../core/db/kysely.js";
   assert.equal(row.state_revision, 2);
   await db.destroy();
   sqlite.close();
-}
-
-{
-  const sqlite = new Database(":memory:");
-  sqlite.exec(`CREATE TABLE polls (
-    id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, channel_id TEXT NOT NULL, message_id TEXT,
-    kind TEXT NOT NULL, status TEXT NOT NULL, state TEXT NOT NULL,
-    state_revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
-  )`);
-  sqlite.prepare("INSERT INTO polls (id, guild_id, channel_id, kind, status, state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run("publish-flow", "guild", "channel", "execution", "open", JSON.stringify({ phase: "draft", reserved: false, message_id: null }), "2026-01-01T00:00:00.000Z");
-  const db = createKysely(sqlite);
-  const store = new PollFlowStateStore(db);
-  type State = { phase: string; reserved: boolean; message_id: string | null };
-  const parse = (value: unknown) => value as State;
-  const initial = await store.findOpen("publish-flow", "execution", parse);
-  assert.ok(initial);
-  const saved = await saveOpenPollState({ store, id: "publish-flow", kind: "execution", parse, nextState: { ...initial.state, phase: "reserved", reserved: true } });
-  assert.equal(saved, true);
-  const published = await publishReservedPollMessage({
-    store,
-    id: "publish-flow",
-    kind: "execution",
-    parse,
-    isReserved: (state) => state.phase === "reserved" && state.reserved,
-    publish: async () => ({ id: "discord-message" }),
-    publishedState: (state, message) => ({ ...state, reserved: false, message_id: message.id }),
-    messageId: (message) => message.id,
-    discard: async () => undefined,
-  });
-  assert.equal(published?.id, "discord-message");
-  const persisted = await store.findOpen("publish-flow", "execution", parse);
-  assert.deepEqual(persisted?.state, { phase: "reserved", reserved: false, message_id: "discord-message" });
-  await db.destroy();
-  sqlite.close();
-}
-
-{
-  const events: string[] = [];
-  const timers = new FlowDeadlineTimers<ReturnType<typeof setTimeout>>({
-    setTimeout() { return {} as ReturnType<typeof setTimeout>; },
-    clearTimeout() {},
-  });
-  const orchestrator = new FlowOrchestrator<{}, { phase: string; target_id: string }>({
-    namespace: "test",
-    timers,
-    parse: (value) => value as { phase: string; target_id: string },
-    targetId: (state) => state.target_id,
-    clearTimers: (id) => events.push(`clear:${id}`),
-    retainTarget: () => true,
-    releaseTarget: () => undefined,
-    releaseAllTargets: () => events.push("release-all"),
-    listOpen: async () => [{ id: "expired", guild_id: "guild", state: { phase: "poll1_pending", target_id: "target" }, updated_at: new Date(0) }],
-    findOpen: async () => null,
-    cancelMalformed: async () => undefined,
-    settleTerminal: async () => undefined,
-    abort: async () => true,
-    transitionPoll1: async (_ctx, id) => { events.push(`poll1:${id}`); },
-    transitionPoll2: async () => undefined,
-    adminPending: () => false,
-    adminDeadline: () => 0,
-    claimed: () => false,
-    unpublished: () => false,
-    poll1Deadline: (state) => state.phase === "poll1_pending" ? 10 : null,
-    poll2Deadline: () => null,
-    restoredDeadlineExpiredHeading: "expired",
-    adminTimeoutHeading: "admin timeout",
-    duplicateTargetHeading: "duplicate",
-    claimedHeading: "claimed",
-    unpublishedHeading: "unpublished",
-    log: () => undefined,
-  });
-  await orchestrator.reconcile({}, 10);
-  assert.deepEqual(events, ["release-all", "clear:expired", "poll1:expired"]);
 }
 
 {
@@ -260,24 +143,6 @@ import { createKysely } from "../../core/db/kysely.js";
   timers.schedule("negative", -1, () => undefined);
 
   assert.deepEqual(scheduled, [0, 0, 0]);
-}
-
-{
-  assert.equal(remainingDeadlineDelayMs(1_500, 1_000), 500);
-  assert.equal(remainingDeadlineDelayMs(500, 1_000), 0);
-  assert.equal(remainingDeadlineDelayMs(Number.NaN, 1_000), 0);
-
-  const scheduled: Array<{ delayMs: number; handle: object }> = [];
-  const timers = new FlowDeadlineTimers({
-    setTimeout(_callback, delayMs) {
-      const handle = {};
-      scheduled.push({ delayMs, handle });
-      return handle;
-    },
-    clearTimeout() {},
-  });
-  scheduleRestoredDeadline(timers, "flow-1", 900, () => undefined, 1_000);
-  assert.equal(scheduled[0]?.delayMs, 0);
 }
 
 {
