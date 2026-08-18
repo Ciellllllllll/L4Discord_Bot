@@ -1,4 +1,4 @@
-import { ulid } from "ulid";
+import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { PgQueryable } from "../../core/db/postgres.js";
 import type { YouTubeFeedEntry } from "./youtubeRss.js";
@@ -139,7 +139,7 @@ export class PostgresYouTubeWatcherRepository {
   constructor(private readonly pool: Pool | PoolClient) {}
 
   async add(input: Omit<YouTubeWatchSubscription, "id" | "enabled" | "lastError" | "updatedAt">): Promise<YouTubeWatchSubscription> {
-    const id = ulid();
+    const id = randomUUID();
     const result = await this.pool.query(`
       INSERT INTO youtube_watch_subscriptions (id, guild_id, youtube_channel_id, source_url, discord_channel_id, enabled)
       VALUES ($1, $2, $3, $4, $5, true)

@@ -67,13 +67,8 @@ async function fetchJson<T>(url: string, opts: EpicStoreFetchOptions = {}): Prom
 }
 
 async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, externalSignal?: AbortSignal): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fn(externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal);
-  } finally {
-    clearTimeout(timer);
-  }
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return fn(externalSignal ? AbortSignal.any([timeoutSignal, externalSignal]) : timeoutSignal);
 }
 
 function normalizeSlug(value: string | null): string | null {

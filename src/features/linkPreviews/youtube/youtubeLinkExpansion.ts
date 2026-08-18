@@ -132,14 +132,6 @@ export function buildYouTubePreviewPayload(preview: YouTubePreview, options: You
   return payloadFromDocument(youTubePreviewToDocument(preview), { translations: {} }, options);
 }
 
-export function buildYouTubeNativeEmbedPayload(embed: APIEmbed, fallbackUrl?: string, mediaUrlOverride?: string): YouTubePreviewPayload {
-  const document = nativeYouTubeEmbedToDocument(embed, fallbackUrl);
-  return payloadFromDocument(document, { translations: {} }, {
-    mediaUrl: safeMediaUrl(mediaUrlOverride) ?? getYouTubeNativeEmbedVideoUrl(embed)
-      ?? safeYouTubeHttpsUrl(embed.image?.url) ?? safeYouTubeHttpsUrl(embed.thumbnail?.url),
-  });
-}
-
 export function buildYouTubeFallbackReply(urls: readonly string[]): MessageCreateOptions {
   return { content: urls.join("\n"), allowedMentions: { parse: [], repliedUser: false } };
 }
@@ -159,10 +151,8 @@ type MediaResolution = { media?: ResolvedMedia; failureReason?: string };
 async function downloadAttachment(mediaUrl: string, options: YouTubePreviewBuildOptions): Promise<ResolvedMedia | undefined> {
   const url = safeYouTubeHttpsUrl(mediaUrl);
   if (!url) return undefined;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS);
   try {
-    const response = await (options.fetcher ?? fetch)(url, { signal: controller.signal, headers: { Accept: "video/mp4,video/*;q=0.9,*/*;q=0.1" } });
+    const response = await (options.fetcher ?? fetch)(url, { signal: AbortSignal.timeout(options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS), headers: { Accept: "video/mp4,video/*;q=0.9,*/*;q=0.1" } });
     if (!response.ok) return undefined;
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
     if (contentType && !contentType.startsWith("video/")) return undefined;
@@ -174,7 +164,6 @@ async function downloadAttachment(mediaUrl: string, options: YouTubePreviewBuild
       ? { mediaUrl }
       : { mediaUrl: `attachment://${MEDIA_ATTACHMENT_FILENAME}`, files: [new AttachmentBuilder(buffer, { name: MEDIA_ATTACHMENT_FILENAME })] };
   } catch { return undefined; }
-  finally { clearTimeout(timer); }
 }
 
 async function resolveMedia(target: YouTubeReplyTarget, options: YouTubePreviewBuildOptions): Promise<MediaResolution> {
@@ -271,14 +260,16 @@ export async function waitForNativeYouTubeEmbed(
   return await new Promise((resolve) => {
     let done = false;
     const finish = (embed: APIEmbed | null): void => {
-      if (done) return; done = true; clearTimeout(timer); client.off?.("messageUpdate", onUpdate); resolve(embed);
+      if (done) return; done = true; timeout.removeEventListener("abort", onTimeout); client.off?.("messageUpdate", onUpdate); resolve(embed);
     };
+    const onTimeout = (): void => finish(null);
     const onUpdate = (_old: unknown, next: unknown): void => {
       if (!next || typeof next !== "object" || (next as { id?: string }).id !== message.id) return;
       const embed = nativeEmbedForTarget(next as Message, target, allowUrlless);
       if (embed) finish(embed);
     };
-    const timer = setTimeout(() => finish(null), NATIVE_EMBED_WAIT_MS);
+    const timeout = AbortSignal.timeout(NATIVE_EMBED_WAIT_MS);
+    timeout.addEventListener("abort", onTimeout, { once: true });
     client.on?.("messageUpdate", onUpdate);
   });
 }

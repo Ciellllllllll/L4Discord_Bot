@@ -76,15 +76,6 @@ export function vxTwitterTranslationsToPreviewBundle(
   };
 }
 
-export function previewBundleToVxTwitterTranslations(
-  bundle: PreviewDocumentTranslations,
-): VxTwitterTextTranslations {
-  return {
-    ...(bundle.model ? { model: bundle.model } : {}),
-    ...(bundle.translations.main ? { main: bundle.translations.main } : {}),
-    ...(bundle.translations.quote ? { quote: bundle.translations.quote } : {}),
-  };
-}
 
 export function buildVxTwitterPreviewPayload(
   tweet: TweetPreview,

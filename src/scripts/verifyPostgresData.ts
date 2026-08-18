@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { createHash } from "node:crypto";
 import Database from "better-sqlite3";
 import type { QueryResult } from "pg";

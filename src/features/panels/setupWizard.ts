@@ -8,7 +8,7 @@ import {
   type ButtonInteraction,
   type ChannelSelectMenuInteraction,
 } from "discord.js";
-import { ulid } from "ulid";
+import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
 import { createSession, deleteSession, getSession, mergeSessionPayload } from "../../core/interactionSessions.js";
 import { isOwner } from "../../core/permission.js";
@@ -41,7 +41,7 @@ export async function handleSetupUiOpenButton(interaction: ButtonInteraction, ct
     return true;
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const sid = ulid();
+  const sid = randomUUID();
   await createSession(ctx.db, {
     id: sid,
     guildId: interaction.guildId,
