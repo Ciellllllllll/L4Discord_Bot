@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 import { beginTePoll1 } from "./timeoutExtendFlow.js";
 
 const state = {
@@ -8,7 +9,7 @@ const state = {
   resolved_extend: null, duration_seconds: null, admin_button_fired: false,
 };
 
-function createFixture(updateResults: bigint[]) {
+function createFixture(updateResults: bigint[], advanceOnFailure = false) {
   let sent = 0;
   let deleted = 0;
   const row = { id: "flow", guild_id: "guild", kind: "timeout_extend", status: "open", message_id: null, state: JSON.stringify(state), state_revision: 0, updated_at: new Date() };
@@ -24,6 +25,14 @@ function createFixture(updateResults: bigint[]) {
         executeTakeFirst: async () => {
           const numUpdatedRows = updateResults.shift() ?? 0n;
           if (numUpdatedRows === 1n) Object.assign(row, values);
+          else if (advanceOnFailure) {
+            const current = JSON.parse(row.state) as typeof state;
+            row.state_revision += 1;
+            row.state = JSON.stringify({
+              ...current,
+              votes_poll1: { ...current.votes_poll1, [`racer-${row.state_revision}`]: "extend" },
+            });
+          }
           return { numUpdatedRows };
         },
       };
@@ -37,7 +46,7 @@ function createFixture(updateResults: bigint[]) {
     config: { EXEC_VOTE_SECONDS: 60, TIMEOUT_EXTEND_VOTE_CHANNEL_ID: "", TIMEOUT_EXTEND_ADMIN_WAIT_SECONDS: 60, OWNER_ID: "owner", ADMIN_ROLE_ID: "admin" },
     log: { error: () => undefined, warn: () => undefined },
   };
-  return { ctx, sent: () => sent, deleted: () => deleted };
+  return { ctx, sent: () => sent, deleted: () => deleted, status: () => row.status };
 }
 
 {
@@ -48,11 +57,13 @@ function createFixture(updateResults: bigint[]) {
 }
 
 {
-  const fixture = createFixture([1n, 0n]);
+  const fixture = createFixture([1n, ...Array<bigint>(12).fill(0n), 1n], true);
   const started = await beginTePoll1(fixture.ctx as never, "flow", "guild", state);
   assert.equal(started, false);
   assert.equal(fixture.sent(), 1, "予約CASの勝者だけが送信する");
   assert.equal(fixture.deleted(), 1, "送信後のmessage_id保存CASに敗北したメッセージを削除する");
+  await delay(10);
+  assert.equal(fixture.status(), "cancelled", "未公開のopenフローを残さない");
 }
 
 console.log("timeoutExtendFlow.beginPoll1Cas.spec.ts: all assertions passed");

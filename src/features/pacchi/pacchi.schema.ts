@@ -1,8 +1,6 @@
 import type DatabaseLib from "better-sqlite3";
 import type { PgQueryable } from "../../core/db/postgres.js";
 
-const ensuredDatabases = new WeakSet<DatabaseLib.Database>();
-
 const PACCHI_POSTGRES_BOOLEAN_COLUMNS = [
   { table: "pacchi_settings", column: "enabled" },
   { table: "pacchi_settings", column: "default_talk_enabled" },
@@ -188,12 +186,6 @@ export function ensurePacchiSchema(db: DatabaseLib.Database): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_pacchi_cooccurrences_guild_count ON pacchi_cooccurrences(guild_id, count DESC);");
   db.exec("CREATE INDEX IF NOT EXISTS idx_pacchi_sentence_patterns_guild_count ON pacchi_sentence_patterns(guild_id, count DESC);");
   db.exec("CREATE INDEX IF NOT EXISTS idx_pacchi_senryu_submissions_guild_created ON pacchi_senryu_submissions(guild_id, created_at DESC);");
-}
-
-export function ensurePacchiSchemaOnce(db: DatabaseLib.Database): void {
-  if (ensuredDatabases.has(db)) return;
-  ensurePacchiSchema(db);
-  ensuredDatabases.add(db);
 }
 
 /**

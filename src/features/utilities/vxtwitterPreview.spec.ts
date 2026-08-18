@@ -6,7 +6,9 @@ import {
   type APIActionRowComponent,
   type APIButtonComponent,
   type APIContainerComponent,
+  type APIMediaGalleryComponent,
   type APISectionComponent,
+  type APITextDisplayComponent,
 } from "discord.js";
 import {
   buildVxTwitterFallbackReply,
@@ -16,6 +18,8 @@ import {
   fetchFixTweetPreview,
   normalizeFixTweetResponse,
   parseXStatusUrl,
+  VX_PREVIEW_SHOW_ORIGINAL_ID,
+  VX_PREVIEW_SHOW_TRANSLATION_ID,
 } from "./vxtwitterPreview.js";
 
 function collectContainerText(container: APIContainerComponent | undefined): string {
@@ -31,6 +35,8 @@ function collectContainerText(container: APIContainerComponent | undefined): str
 }
 
 async function run(): Promise<void> {
+  assert.equal(VX_PREVIEW_SHOW_ORIGINAL_ID, "vxpreview:show-original");
+  assert.equal(VX_PREVIEW_SHOW_TRANSLATION_ID, "vxpreview:show-translation");
   assert.deepEqual(parseXStatusUrl("x.com/user/status/1234567890"), {
     id: "1234567890",
     screenName: "user",
@@ -49,6 +55,14 @@ async function run(): Promise<void> {
     originalUrl: "https://mobile.twitter.com/user/status/456/photo/1",
     vxUrl: "https://vxtwitter.com/user/status/456/photo/1",
   });
+  for (const domain of ["vxtwitter.com", "fxtwitter.com", "fixupx.com"]) {
+    assert.deepEqual(parseXStatusUrl(`https://${domain}/mirror/status/789`), {
+      id: "789",
+      screenName: "mirror",
+      originalUrl: `https://${domain}/mirror/status/789`,
+      vxUrl: "https://vxtwitter.com/mirror/status/789",
+    });
+  }
   assert.deepEqual(parseXStatusUrl("https://x.com/user/status/1234567890)"), {
     id: "1234567890",
     screenName: "user",
@@ -56,6 +70,7 @@ async function run(): Promise<void> {
     vxUrl: "https://vxtwitter.com/user/status/1234567890",
   });
   assert.equal(parseXStatusUrl("https://example.com/user/status/123"), null);
+  assert.equal(parseXStatusUrl("https://fixtwitter.com/user/status/123"), null);
 
   const targets = collectVxTwitterReplyTargets([
     "https://x.com/ok/status/7",
@@ -118,7 +133,27 @@ async function run(): Promise<void> {
         id: "999",
         url: "https://twitter.com/quote/status/999",
         text: "引用本文がここに入ります",
+        possibly_sensitive: true,
         author: { name: "Quote User", screen_name: "quote" },
+        media: {
+          all: [
+            {
+              type: "photo",
+              url: "https://pbs.twimg.com/media/quoted-photo.jpg",
+              altText: "quoted photo alt",
+            },
+            {
+              type: "video",
+              url: "https://video.twimg.com/ext_tw_video/quoted-movie.mp4",
+              thumbnail_url: "https://pbs.twimg.com/ext_tw_video_thumb/quoted-movie.jpg",
+            },
+            {
+              type: "gif",
+              url: "https://video.twimg.com/tweet_video/quoted-animation.mp4",
+              thumbnail_url: "https://pbs.twimg.com/tweet_video_thumb/quoted-animation.jpg",
+            },
+          ],
+        },
       },
     },
   });
@@ -130,6 +165,9 @@ async function run(): Promise<void> {
   assert.equal(preview.tweet.media[0]?.kind, "photo");
   assert.equal(preview.tweet.media[1]?.kind, "video");
   assert.equal(preview.tweet.quote?.author.screenName, "quote");
+  assert.equal(preview.tweet.quote?.media.length, 3);
+  assert.equal(preview.tweet.quote?.media[0]?.description, "quoted photo alt");
+  assert.equal(preview.tweet.quote?.media.every((media) => media.sensitive), true);
   assert.equal(preview.tweet.sensitive, true);
 
   const extraMedia = normalizeFixTweetResponse({
@@ -159,6 +197,28 @@ async function run(): Promise<void> {
   assert.equal(extraMedia.tweet.media.length, 2);
   assert.equal(extraMedia.tweet.media[0]?.kind, "video");
   assert.equal(extraMedia.tweet.media[1]?.kind, "photo");
+
+  const mediaOnlyQuote = normalizeFixTweetResponse({
+    code: 200,
+    message: "OK",
+    tweet: {
+      id: "654",
+      text: "メイン本文",
+      author: { screen_name: "main_media_only_quote" },
+      quote: {
+        id: "655",
+        url: "https://twitter.com/media_only/status/655",
+        text: "",
+        author: { screen_name: "media_only" },
+        media: {
+          all: [{ type: "photo", url: "https://pbs.twimg.com/media/media-only-quote.jpg" }],
+        },
+      },
+    },
+  });
+  assert.equal(mediaOnlyQuote.status, "ok");
+  assert.equal(mediaOnlyQuote.tweet.quote?.text, "");
+  assert.equal(mediaOnlyQuote.tweet.quote?.media[0]?.url, "https://pbs.twimg.com/media/media-only-quote.jpg");
 
   const payload = buildVxTwitterPreviewPayload(preview.tweet, "https://vxtwitter.com/main/status/123", {
     model: "gpt-5.4-mini",
@@ -194,28 +254,53 @@ async function run(): Promise<void> {
   const section = container?.components.find((component) => component.type === ComponentType.Section);
   assert.equal(section?.accessory.type, ComponentType.Thumbnail);
   assert.equal(section?.accessory.media.url, "https://pbs.twimg.com/profile_images/main.jpg");
-  const gallery = container?.components.find((component) => component.type === ComponentType.MediaGallery);
-  assert.equal(gallery?.items.length, 3);
-  assert.equal(gallery?.items.every((item) => item.spoiler === true), true);
-  assert.equal(gallery?.items[0]?.description, "photo alt");
-  assert.equal(gallery?.items[1]?.media.url, "https://video.twimg.com/ext_tw_video/movie.mp4");
-  assert.equal(gallery?.items[2]?.media.url, "https://video.twimg.com/tweet_video/anim.mp4");
+  const galleries = container?.components.filter(
+    (component): component is APIMediaGalleryComponent => component.type === ComponentType.MediaGallery,
+  ) ?? [];
+  assert.equal(galleries.length, 2);
+  assert.equal(galleries[0]?.items.length, 3);
+  assert.equal(galleries[0]?.items.every((item) => item.spoiler === true), true);
+  assert.equal(galleries[0]?.items[0]?.description, "photo alt");
+  assert.equal(galleries[0]?.items[1]?.media.url, "https://video.twimg.com/ext_tw_video/movie.mp4");
+  assert.equal(galleries[0]?.items[2]?.media.url, "https://video.twimg.com/tweet_video/anim.mp4");
+  assert.equal(galleries[1]?.items.length, 3);
+  assert.equal(galleries[1]?.items.every((item) => item.spoiler === true), true);
+  assert.equal(galleries[1]?.items[0]?.media.url, "https://pbs.twimg.com/media/quoted-photo.jpg");
+  assert.equal(galleries[1]?.items[1]?.media.url, "https://video.twimg.com/ext_tw_video/quoted-movie.mp4");
+  assert.equal(galleries[1]?.items[2]?.media.url, "https://video.twimg.com/tweet_video/quoted-animation.mp4");
   const row = container?.components.find((component) => component.type === ComponentType.ActionRow) as
     | APIActionRowComponent<APIButtonComponent>
     | undefined;
-  const galleryIndex = container?.components.findIndex((component) => component.type === ComponentType.MediaGallery) ?? -1;
+  const galleryIndexes = container?.components
+    .map((component, index) => component.type === ComponentType.MediaGallery ? index : -1)
+    .filter((index) => index >= 0) ?? [];
   const attributionIndex = container?.components.findIndex(
     (component) => component.type === ComponentType.TextDisplay && component.content.includes("Made by Ciel"),
+  ) ?? -1;
+  const quoteIndex = container?.components.findIndex(
+    (component) => component.type === ComponentType.TextDisplay && component.content.includes("> 引用: @quote"),
   ) ?? -1;
   const metaIndex = container?.components.findIndex(
     (component) => component.type === ComponentType.TextDisplay && component.content.includes("2026/07/07"),
   ) ?? -1;
   const rowIndex = container?.components.findIndex((component) => component.type === ComponentType.ActionRow) ?? -1;
-  assert.ok(attributionIndex > 0 && galleryIndex > attributionIndex && metaIndex > galleryIndex && rowIndex > metaIndex);
+  assert.ok(
+    attributionIndex > 0
+      && galleryIndexes.length === 2
+      && quoteIndex > galleryIndexes[0]!
+      && galleryIndexes[1]! > quoteIndex
+      && metaIndex > galleryIndexes[1]!
+      && attributionIndex > metaIndex
+      && rowIndex > attributionIndex,
+  );
   assert.equal(row?.components.length, 2);
   assert.equal((row?.components[0] as { label?: string } | undefined)?.label, "Xで開く");
   assert.equal((row?.components[1] as { label?: string } | undefined)?.label, "原文を表示");
-  assert.equal((row?.components[1] as { custom_id?: string } | undefined)?.custom_id, "vxpreview:show-original");
+  assert.equal((row?.components[1] as { custom_id?: string } | undefined)?.custom_id, "preview:show-original");
+  assert.equal(payload.previewState?.document.source, "x");
+  assert.equal(payload.previewState?.document.blocks.some((block) => (
+    block.type === "text" && block.lines.some((line) => line.parts.some((part) => part.translationKey === "main"))
+  )), true);
 
   const originalPayload = buildVxTwitterPreviewPayload(preview.tweet, "https://vxtwitter.com/main/status/123", {
     main: {
@@ -235,13 +320,34 @@ async function run(): Promise<void> {
   const originalText = collectContainerText(originalContainer);
   assert.match(originalText ?? "", /本文\nhttps:\/\/t\.co\/short/);
   assert.match(originalText ?? "", /> 引用: @quote 引用本文がここに入ります/);
+  const originalQuoteGalleries = originalContainer?.components.filter(
+    (component): component is APIMediaGalleryComponent => component.type === ComponentType.MediaGallery,
+  ) ?? [];
+  assert.equal(originalQuoteGalleries.length, 2);
+  assert.equal(
+    originalQuoteGalleries[1]?.items[2]?.media.url,
+    "https://video.twimg.com/tweet_video/quoted-animation.mp4",
+  );
   const originalRow = originalContainer?.components.find((component) => component.type === ComponentType.ActionRow) as
     | APIActionRowComponent<APIButtonComponent>
     | undefined;
   assert.equal((originalRow?.components[1] as { label?: string } | undefined)?.label, "翻訳を表示");
-  assert.equal((originalRow?.components[1] as { custom_id?: string } | undefined)?.custom_id, "vxpreview:show-translation");
+  assert.equal((originalRow?.components[1] as { custom_id?: string } | undefined)?.custom_id, "preview:show-translation");
   assert.equal(row?.components[0]?.style, ButtonStyle.Link);
   assert.equal(row?.components[0]?.label, "Xで開く");
+
+  const oversizedQuotePayload = buildVxTwitterPreviewPayload({
+    ...preview.tweet,
+    quote: {
+      ...preview.tweet.quote!,
+      author: { screenName: "q".repeat(5_000) },
+    },
+  }, "https://vxtwitter.com/main/status/123");
+  const oversizedContainer = oversizedQuotePayload.components[0] as APIContainerComponent | undefined;
+  const oversizedQuoteDisplay = oversizedContainer?.components.find(
+    (component) => component.type === ComponentType.TextDisplay && component.content.startsWith("> 引用:"),
+  ) as APITextDisplayComponent | undefined;
+  assert.ok(oversizedQuoteDisplay?.content.length && oversizedQuoteDisplay.content.length <= 4_000);
 
   assert.equal(normalizeFixTweetResponse({ code: 401, message: "PRIVATE_TWEET" })?.status, "fallback");
   assert.equal(normalizeFixTweetResponse({ code: 404, message: "NOT_FOUND" })?.status, "fallback");
@@ -266,9 +372,10 @@ async function run(): Promise<void> {
   const fallback = buildVxTwitterFallbackReply(["https://vxtwitter.com/a/status/1", "https://vxtwitter.com/b/status/2"]);
   assert.equal(fallback.content, "https://vxtwitter.com/a/status/1\nhttps://vxtwitter.com/b/status/2");
   assert.deepEqual(fallback.allowedMentions, { parse: [], repliedUser: false });
+  assert.equal(fallback.flags, MessageFlags.SuppressEmbeds);
 
   const replyPayloads = await buildVxTwitterReplyPayloads(
-    ["https://x.com/ok/status/7", "https://x.com/private/status/8"],
+    ["https://fxtwitter.com/ok/status/7", "https://fixupx.com/private/status/8"],
     async (url): Promise<Response> => {
       if (url.includes("/ok/status/7")) {
         return new Response(JSON.stringify({

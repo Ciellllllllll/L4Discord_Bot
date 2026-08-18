@@ -1,6 +1,7 @@
 import type { AppConfig } from "../../core/config.js";
 import { fetchWithLimits } from "./fetchWithLimits.js";
 import { type ChatMessage, sanitizeAiText } from "./chatTypes.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 const DEFAULT_BASE = "https://api.deepseek.com";
 
@@ -24,10 +25,6 @@ export type DeepSeekRequestOptions = {
   timeoutMs?: number;
   maxRetries?: number;
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 // DeepSeek（OpenAI 互換）chat completions。`third` に AbortSignal かオプションオブジェクトを渡せる。
 // レスポンスサイズは AI_MAX_RESPONSE_BYTES で制限（fetchWithLimits）。
@@ -104,7 +101,7 @@ export async function deepseekChat(
     } catch (e) {
       lastErr = e;
       if (attempt < maxRetries) {
-        await sleep(400 * (attempt + 1));
+        await delay(400 * (attempt + 1));
       }
     }
   }

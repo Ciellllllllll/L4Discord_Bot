@@ -17,6 +17,7 @@ import type { BotContext } from "../../bot/context.js";
 import type { AppConfig } from "../../core/config.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import type pino from "pino";
+import { setTimeout as delay } from "node:timers/promises";
 import { PANEL_KIND_VC_CREATOR } from "../panels/constants.js";
 import { tryDeleteBotPanelMessage } from "../panels/panelDiscordOps.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessageStore.js";
@@ -205,7 +206,7 @@ export class VcTemporaryChannelManager {
     if (fresh.members.size > 0) return;
     if (!meta.userEverJoined && Date.now() - meta.createdAtMs < GRACE_NO_JOIN_MS) return;
 
-    await new Promise((r) => setTimeout(r, EMPTY_DELETE_DEBOUNCE_MS));
+    await delay(EMPTY_DELETE_DEBOUNCE_MS);
 
     fresh =
       (this.client.channels.cache.get(channel.id) as VoiceBasedChannel | undefined) ??

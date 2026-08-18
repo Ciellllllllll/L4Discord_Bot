@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { ComponentType, MessageFlags } from "discord.js";
 import {
-  LinkAndColdLaugh,
-  coldLaughHitsForMessageContent,
+  LinkPreviewMessageHandler,
   extractXLinks,
   extractYouTubeLinks,
-  stripLinksForColdLaughContent,
-} from "./linkAndColdLaugh.js";
-import { buildYouTubePreviewPayload } from "./youtubePreview.js";
+  refreshPreviewTranslationState,
+} from "./linkPreviewMessageHandler.js";
+import {
+  buildYouTubeComponentsOnlyFallbackPayload,
+  buildYouTubePreviewPayload,
+} from "./youtube/youtubeLinkExpansion.js";
 
 function createDb(settings: Record<string, unknown> = {}): unknown {
   return {
@@ -43,41 +45,21 @@ function createCtx(overrides: Record<string, unknown> = {}): unknown {
 }
 
 async function run(): Promise<void> {
-  assert.equal(coldLaughHitsForMessageContent("https://example.com/落ち着けw"), 0);
-  assert.equal(coldLaughHitsForMessageContent("x.com/user/status/123/落ち着けw"), 0);
-  assert.equal(coldLaughHitsForMessageContent("www.example.com/怒んなやw"), 0);
-  assert.equal(coldLaughHitsForMessageContent("discord.gg/落ち着けw"), 0);
-  assert.equal(coldLaughHitsForMessageContent("youtu.be/落ち着けw"), 0);
-  assert.equal(coldLaughHitsForMessageContent("youtube.com/watch?v=怒んなやw"), 0);
-  assert.equal(coldLaughHitsForMessageContent("music.youtube.com/watch?v=落ち着けw"), 0);
-  assert.equal(coldLaughHitsForMessageContent("notyoutube.com/watch?v=落ち着けw"), 2);
-  assert.equal(coldLaughHitsForMessageContent("notyoutube.com?u=youtube.com/watch?v=落ち着けw"), 2);
-  assert.equal(coldLaughHitsForMessageContent("example.com?next=youtube.com/watch?v=落ち着けw"), 2);
-  assert.equal(coldLaughHitsForMessageContent("abc#youtube.com/watch?v=落ち着けw"), 2);
-
-  assert.equal(coldLaughHitsForMessageContent("落ち着けw https://example.com/post"), 2);
-  assert.equal(coldLaughHitsForMessageContent("https://example.com/post 怒んなやw"), 1);
-
-  assert.equal(stripLinksForColdLaughContent("see https://example.com/落ち着けw now").trim(), "see   now");
-  assert.equal(stripLinksForColdLaughContent("see youtu.be/落ち着けw now").trim(), "see   now");
-  assert.equal(stripLinksForColdLaughContent("see notyoutube.com/watch?v=落ち着けw now"), "see notyoutube.com/watch?v=落ち着けw now");
-  assert.equal(
-    stripLinksForColdLaughContent("see notyoutube.com?u=youtube.com/watch?v=落ち着けw now"),
-    "see notyoutube.com?u=youtube.com/watch?v=落ち着けw now",
-  );
-  assert.equal(
-    stripLinksForColdLaughContent("see example.com?next=youtube.com/watch?v=落ち着けw now"),
-    "see example.com?next=youtube.com/watch?v=落ち着けw now",
-  );
-  assert.equal(
-    stripLinksForColdLaughContent("see abc#youtube.com/watch?v=落ち着けw now"),
-    "see abc#youtube.com/watch?v=落ち着けw now",
-  );
-
   const mixed = "x.com/user/status/123 youtube.com/watch?v=abc youtu.be/def www.youtu.be/ghi twitter.com/user/status/456";
   assert.deepEqual(extractXLinks(mixed), [
     "x.com/user/status/123",
     "twitter.com/user/status/456",
+  ]);
+  assert.deepEqual(extractXLinks([
+    "https://vxtwitter.com/vx/status/101",
+    "fxtwitter.com/fx/status/102",
+    "fixupx.com/fixup/status/103",
+    "fixtwitter.com/unsafe/status/104",
+    "notvxtwitter.com/lookalike/status/105",
+  ].join(" ")), [
+    "https://vxtwitter.com/vx/status/101",
+    "fxtwitter.com/fx/status/102",
+    "fixupx.com/fixup/status/103",
   ]);
   assert.deepEqual(extractYouTubeLinks(mixed), [
     "youtube.com/watch?v=abc",
@@ -156,11 +138,59 @@ async function run(): Promise<void> {
       replies.push(payload);
     },
   };
-  await new LinkAndColdLaugh(createCtx() as never).onMessage(message as never);
+  await new LinkPreviewMessageHandler(createCtx() as never).onMessage(message as never);
   assert.equal(suppressCalls, 1);
   assert.equal((replies[0] as { content?: string }).content, "https://vxtwitter.com/profile");
   assert.equal((replies[1] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
   assert.equal("content" in (replies[1] as object), false);
+
+  const mirrorReplies: unknown[] = [];
+  let mirrorSuppressCalls = 0;
+  await new LinkPreviewMessageHandler(createCtx() as never).onMessage({
+    ...message,
+    content: "https://fxtwitter.com/profile",
+    suppressEmbeds: async (value: boolean) => {
+      assert.equal(value, true);
+      mirrorSuppressCalls += 1;
+    },
+    reply: async (payload: unknown) => {
+      mirrorReplies.push(payload);
+    },
+  } as never);
+  assert.equal(mirrorSuppressCalls, 1);
+  assert.equal((mirrorReplies[0] as { content?: string }).content, "https://vxtwitter.com/profile");
+  assert.equal((mirrorReplies[0] as { flags?: number }).flags, MessageFlags.SuppressEmbeds);
+
+  const mirrorStatusTargets: string[] = [];
+  const mirrorStatusReplies: unknown[] = [];
+  await new LinkPreviewMessageHandler(createCtx() as never, {
+    buildVxTwitterReplyPayloads: async (targets) => {
+      mirrorStatusTargets.push(...targets.map((target) => typeof target === "string" ? target : target.vxUrl));
+      return [{
+        embeds: [],
+        flags: MessageFlags.IsComponentsV2,
+        components: [{ type: ComponentType.TextDisplay, content: "mirror status card" }],
+        allowedMentions: { parse: [], repliedUser: false },
+      }];
+    },
+  }).onMessage({
+    ...message,
+    content: [
+      "https://vxtwitter.com/vx/status/201",
+      "https://fxtwitter.com/fx/status/202",
+      "https://fixupx.com/fixup/status/203",
+    ].join(" "),
+    reply: async (payload: unknown) => {
+      mirrorStatusReplies.push(payload);
+      return { id: "mirror-status-reply" };
+    },
+  } as never);
+  assert.deepEqual(mirrorStatusTargets, [
+    "https://vxtwitter.com/vx/status/201",
+    "https://vxtwitter.com/fx/status/202",
+    "https://vxtwitter.com/fixup/status/203",
+  ]);
+  assert.equal((mirrorStatusReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
 
   const youtubeDisabledReplies: unknown[] = [];
   const youtubeDisabledMessage = {
@@ -173,7 +203,7 @@ async function run(): Promise<void> {
       youtubeDisabledReplies.push(payload);
     },
   };
-  await new LinkAndColdLaugh(createCtx({ YOUTUBE_PREVIEW_ENABLED: false }) as never).onMessage(youtubeDisabledMessage as never);
+  await new LinkPreviewMessageHandler(createCtx({ YOUTUBE_PREVIEW_ENABLED: false }) as never).onMessage(youtubeDisabledMessage as never);
   assert.deepEqual(youtubeDisabledReplies, []);
 
   const passedYoutubeOptions: unknown[] = [];
@@ -186,7 +216,9 @@ async function run(): Promise<void> {
     },
   };
   const injectedCtx = createCtx();
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  const injectedMediaResolver = async () => ({ status: "fallback" as const, reason: "test" });
+  const injectedFetcher = async () => new Response(null, { status: 404 });
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async (_targets, options) => {
       passedYoutubeOptions.push(options);
       return [{
@@ -194,14 +226,23 @@ async function run(): Promise<void> {
         allowedMentions: { parse: [], repliedUser: false },
       }];
     },
+    mediaResolver: injectedMediaResolver,
+    fetcher: injectedFetcher,
   }).onMessage(injectedMessage as never);
-  assert.deepEqual(passedYoutubeOptions, [{
+  assert.equal(passedYoutubeOptions.length, 1);
+  assert.deepEqual(passedYoutubeOptions[0], {
     apiKey: "",
     requestTimeoutMs: 10,
     componentsOnly: true,
     attachmentSizeLimitBytes: 100_000_000,
+    config: (injectedCtx as { config: unknown }).config,
+    aiRouter: undefined,
+    guildId: "guild-1",
     log: (injectedCtx as { log: unknown }).log,
-  }]);
+    translate: undefined,
+    mediaResolver: injectedMediaResolver,
+    fetcher: injectedFetcher,
+  });
   assert.equal((injectedReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
   assert.equal("content" in (injectedReplies[0] as object), false);
 
@@ -219,7 +260,7 @@ async function run(): Promise<void> {
       content_type: "video/mp4",
     },
   };
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async () => {
       nativeFallbackCalled = true;
       return [];
@@ -241,9 +282,10 @@ async function run(): Promise<void> {
   assert.equal(nativePayload.components?.[0]?.components?.some((component) => component.type === ComponentType.MediaGallery), true);
 
   let failedNativeFallbackCalled = false;
+  let failedNativeResolverCalls = 0;
   let failedNativeSendAttempts = 0;
   const failedNativeReplies: unknown[] = [];
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async () => {
       failedNativeFallbackCalled = true;
       return [buildYouTubePreviewPayload({
@@ -253,6 +295,13 @@ async function run(): Promise<void> {
         thumbnailUrl: "https://i.ytimg.com/vi/native-send-failed/hqdefault.jpg",
       })];
     },
+    mediaResolver: async () => {
+      failedNativeResolverCalls += 1;
+      return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/native-send-failed.mp4" };
+    },
+    fetcher: async () => new Response(null, {
+      headers: { "content-type": "video/mp4", "content-length": "100000001" },
+    }),
   }).onMessage({
     ...message,
     content: "youtube.com/watch?v=native-send-failed",
@@ -263,13 +312,17 @@ async function run(): Promise<void> {
       failedNativeReplies.push(payload);
     },
   } as never);
-  assert.equal(failedNativeFallbackCalled, true);
+  // native送信失敗時は同じ準備済み文書を再描画し、取得・翻訳をやり直さない。
+  assert.equal(failedNativeFallbackCalled, false);
+  assert.equal(failedNativeResolverCalls, 1);
   assert.equal(failedNativeReplies.length, 1);
   assert.equal((failedNativeReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
+  assert.equal(JSON.stringify(failedNativeReplies[0]).includes("rr.example.googlevideo.com/native-send-failed.mp4"), true);
 
   let thumbnailNativeFallbackCalled = false;
+  let thumbnailNativeResolverCalls = 0;
   const thumbnailNativeReplies: unknown[] = [];
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async () => {
       thumbnailNativeFallbackCalled = true;
       return [buildYouTubePreviewPayload({
@@ -279,6 +332,13 @@ async function run(): Promise<void> {
         thumbnailUrl: "https://i.ytimg.com/vi/thumbnail-native/hqdefault.jpg",
       })];
     },
+    mediaResolver: async () => {
+      thumbnailNativeResolverCalls += 1;
+      return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/thumbnail-native.mp4" };
+    },
+    fetcher: async () => new Response(null, {
+      headers: { "content-type": "video/mp4", "content-length": "100000001" },
+    }),
   }).onMessage({
     ...message,
     content: "youtube.com/watch?v=thumbnail-native",
@@ -295,15 +355,18 @@ async function run(): Promise<void> {
       thumbnailNativeReplies.push(payload);
     },
   } as never);
-  assert.equal(thumbnailNativeFallbackCalled, true);
+  // native Embedがあれば媒体種別と独立して同じ文書を翻訳し、Data APIを再取得しない。
+  assert.equal(thumbnailNativeFallbackCalled, false);
+  assert.equal(thumbnailNativeResolverCalls, 1);
   assert.equal(thumbnailNativeReplies.length, 1);
   assert.equal((thumbnailNativeReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
+  assert.equal(JSON.stringify(thumbnailNativeReplies[0]).includes("rr.example.googlevideo.com/thumbnail-native.mp4"), true);
 
   let urllessNativeFallbackTargets: string[] = [];
   const urllessReplies: unknown[] = [];
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async (targets) => {
-      urllessNativeFallbackTargets = targets.map((target) => target.canonicalUrl);
+      urllessNativeFallbackTargets.push(...targets.map((target) => target.canonicalUrl));
       return [];
     },
   }).onMessage({
@@ -321,7 +384,7 @@ async function run(): Promise<void> {
   assert.equal(urllessReplies.length, 2);
   for (const payload of urllessReplies) {
     const container = (payload as { components?: Array<{ components?: Array<{ content?: string }> }> }).components?.[0];
-    assert.equal(container?.components?.some((component) => component.content?.includes("## YouTube動画")), true);
+    assert.equal(container?.components?.some((component) => component.content?.includes("YouTube動画")), true);
   }
 
   const updateListeners: Array<(...args: unknown[]) => void> = [];
@@ -346,7 +409,7 @@ async function run(): Promise<void> {
     },
   };
   const delayedCtx = { ...(injectedCtx as Record<string, unknown>), client: delayedClient };
-  const delayedRun = new LinkAndColdLaugh(delayedCtx as never, {
+  const delayedRun = new LinkPreviewMessageHandler(delayedCtx as never, {
     buildYouTubeReplyPayloads: async () => {
       delayedFallbackCalled = true;
       return [];
@@ -385,7 +448,7 @@ async function run(): Promise<void> {
       throw new Error("reply should not be called in dm");
     },
   };
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async () => {
       dmYoutubeCalls += 1;
       return [];
@@ -394,7 +457,7 @@ async function run(): Promise<void> {
   assert.equal(dmYoutubeCalls, 0);
 
   const tier2Options: unknown[] = [];
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async (_targets, options) => {
       tier2Options.push(options);
       return [];
@@ -407,7 +470,7 @@ async function run(): Promise<void> {
   assert.equal((tier2Options[0] as { attachmentSizeLimitBytes?: number }).attachmentSizeLimitBytes, 50_000_000);
 
   const defaultLimitOptions: unknown[] = [];
-  await new LinkAndColdLaugh(injectedCtx as never, {
+  await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async (_targets, options) => {
       defaultLimitOptions.push(options);
       return [];
@@ -418,11 +481,144 @@ async function run(): Promise<void> {
     content: "youtube.com/watch?v=default-limit",
   } as never);
   assert.equal((defaultLimitOptions[0] as { attachmentSizeLimitBytes?: number }).attachmentSizeLimitBytes, 10 * 1024 * 1024);
+
+  const productionEvents: string[] = [];
+  const productionReplies: unknown[] = [];
+  const savedReferences: unknown[] = [];
+  await new LinkPreviewMessageHandler(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async (_ctx, target) => {
+      productionEvents.push(`cache:${target.videoId}`);
+      return { mediaMode: "vps", mediaUrl: `https://media.example/${target.videoId}.mp4`, lastError: null };
+    },
+    saveYouTubeVideoCacheReference: async (_ctx, _repo, target, _input, notification) => {
+      savedReferences.push({ target, notification });
+      return notification.media;
+    },
+    buildYouTubeReplyPayloads: async () => {
+      throw new Error("VPS媒体ではnative Embedを使ってよい");
+    },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=cache-before-native",
+    embeds: [{ toJSON: () => ({ ...nativeEmbed, url: "https://www.youtube.com/watch?v=cache-before-native" }) }],
+    reply: async (payload: unknown) => {
+      productionEvents.push("reply");
+      productionReplies.push(payload);
+      return { id: "production-reply", components: [], edit: async () => undefined };
+    },
+  } as never);
+  assert.deepEqual(productionEvents, ["cache:cache-before-native", "reply"]);
+  assert.equal(JSON.stringify(productionReplies[0]).includes("https://media.example/cache-before-native.mp4"), true);
+  assert.equal((savedReferences[0] as { notification: { message: { id: string } } }).notification.message.id, "production-reply");
+
+  let recoveryReplyCount = 0;
+  let recoveryFallbackBuilds = 0;
+  await new LinkPreviewMessageHandler(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async () => ({ mediaMode: "vps", mediaUrl: "https://media.example/recovery.mp4", lastError: null }),
+    saveYouTubeVideoCacheReference: async () => { throw new Error("reference recovery failed"); },
+    buildYouTubeReplyPayloads: async () => { recoveryFallbackBuilds += 1; return []; },
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=reference-recovery",
+    embeds: [{ toJSON: () => ({ ...nativeEmbed, url: "https://www.youtube.com/watch?v=reference-recovery" }) }],
+    reply: async () => { recoveryReplyCount += 1; return { id: "recovery-reply", components: [], edit: async () => undefined }; },
+  } as never);
+  assert.equal(recoveryReplyCount, 1);
+  assert.equal(recoveryFallbackBuilds, 0);
+
+  const fallbackPayloads: unknown[] = [];
+  await new LinkPreviewMessageHandler(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async () => ({
+      mediaMode: "google",
+      mediaUrl: "https://rr.example.googlevideo.com/direct.mp4",
+      lastError: "cache_persist_error",
+    }),
+    saveYouTubeVideoCacheReference: async (_ctx, _repo, _target, _input, notification) => notification.media,
+    buildYouTubeReplyPayloads: async () => [buildYouTubeComponentsOnlyFallbackPayload("https://www.youtube.com/watch?v=google-fallback")],
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=google-fallback",
+    reply: async (payload: unknown) => {
+      fallbackPayloads.push(payload);
+      return { id: "google-reply", components: [], edit: async () => undefined };
+    },
+  } as never);
+  const fallbackJson = JSON.stringify(fallbackPayloads[0]);
+  assert.equal(fallbackJson.includes("rr.example.googlevideo.com/direct.mp4"), true);
+  assert.equal(fallbackJson.includes("i.ytimg.com"), false);
+  assert.equal(fallbackJson.includes("attachment://"), false);
+
+  let nonVideoCacheCalls = 0;
+  await new LinkPreviewMessageHandler(createCtx({ BOT_PROFILE: "production" }) as never, {
+    cacheYouTubeVideoForPost: async () => {
+      nonVideoCacheCalls += 1;
+      return { mediaMode: "none", lastError: null };
+    },
+    buildYouTubeReplyPayloads: async () => [],
+  }).onMessage({
+    ...message,
+    content: "youtube.com/playlist?list=playlist-1 youtube.com/@channel-1",
+    reply: async () => ({ id: "playlist-reply" }),
+  } as never);
+  assert.equal(nonVideoCacheCalls, 0);
+
+  let debugCacheCalls = 0;
+  await new LinkPreviewMessageHandler(createCtx({ BOT_PROFILE: "debug" }) as never, {
+    cacheYouTubeVideoForPost: async () => {
+      debugCacheCalls += 1;
+      return { mediaMode: "none", lastError: null };
+    },
+    buildYouTubeReplyPayloads: async () => [],
+  }).onMessage({
+    ...message,
+    content: "youtube.com/watch?v=debug-video",
+    reply: async () => ({ id: "debug-reply" }),
+  } as never);
+  assert.equal(debugCacheCalls, 0);
+
+  const refreshMessage = (url: string) => ({
+    id: "message-1",
+    components: [{
+      toJSON: () => ({
+        type: ComponentType.Container,
+        components: [{
+          type: ComponentType.ActionRow,
+          components: [{ type: ComponentType.Button, style: 5, label: "開く", url }],
+        }],
+      }),
+    }],
+  });
+  const refreshed = await refreshPreviewTranslationState(
+    refreshMessage("https://www.youtube.com/watch?v=video-1") as never,
+    { config: {}, log: { warn() {} } } as never,
+    "guild-1",
+    "channel-1",
+    {
+      buildYouTube: async () => [{ previewState: {
+        document: {
+          version: 1,
+          source: "youtube",
+          url: "https://www.youtube.com/watch?v=video-1",
+          openLabel: "YouTubeで開く",
+          blocks: [],
+        },
+        translations: { translations: {} },
+      } }],
+    },
+  );
+  assert.equal(refreshed?.document.source, "youtube");
+  assert.equal(refreshed?.messageId, "message-1");
+  assert.equal(await refreshPreviewTranslationState(
+    refreshMessage("https://example.com") as never,
+    {} as never,
+    "guild-1",
+    "channel-1",
+  ), null);
 }
 
 try {
   await run();
-  console.log("linkAndColdLaugh.spec.ts: all assertions passed");
+  console.log("linkPreviewMessageHandler.spec.ts: all assertions passed");
 } catch (err) {
   console.error(err);
   process.exit(1);

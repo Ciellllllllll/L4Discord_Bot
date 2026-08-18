@@ -189,7 +189,8 @@ try {
     const rows: PollRow[] = [{ id: "execution-claimed", guild_id: "guild-claimed", status: "open", message_id: null, state: claimed, updated_at: new Date(now) }];
     const { ctx, updates, logs } = createContext(rows, { channel: "text" });
     await reconcileExecutionFlows(ctx as never);
-    assert.equal(updates.length, 0, "claim済みのexecution flowは再起動中止処理でcancelしない");
+    assert.equal(updates.length, 0, "claim済みのexecution flowは外部処理を再実行せず隔離する");
+    assert.equal(flowTargetLocks.has("execution", "guild-claimed", "target-claimed"), true);
     assert.ok(logs.some((entry) => entry.flowId === "execution-claimed" && entry.guildId === "guild-claimed" && entry.phase === "admin_pending"));
   }
 
@@ -235,6 +236,7 @@ try {
     const { ctx, updates, logs } = createContext(rows, { channel: "text" });
     await reconcileTimeoutExtendFlows(ctx as never);
     assert.equal(updates.length, 0, "claim済みのtimeout flowは再起動中止処理でcancelしない");
+    assert.equal(flowTargetLocks.has("timeout-extend", "guild-5", "target-5"), true);
     assert.ok(logs.some((entry) => entry.flowId === "timeout-claimed" && entry.guildId === "guild-5" && entry.phase === "admin_pending"));
   }
 
@@ -276,8 +278,8 @@ try {
     const scheduled = timers.slice(timerStart);
     assert.equal(scheduled.length, 4, "poll と admin の期限タイマーを両フローで登録する");
 
-    shutdownExecutionFlowRuntime();
-    shutdownTimeoutExtendFlowRuntime();
+    await shutdownExecutionFlowRuntime();
+    await shutdownTimeoutExtendFlowRuntime();
 
     for (const timer of scheduled) {
       assert.ok(cleared.includes(timer.handle), "shutdown は登録済み期限タイマーを解除する");

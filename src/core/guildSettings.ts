@@ -13,6 +13,10 @@ export type GuildSettingsData = {
   member_leave_channel_id?: string;
   cold_keywords?: string[];
   keyword_replies?: Record<string, string>;
+  gif_auto_reply?: {
+    trigger_url: string;
+    response_url: string;
+  };
   panel_channels?: {
     admin_channel_id?: string;
     vc_channel_id?: string;

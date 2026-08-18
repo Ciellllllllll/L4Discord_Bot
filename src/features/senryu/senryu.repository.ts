@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import type { PgQueryable } from "../../core/db/postgres.js";
-import { ulid } from "ulid";
+import { randomUUID } from "node:crypto";
 import type { SenryuRecord, SavedSenryuRecord } from "./senryu.types.js";
 
 export type SenryuRepository = {
@@ -33,7 +33,7 @@ export async function ensurePostgresSenryuSchema(pool: PgQueryable): Promise<voi
 export function createPostgresSenryuRepository(pool: Pool): SenryuRepository {
   return {
     async saveSenryu(record): Promise<SavedSenryuRecord> {
-      const id = record.id ?? ulid();
+      const id = record.id ?? randomUUID();
       await pool.query(
         `INSERT INTO senryu_records (id, guild_id, channel_id, message_id, author_id, kamigo, nakashichi, shimogo, formatted, source_content, spoiler, detected_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,

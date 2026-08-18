@@ -284,11 +284,9 @@ async function fetchJson<T>(url: string, config: AppConfig): Promise<
   | { ok: true; json: T }
   | { ok: false; error: string; httpStatus?: number; text?: string }
 > {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.RIOT_REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
-      signal: controller.signal,
+      signal: AbortSignal.timeout(config.RIOT_REQUEST_TIMEOUT_MS),
       headers: riotHeaders(config),
     });
     const text = await response.text();
@@ -301,10 +299,8 @@ async function fetchJson<T>(url: string, config: AppConfig): Promise<
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error && err.name === "AbortError" ? "request timeout" : err instanceof Error ? err.message : String(err),
+      error: err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError") ? "request timeout" : err instanceof Error ? err.message : String(err),
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 

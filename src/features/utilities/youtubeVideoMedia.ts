@@ -1,5 +1,6 @@
 import { ClientType, Innertube, Platform } from "youtubei.js";
 import type { Types } from "youtubei.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
@@ -37,6 +38,7 @@ export type ResolveYouTubeVideoMediaOptions = {
   maxBytes?: number;
   nowMs?: () => number;
   clientFactory?: YouTubeClientFactory;
+  bypassCache?: boolean;
 };
 
 export type ResolveYouTubeVideoMediaResult =
@@ -137,19 +139,10 @@ class TimeoutError extends Error {
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new TimeoutError()), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
+  return Promise.race([
+    promise,
+    delay(timeoutMs, undefined, { ref: false }).then(() => { throw new TimeoutError(); }),
+  ]);
 }
 
 function isTimeoutError(err: unknown): boolean {
@@ -190,7 +183,7 @@ export async function resolveYouTubeVideoMedia(
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const cacheKey = makeCacheKey(videoId, maxBytes);
   const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > now) return cached.result;
+  if (!options.bypassCache && cached && cached.expiresAt > now) return cached.result;
   if (cached) cache.delete(cacheKey);
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -237,4 +230,41 @@ export async function resolveYouTubeVideoMedia(
     status: "fallback",
     reason: sawFormat || !lastError ? "no_suitable_format" : "inner_tube_error",
   });
+}
+
+export function isGoogleVideoMediaUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return parsed.protocol === "https:"
+      && (host === "googlevideo.com" || host.endsWith(".googlevideo.com"));
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveYouTubeVideoMediaWithRetry(
+  url: string,
+  options: ResolveYouTubeVideoMediaOptions = {},
+  deps: {
+    resolver?: typeof resolveYouTubeVideoMedia;
+    wait?: (delayMs: number) => Promise<void>;
+  } = {},
+): Promise<ResolveYouTubeVideoMediaResult> {
+  const resolver = deps.resolver ?? resolveYouTubeVideoMedia;
+  const wait = deps.wait ?? ((delayMs) => delay(delayMs));
+  let lastResult: ResolveYouTubeVideoMediaResult = { status: "fallback", reason: "inner_tube_error" };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const result = await resolver(url, attempt === 0 ? options : { ...options, bypassCache: true });
+      lastResult = result.status === "ok" && !isGoogleVideoMediaUrl(result.mediaUrl)
+        ? { status: "fallback", reason: "invalid_google_url" }
+        : result;
+      if (lastResult.status === "ok") return lastResult;
+    } catch {
+      lastResult = { status: "fallback", reason: "inner_tube_error" };
+    }
+    if (attempt === 0) await wait(500);
+  }
+  return lastResult;
 }

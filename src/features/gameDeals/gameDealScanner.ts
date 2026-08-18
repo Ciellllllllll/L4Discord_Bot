@@ -111,10 +111,6 @@ function steamPriceHit(sub: GameDealSubscription, details: SteamAppDetails): Gam
   };
 }
 
-export async function checkSubscription(ctx: BotContext, sub: GameDealSubscription, options: { signal?: AbortSignal } = {}): Promise<GameDealSubscriptionHit | null> {
-  return (await checkSubscriptions(ctx, [sub], options))[0] ?? null;
-}
-
 export async function checkSubscriptions(
   ctx: BotContext,
   subscriptions: GameDealSubscription[],

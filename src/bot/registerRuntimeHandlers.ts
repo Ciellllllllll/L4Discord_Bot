@@ -12,6 +12,7 @@ import { startGameDealWatcher, type GameDealWatcherController } from "../feature
 import { startJapaneseWorkerIfEnabled, type JapaneseWorkerController } from "../features/japaneseAnalysis/japaneseWorkerProcess.js";
 import { startLolWatcher } from "../features/lolWatcher/lolWatcher.watcher.js";
 import { startYouTubeWatcher } from "../features/youtubeWatcher/youtubeWatcher.watcher.js";
+import { createYouTubeVideoCacheMaintenanceForContext, type YouTubeVideoCacheMaintenanceController } from "../features/youtubeWatcher/youtubeVideoCache.service.js";
 import { cancelPendingRepliesBySource, routeModmailGuildThreadMessage } from "../features/modmail/modmailStaffFlow.js";
 import { handleModmailDmMessage } from "../features/modmail/modmailService.js";
 import { restoreModmailUiState } from "../features/modmail/modmailRestore.js";
@@ -32,9 +33,10 @@ import { routeButton, routeChannelSelectMenu, routeModal, routeStringSelectMenu 
 import { handleExtendedAutoReplies } from "../message/extendedAutoReply.js";
 import { handlePrefixMessage } from "../message/prefixHandlers.js";
 import { handleAiChatMonitorMessage } from "../features/ai/aiQueryService.js";
-import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDeletePostgres, ingestMessageUpdatePostgres } from "../features/messageLog/index.js";
+import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDeletePostgres, ingestMessageUpdatePostgres } from "../features/messageLog/messageLogsCore.js";
 import { scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { deleteExpiredVxTwitterPreviewStates } from "../features/utilities/vxtwitterPreviewState.js";
+import { deleteExpiredPreviewTranslationStates } from "../features/linkPreviews/shared/previewState.repository.js";
 
 export type RuntimeHandlerHandle = { shutdown(): Promise<void> };
 
@@ -47,6 +49,7 @@ type RuntimeResources = {
   clearTimeout?: (timer: NodeJS.Timeout) => void;
   deferredTimers?: Iterable<NodeJS.Timeout>;
   lolWatcher?: { stop(): void | Promise<void> } | null;
+  youtubeVideoCacheMaintenance?: YouTubeVideoCacheMaintenanceController | null;
   youtubeWatcher?: { stop(): void | Promise<void> } | null;
   japaneseWorker?: { stop(): Promise<void> } | null;
   shutdownModerationFlows?: () => void | Promise<void>;
@@ -71,6 +74,7 @@ async function stopRuntimeResources(
   if (options.reminderTimer) await stop(() => clear(options.reminderTimer!));
   if (options.vxTwitterPreviewCleanupTimer) await stop(() => clear(options.vxTwitterPreviewCleanupTimer!));
   if (options.gameDealWatcher) await stop(() => options.gameDealWatcher!.stop());
+  if (options.youtubeVideoCacheMaintenance) await stop(() => options.youtubeVideoCacheMaintenance!.stop());
   if (options.lolWatcher) await stop(() => options.lolWatcher!.stop());
   if (options.youtubeWatcher) await stop(() => options.youtubeWatcher!.stop());
   if (options.japaneseWorker) await stop(() => options.japaneseWorker!.stop());
@@ -87,9 +91,26 @@ export function createRuntimeShutdown(options: RuntimeResources & RuntimeCoreRes
 }
 
 /** Discord client を閉じる前に、処罰系フローが保持する期限タイマーと対象ロックを解放する。 */
-export function shutdownModerationFlowRuntimes(): void {
-  shutdownExecutionFlowRuntime();
-  shutdownTimeoutExtendFlowRuntime();
+export async function shutdownModerationFlowRuntimes(): Promise<void> {
+  await Promise.all([shutdownExecutionFlowRuntime(), shutdownTimeoutExtendFlowRuntime()]);
+}
+
+export function shouldStartYouTubeVideoCacheMaintenance(config: Pick<BotContext["config"], "BOT_PROFILE" | "YOUTUBE_PREVIEW_ENABLED" | "ADHD_WATCHER_ENABLED">): boolean {
+  return config.YOUTUBE_PREVIEW_ENABLED || config.ADHD_WATCHER_ENABLED;
+}
+
+export function startPreviewStateCleanup(options: {
+  deleteCommon(): Promise<unknown>;
+  deleteLegacy(): Promise<unknown>;
+  logWarning(error: unknown, message: string): void;
+  setInterval?: (callback: () => void, delay: number) => NodeJS.Timeout;
+}): NodeJS.Timeout {
+  const run = () => {
+    void options.deleteCommon().catch((error) => options.logWarning(error, "preview translation state cleanup failed"));
+    void options.deleteLegacy().catch((error) => options.logWarning(error, "vxtwitter preview state cleanup failed"));
+  };
+  run();
+  return (options.setInterval ?? setInterval)(run, 60 * 60 * 1_000);
 }
 
 export async function respondToInteractionError(
@@ -126,8 +147,9 @@ export function createRuntimeResourceLifecycle(options: {
     reminderTimer?: NodeJS.Timeout;
     vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
     gameDealWatcher?: GameDealWatcherController;
-  lolWatcher?: { stop(): void | Promise<void> } | null;
-  youtubeWatcher?: { stop(): void | Promise<void> } | null;
+    lolWatcher?: { stop(): void | Promise<void> } | null;
+    youtubeVideoCacheMaintenance?: YouTubeVideoCacheMaintenanceController | null;
+    youtubeWatcher?: { stop(): void | Promise<void> } | null;
   }): Promise<void>;
   setJapaneseWorker(worker: { stop(): Promise<void> } | null): Promise<void>;
   stopClientReadyResources(): Promise<void>;
@@ -139,6 +161,7 @@ export function createRuntimeResourceLifecycle(options: {
   let vxTwitterPreviewCleanupTimer: NodeJS.Timeout | undefined;
   let gameDealWatcher: GameDealWatcherController | undefined;
   let lolWatcher: { stop(): void | Promise<void> } | null = null;
+  let youtubeVideoCacheMaintenance: YouTubeVideoCacheMaintenanceController | null = null;
   let youtubeWatcher: { stop(): void | Promise<void> } | null = null;
   let japaneseWorker: { stop(): Promise<void> } | null = null;
   let closed = false;
@@ -155,6 +178,7 @@ export function createRuntimeResourceLifecycle(options: {
       vxTwitterPreviewCleanupTimer = resources.vxTwitterPreviewCleanupTimer;
       gameDealWatcher = resources.gameDealWatcher;
       lolWatcher = resources.lolWatcher ?? null;
+      youtubeVideoCacheMaintenance = resources.youtubeVideoCacheMaintenance ?? null;
       youtubeWatcher = resources.youtubeWatcher ?? null;
     },
     async setJapaneseWorker(worker) {
@@ -165,12 +189,13 @@ export function createRuntimeResourceLifecycle(options: {
       japaneseWorker = worker;
     },
     async stopClientReadyResources() {
-      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeWatcher, clearInterval: options.clearInterval };
+      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, clearInterval: options.clearInterval };
       presenceTimer = undefined;
       reminderTimer = undefined;
       vxTwitterPreviewCleanupTimer = undefined;
       gameDealWatcher = undefined;
       lolWatcher = null;
+      youtubeVideoCacheMaintenance = null;
       youtubeWatcher = null;
       await stopRuntimeResources(resources);
     },
@@ -189,7 +214,7 @@ export function createRuntimeResourceLifecycle(options: {
       closed = true;
       try {
         await createRuntimeShutdown({
-          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeWatcher, japaneseWorker,
+          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, japaneseWorker,
           vcTemp: options.vcTemp, client: options.client, clearInterval: options.clearInterval,
           clearTimeout: options.clearTimeout, deferredTimers, shutdownModerationFlows: options.shutdownModerationFlows,
         })();
@@ -206,6 +231,7 @@ export async function startClientReadyBackgroundServices(options: {
   startReminder(): NodeJS.Timeout;
   startVxTwitterPreviewCleanup?(): NodeJS.Timeout;
   startGameDeal(): GameDealWatcherController;
+  startYouTubeVideoCacheMaintenance?(): Promise<YouTubeVideoCacheMaintenanceController>;
   startLolWatcher(): Promise<{ stop(): void | Promise<void> } | null>;
   startYouTubeWatcher(): { stop(): void | Promise<void> } | null;
   logError(error: unknown, message: string): void;
@@ -218,13 +244,18 @@ export async function startClientReadyBackgroundServices(options: {
   await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher });
   if (options.lifecycle.isClosed()) return false;
   try {
+    const youtubeVideoCacheMaintenance = await options.startYouTubeVideoCacheMaintenance?.();
+    await options.lifecycle.setClientReadyResources({
+      presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, youtubeVideoCacheMaintenance,
+    });
+    if (options.lifecycle.isClosed()) return false;
     const lolWatcher = await options.startLolWatcher();
     const youtubeWatcher = options.startYouTubeWatcher();
-    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeWatcher });
+    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher });
     if (options.lifecycle.isClosed()) return false;
     return true;
   } catch (error) {
-    options.logError(error, "lol watcher startup failed; startup timers stopped");
+    options.logError(error, "background service startup failed; startup timers stopped");
     try {
       await options.lifecycle.stopClientReadyResources();
     } catch (cleanupError) {
@@ -315,10 +346,16 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
       startPresence: () => startPresenceRotation(client, log, config.BOT_VERSION),
       startReminder: () => startReminderScheduler(ctx),
       startVxTwitterPreviewCleanup: () => {
-        void deleteExpiredVxTwitterPreviewStates(ctx.db).catch((err) => log.warn({ err }, "vxtwitter preview state cleanup failed"));
-        return setInterval(() => void deleteExpiredVxTwitterPreviewStates(ctx.db).catch((err) => log.warn({ err }, "vxtwitter preview state cleanup failed")), 60 * 60 * 1000);
+        return startPreviewStateCleanup({
+          deleteCommon: () => deleteExpiredPreviewTranslationStates(ctx.db),
+          deleteLegacy: () => deleteExpiredVxTwitterPreviewStates(ctx.db),
+          logWarning: (err, message) => log.warn({ err }, message),
+        });
       },
       startGameDeal: () => startGameDealWatcher(ctx),
+      startYouTubeVideoCacheMaintenance: shouldStartYouTubeVideoCacheMaintenance(config)
+        ? () => createYouTubeVideoCacheMaintenanceForContext(ctx).start()
+        : undefined,
       startLolWatcher: () => startLolWatcher(ctx),
       startYouTubeWatcher: () => startYouTubeWatcher(ctx),
       logError: (err, message) => log.error({ err, guildId: config.GUILD_ID }, message),

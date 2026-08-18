@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import type { AppConfig } from "../../core/config.js";
 
 type WorkerProcessLog = {
@@ -26,10 +27,6 @@ function findRepoRoot(fromFile: string): string {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function resolveWorkerAddr(workerUrl: string): string {
   const url = new URL(workerUrl);
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
@@ -37,20 +34,16 @@ function resolveWorkerAddr(workerUrl: string): string {
 }
 
 async function isWorkerHealthy(workerUrl: string, timeoutMs: number): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(new URL("/health", workerUrl), {
       method: "GET",
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return false;
     const body = await response.json() as { ok?: unknown };
     return body.ok === true;
   } catch {
     return false;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -154,7 +147,7 @@ export async function startJapaneseWorkerIfEnabled(
         },
       };
     }
-    await sleep(500);
+    await delay(500);
   }
 
   await stopChildProcess(child);

@@ -17,6 +17,7 @@ import { ensurePostgresAiProviderSchema, PostgresAiProviderBudgetRepository, Pos
 import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
 import { dropPostgresSteamAppListTables, ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
+import { migratePostgresPreviewTranslationStates } from "../features/linkPreviews/shared/previewState.repository.js";
 import { prepareMessageAttachmentStorePostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { ensurePostgresMessageLogsSchema } from "../features/messageLog/messageLogsSchema.js";
 import { ensurePostgresAutomoderationSchema } from "../features/moderation/automodSchema.js";
@@ -27,7 +28,7 @@ import { ensurePostgresSenryuSchema } from "../features/senryu/senryu.repository
 import { ensurePostgresTicketDatabaseSchema } from "../features/tickets/ticketDbSchema.js";
 import { ensurePostgresVcTempSchema } from "../features/vc/vcTempPersistence.js";
 import { ensurePostgresVcTimeSchema } from "../features/vc/vcTimeSchema.js";
-import { ensurePostgresYouTubeWatcherSchema } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
+import { ensurePostgresYouTubeWatcherSchema, migratePostgresYouTubeVideoCacheReferences, migratePostgresYouTubeWatcherDurableMedia } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
 
 export type DatabaseRuntime = {
   db: Kysely<Database>;
@@ -121,6 +122,9 @@ async function createDatabaseRuntimeUnsafe(
     { version: 10, name: "youtube_watcher_initial", apply: ensurePostgresYouTubeWatcherSchema },
     { version: 11, name: "pacchi_boolean_columns", apply: migratePostgresPacchiBooleanColumns },
     { version: 12, name: "drop_steam_app_list_tables", apply: (pool) => dropPostgresSteamAppListTables(pool, config.POSTGRES_MAIN_SCHEMA) },
+    { version: 13, name: "youtube_watcher_durable_media", apply: migratePostgresYouTubeWatcherDurableMedia },
+    { version: 14, name: "youtube_video_cache_references", apply: migratePostgresYouTubeVideoCacheReferences },
+    { version: 15, name: "preview_translation_states", apply: migratePostgresPreviewTranslationStates },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);

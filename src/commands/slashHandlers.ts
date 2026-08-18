@@ -46,6 +46,11 @@ import { handleAdhdCommand } from "../features/youtubeWatcher/youtubeWatcher.com
 import { handleWerewolfCreate, handleWerewolfEnd } from "../features/werewolf/werewolfGame.js";
 import { maybePromptAnonymousSurvey, promptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js";
 import { handleAnonymousSurveyViewCommand } from "../features/anonymousSurvey/surveyView.js";
+import {
+  GIF_AUTO_REPLY_URL_MAX_LENGTH,
+  parseGifAutoReplySetting,
+  parseGifAutoReplyUrl,
+} from "../features/utilities/gifAutoReply.js";
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
 const STUB = "この機能は準備中です。";
@@ -118,6 +123,8 @@ export async function handleSlashCommand(
       return handlePacchiHelp(interaction, ctx);
     case "bokete":
       return handleBoketeSlash(interaction, ctx);
+    case "gif":
+      return handleGif(interaction, ctx, member);
     case "member_count_setup":
       return handleMemberCountSetup(interaction, ctx, member);
     case "vc_rank":
@@ -164,6 +171,56 @@ export async function handleSlashCommand(
       ctx.log.warn({ command: interaction.commandName }, "slash command not implemented (stub reply)");
       await interaction.reply({ content: STUB, flags: MessageFlags.Ephemeral });
   }
+}
+
+async function handleGif(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  member: GuildMember | null,
+): Promise<void> {
+  if (!member || !isAdmin(member, ctx.config)) {
+    await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const subcommand = interaction.options.getSubcommand();
+  const guildId = interaction.guildId!;
+  if (subcommand === "set") {
+    const triggerUrl = parseGifAutoReplyUrl(interaction.options.getString("trigger_url", true));
+    const responseUrl = parseGifAutoReplyUrl(interaction.options.getString("response_url", true));
+    if (!triggerUrl || !responseUrl) {
+      await interaction.reply({
+        content: `検知URLと返信URLはHTTP(S) URLを${GIF_AUTO_REPLY_URL_MAX_LENGTH}文字以内で指定してください。`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    await upsertGuildSettingsData(ctx.db, guildId, {
+      gif_auto_reply: { trigger_url: triggerUrl, response_url: responseUrl },
+    });
+    await interaction.reply({
+      content: ["GIF自動返信を設定しました。", `検知: <${triggerUrl}>`, `返信: <${responseUrl}>`].join("\n"),
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  if (subcommand === "clear") {
+    await upsertGuildSettingsData(ctx.db, guildId, { gif_auto_reply: undefined });
+    await interaction.reply({ content: "GIF自動返信設定を解除しました。", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const setting = parseGifAutoReplySetting((await getGuildSettingsData(ctx.db, guildId)).gif_auto_reply);
+  await interaction.reply(setting ? {
+    content: ["現在のGIF自動返信設定", `検知: <${setting.trigger_url}>`, `返信: <${setting.response_url}>`].join("\n"),
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  } : {
+    content: "GIF自動返信は設定されていません。`/gif set` で設定できます。",
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleDebugSurvey(

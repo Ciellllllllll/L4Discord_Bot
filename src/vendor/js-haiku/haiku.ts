@@ -2,10 +2,9 @@ import { INFLECTIONAL_FORM_INDEX, PRONUNCIATION_INDEX } from "./constants.js";
 import {
   morphFromKuromoji,
   readingYForFind,
-  readingYForMatch,
   type KuromojiIpadicToken,
 } from "./featureAdapter.js";
-import { reIgnoreText, reWord, reKana } from "./regexes.js";
+import { reWord, reKana } from "./regexes.js";
 import type { MorphToken, Opt } from "./types.js";
 
 function contains(c: string[], s: string): boolean {
@@ -97,11 +96,6 @@ function debugLine(opt: Opt | undefined, c: string[], y: string): void {
   else process.stderr.write(line + "\n");
 }
 
-function preprocessText(text: string): string {
-  let t = text.replace(reIgnoreText, " ");
-  return t;
-}
-
 function mergeKatakanaMorphs(tokens: MorphToken[]): void {
   for (let i = 0; i < tokens.length; i++) {
     if (!reKana.test(tokens[i]!.surface)) continue;
@@ -121,39 +115,6 @@ function mergeKatakanaMorphs(tokens: MorphToken[]): void {
     tokens.length = tokens.length - (j - i) + 1;
     i--;
   }
-}
-
-export function matchWithOptMorphs(
-  morphs: MorphToken[],
-  rule: number[],
-  opt?: Opt
-): boolean {
-  if (rule.length === 0) return false;
-  const tokens = morphs.filter((t) => !isIgnore(t.features));
-  let pos = 0;
-  const r = [...rule];
-
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i]!;
-    const c = tok.features;
-    const y = readingYForMatch(tok.surface, c);
-    debugLine(opt, c, y);
-    if (!reWord.test(y)) {
-      if (y === "、") continue;
-      return false;
-    }
-    if (pos >= rule.length || (r[pos] === rule[pos] && !isWord(c))) {
-      return false;
-    }
-    const n = countChars(y);
-    r[pos]! -= n;
-    if (r[pos] === 0) {
-      if (!isEnd(c)) return false;
-      pos++;
-      if (pos === r.length && i === tokens.length - 1) return true;
-    }
-  }
-  return false;
 }
 
 export function findWithOptMorphs(
@@ -248,15 +209,4 @@ export function mergeDeHaMorphs(morphs: MorphToken[]): MorphToken[] {
     } else out.push(a);
   }
   return out;
-}
-
-export function tokenizeToMorphs(
-  tokenizer: { tokenize: (s: string) => KuromojiIpadicToken[] },
-  text: string
-): MorphToken[] {
-  const t = preprocessText(text);
-  const raw = morphsFromKuromojiTokens(
-    tokenizer.tokenize(t) as KuromojiIpadicToken[]
-  );
-  return mergeDeHaMorphs(raw);
 }

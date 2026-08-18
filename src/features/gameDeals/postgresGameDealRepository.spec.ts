@@ -6,7 +6,6 @@ import {
   PostgresGameDealRepository,
 } from "./postgresGameDealRepository.js";
 import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
-import type { CheapSharkDeal } from "./cheapSharkTypes.js";
 import type { GameDealSubscription, SteamFreeEvent } from "./gameDealTypes.js";
 
 type CapturingPool = {
@@ -15,16 +14,12 @@ type CapturingPool = {
 };
 
 const expectedTables = [
-  "deal_detected_items",
-  "deal_watch_items",
   "game_deal_detected_items",
   "game_deal_notify_channels",
-  "game_deal_status",
   "game_deal_subscription_notifications",
   "game_deal_subscriptions",
   "game_deal_watcher_status",
   "steam_free_events",
-  "steam_paid_price_history",
 ].sort();
 
 function tempSchemaName(): string {
@@ -49,32 +44,11 @@ async function assertLegacyBooleanColumnMigrationsAreEmitted(): Promise<void> {
     ["game_deal_notify_channels", "enabled"],
     ["game_deal_detected_items", "active"],
     ["game_deal_subscriptions", "active"],
-    ["deal_watch_items", "enabled"],
-    ["deal_detected_items", "active"],
     ["steam_free_events", "active"],
   ] as const;
   for (const [table, column] of expected) {
     assert.match(sql, new RegExp(`ALTER TABLE "legacy_schema"\\.${table}[\\s\\S]+ALTER COLUMN ${column} TYPE boolean`));
   }
-}
-
-function cheapSharkDeal(extra: Partial<CheapSharkDeal> = {}): CheapSharkDeal {
-  return {
-    dealId: "deal-1",
-    storeId: "1",
-    gameId: "game-1",
-    title: "Discounted Game",
-    salePrice: 0.99,
-    normalPrice: 19.99,
-    savings: 95,
-    isOnSale: true,
-    steamAppId: "100",
-    thumb: "https://cdn.example.com/100.jpg",
-    lastChange: 123,
-    cheapSharkUrl: "https://www.cheapshark.com/redirect?dealID=deal-1",
-    steamUrl: "https://store.steampowered.com/app/100/",
-    ...extra,
-  };
 }
 
 function subscriptionHit(subscription: GameDealSubscription, stateKey: string) {
@@ -228,29 +202,6 @@ async function run(): Promise<boolean> {
         targetId: "200",
       }),
       0,
-    );
-
-    const deal = cheapSharkDeal();
-    assert.equal((await repo.addDealWatch({ guildId: "guild-1", channelId: "channel-1", steamAppId: "100", deal })).created, true);
-    assert.equal((await repo.addDealWatch({ guildId: "guild-1", channelId: "channel-1", steamAppId: "100", deal })).created, false);
-    const watch = await repo.getDealWatch("guild-1", "100");
-    assert.equal(watch?.title, "Discounted Game");
-    assert.equal((await repo.listDealWatches("guild-1")).length, 1);
-    assert.equal((await repo.listAllDealWatches()).length, 1);
-    await repo.updateDealWatchChecked(watch!, cheapSharkDeal({ dealId: "deal-2", salePrice: 0 }), true);
-    const checkedWatch = await repo.getDealWatch("guild-1", "100");
-    assert.equal(checkedWatch?.lastDealId, "deal-2");
-    assert.notEqual(checkedWatch?.lastNotifiedAt, null);
-    assert.equal(await repo.disableDealWatch("guild-1", "100"), 1);
-    assert.deepEqual(await repo.listDealWatches("guild-1"), []);
-
-    assert.deepEqual(
-      await repo.upsertDetectedDeal({ source: "cheapshark", detectedType: "sale", deal, dedupeKey: "deal:100", markNotified: true }),
-      { shouldNotify: true },
-    );
-    assert.deepEqual(
-      await repo.upsertDetectedDeal({ source: "cheapshark", detectedType: "sale", deal, dedupeKey: "deal:100", markNotified: true }),
-      { shouldNotify: false },
     );
 
     const event = steamFreeEvent();

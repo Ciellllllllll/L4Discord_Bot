@@ -73,10 +73,10 @@ function createInteraction() {
   return { interaction, replies };
 }
 
-function createContext(db: ReturnType<typeof createDb>) {
+function createContext(db: ReturnType<typeof createDb>, fetchedChannel: unknown = null) {
   return {
     db,
-    client: { channels: { fetch: async () => null } },
+    client: { channels: { fetch: async () => fetchedChannel } },
     config: {
       EXEC_CHANNEL_ID: "",
       EXECUTOR_ROLE_ID: "",
@@ -97,7 +97,7 @@ function createContext(db: ReturnType<typeof createDb>) {
   await startExecutionFlow(interaction as never, createContext(db) as never);
   assert.match(replies.at(-1) ?? "", /開始できませんでした/);
   assert.equal(replies.some((reply) => reply === "処刑投票を開始しました。"), false);
-  assert.equal(db.updates[0]?.status, "cancelled");
+  assert.equal(db.updates.some((update) => update.status === "cancelled"), true);
 }
 
 {
@@ -106,7 +106,21 @@ function createContext(db: ReturnType<typeof createDb>) {
   await startTimeoutExtendFlow(interaction as never, createContext(db) as never);
   assert.match(replies.at(-1) ?? "", /開始できませんでした/);
   assert.equal(replies.some((reply) => reply.includes("投票を開始しました")), false);
-  assert.equal(db.updates[0]?.status, "cancelled");
+  assert.equal(db.updates.some((update) => update.status === "cancelled"), true);
+}
+
+{
+  const db = createDb();
+  const { interaction, replies } = createInteraction();
+  const channel = {
+    id: "channel",
+    isTextBased: () => true,
+    isDMBased: () => false,
+    send: async () => { throw new Error("discord send failed"); },
+  };
+  await startTimeoutExtendFlow(interaction as never, createContext(db, channel) as never);
+  assert.match(replies.at(-1) ?? "", /開始できませんでした/);
+  assert.equal(db.updates.some((update) => update.status === "cancelled"), true, "送信例外後もopenフローを残さない");
 }
 
 console.log("flowStartFailure.spec.ts: all assertions passed");

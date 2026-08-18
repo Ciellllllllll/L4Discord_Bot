@@ -2,6 +2,7 @@ import type { Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
+import { parseGifAutoReplySetting } from "./gifAutoReply.js";
 
 // メッセージ本文に含まれていれば反応する語
 
@@ -10,6 +11,19 @@ const TRIGGER = "ばっちぃ";
 // 返信本文
 
 const REPLY = "ぱっちぃ君だよ！！！！";
+
+function hasConfiguredGif(message: Message, triggerUrl: string): boolean {
+  const contentMatch = String(message.content || "")
+    .split(/[\s\u3000]+/)
+    .some((token) => token === triggerUrl || token === `<${triggerUrl}>`);
+  const attachmentMatch = message.attachments.some(
+    (attachment) => attachment.url === triggerUrl || attachment.proxyURL === triggerUrl,
+  );
+  const embedMatch = message.embeds.some(
+    (embed) => embed.data.type === "gifv" && embed.url === triggerUrl,
+  );
+  return contentMatch || attachmentMatch || embedMatch;
+}
 
 export class KeywordResponder {
   constructor(private readonly ctx: BotContext) {}
@@ -29,11 +43,17 @@ export class KeywordResponder {
       return;
     }
 
-    const content = String(message.content || "");
-    if (!content) {
+    const gifSetting = parseGifAutoReplySetting(settings.gif_auto_reply);
+    if (gifSetting && hasConfiguredGif(message, gifSetting.trigger_url)) {
+      try {
+        await message.reply({ content: gifSetting.response_url, allowedMentions: { parse: [], repliedUser: false } });
+      } catch (err) {
+        this.ctx.log.warn({ err: String(err) }, "KeywordResponder GIF reply failed");
+      }
       return;
     }
 
+    const content = String(message.content || "");
     if (!content.includes(TRIGGER)) {
       return;
     }

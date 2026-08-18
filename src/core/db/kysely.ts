@@ -61,24 +61,8 @@ export function createPostgresAiHistoryKysely(options: PostgresKyselyOptions): K
   return createPostgresKysely<AiHistoryDatabase>(options);
 }
 
-export function createAutomoderationKysely(sqlite: DatabaseLib.Database): Kysely<AutomoderationDatabase> {
-  return new Kysely<AutomoderationDatabase>({
-    dialect: new SqliteDialect({
-      database: sqlite,
-    }),
-  });
-}
-
 export function createPostgresAutomoderationKysely(options: PostgresKyselyOptions): Kysely<AutomoderationDatabase> {
   return createPostgresKysely<AutomoderationDatabase>(options);
-}
-
-export function createReminderKysely(sqlite: DatabaseLib.Database): Kysely<ReminderDatabase> {
-  return new Kysely<ReminderDatabase>({
-    dialect: new SqliteDialect({
-      database: sqlite,
-    }),
-  });
 }
 
 export function createPostgresReminderKysely(options: PostgresKyselyOptions): Kysely<ReminderDatabase> {
