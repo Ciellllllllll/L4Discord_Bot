@@ -1,31 +1,15 @@
 import assert from "node:assert/strict";
-import { ComponentType, EmbedType, MessageFlags, type APIContainerComponent, type APIEmbed } from "discord.js";
+import { ComponentType } from "discord.js";
 import {
-  buildYouTubeNotificationPayload,
-  buildYouTubeWatcherPayload,
   cacheYouTubeWatcherVideo,
-  probeYouTubeNativeEmbed,
   recoverYouTubeWatcherVideoCacheReferenceCandidate,
   repairOneYouTubeWatcherMessage,
-  replaceYouTubeWatcherMediaUrl,
   saveYouTubeWatcherVideoCacheReference,
   saveYouTubeWatcherReferenceRecoveryPending,
-  sendYouTubeWatcherNotification,
   shouldMarkYouTubeWatcherPostFailed,
   startYouTubeWatcher,
-  youtubeWatcherAttachmentSizeLimit,
 } from "./youtubeWatcher.watcher.js";
 import { YouTubeVideoCacheReferenceRecoveryError } from "./youtubeVideoCache.service.js";
-
-function collectText(payload: ReturnType<typeof buildYouTubeNotificationPayload>): string {
-  const container = payload.components[0];
-  if (container?.type !== ComponentType.Container) return "";
-  return container.components.flatMap((component) => {
-    if (component.type === ComponentType.TextDisplay) return [component.content];
-    if (component.type === ComponentType.Section) return component.components.map((item) => item.content);
-    return [];
-  }).join("\n");
-}
 
 const entry = {
   videoId: "video-1",
@@ -35,166 +19,6 @@ const entry = {
   videoUrl: "https://www.youtube.com/watch?v=video-1",
   thumbnailUrl: "https://i.ytimg.com/vi/video-1/maxresdefault.jpg",
 };
-
-const payload = buildYouTubeNotificationPayload(entry);
-assert.equal(payload.flags, MessageFlags.IsComponentsV2);
-assert.deepEqual(payload.embeds, []);
-assert.deepEqual(payload.allowedMentions, { parse: [] });
-assert.equal(payload.components.length, 1);
-
-const text = collectText(payload);
-assert.equal(text.includes(`## ${entry.title.slice(0, 256)}`), true);
-assert.equal(text.includes(entry.title), false);
-assert.equal(text.includes(entry.videoUrl), true);
-assert.equal(text.includes(entry.channelTitle), true);
-assert.equal(text.includes(`<t:${Math.floor(Date.parse(entry.publishedAt) / 1000)}:F>`), true);
-
-const container = payload.components[0];
-assert.equal(container?.type, ComponentType.Container);
-if (container?.type === ComponentType.Container) {
-  const section = container.components.find((component) => component.type === ComponentType.Section);
-  assert.equal(section?.accessory.type, ComponentType.Thumbnail);
-  assert.equal(section?.accessory.media.url, entry.thumbnailUrl);
-}
-
-const withoutThumbnail = buildYouTubeNotificationPayload({ ...entry, thumbnailUrl: null });
-const withoutThumbnailContainer = withoutThumbnail.components[0];
-assert.equal(withoutThumbnailContainer?.type, ComponentType.Container);
-if (withoutThumbnailContainer?.type === ComponentType.Container) {
-  assert.equal(withoutThumbnailContainer.components.some((component) => component.type === ComponentType.Section), false);
-}
-
-const nativeEmbed: APIEmbed = {
-  type: EmbedType.Video,
-  title: "Native title",
-  description: "Native description",
-  url: "https://www.youtube.com/embed/video-1",
-  thumbnail: { url: entry.thumbnailUrl },
-  video: {
-    url: "https://www.youtube.com/embed/video-1",
-    proxy_url: "https://cdn.discordapp.com/attachments/1/2/video.mp4",
-    content_type: "video/mp4",
-  },
-};
-
-assert.equal(youtubeWatcherAttachmentSizeLimit({ guild: { premiumTier: 3 } } as never), 100 * 1000 * 1000);
-assert.equal(youtubeWatcherAttachmentSizeLimit({ guild: { premiumTier: 2 } } as never), 50 * 1000 * 1000);
-assert.equal(youtubeWatcherAttachmentSizeLimit({ guild: { premiumTier: 1 } } as never), 10 * 1024 * 1024);
-const nativePayload = buildYouTubeNotificationPayload(entry, nativeEmbed);
-assert.equal(nativePayload.flags, MessageFlags.IsComponentsV2);
-assert.deepEqual(nativePayload.embeds, []);
-const nativeContainer = nativePayload.components[0];
-assert.equal(nativeContainer?.type, ComponentType.Container);
-if (nativeContainer?.type === ComponentType.Container) {
-  const media = nativeContainer.components.find((component) => component.type === ComponentType.MediaGallery);
-  assert.equal(media?.items[0]?.media.url, nativeEmbed.video?.proxy_url);
-}
-
-const probeListeners = new Set<(oldMessage: unknown, newMessage: unknown) => void>();
-const probeClient = {
-  on: (_event: string, listener: (oldMessage: unknown, newMessage: unknown) => void) => { probeListeners.add(listener); },
-  off: (_event: string, listener: (oldMessage: unknown, newMessage: unknown) => void) => { probeListeners.delete(listener); },
-} as never;
-let probeDeleted = false;
-const probeTarget = {
-  send: async (options: { content: string; allowedMentions: { parse: [] } }) => {
-    assert.equal(options.content, entry.videoUrl);
-    assert.deepEqual(options.allowedMentions, { parse: [] });
-    return { id: "probe-1", embeds: [], delete: async () => { probeDeleted = true; } };
-  },
-} as never;
-const probePromise = probeYouTubeNativeEmbed(probeTarget, entry, probeClient);
-await new Promise((resolve) => setTimeout(resolve, 10));
-for (const listener of probeListeners) listener({}, { id: "probe-1", embeds: [{ toJSON: () => nativeEmbed }] });
-assert.deepEqual(await probePromise, nativeEmbed);
-assert.equal(probeDeleted, true);
-
-const builderClient = {
-  on: (_event: string, listener: (oldMessage: unknown, newMessage: unknown) => void) => {
-    setTimeout(() => listener({}, { id: "probe-1", embeds: [{ toJSON: () => nativeEmbed }] }), 0);
-  },
-  off: () => undefined,
-} as never;
-const builderPayload = await buildYouTubeWatcherPayload({
-  client: builderClient,
-  config: {
-    YOUTUBE_DATA_API_KEY: "",
-    YOUTUBE_REQUEST_TIMEOUT_MS: 1_000,
-  },
-  log: { warn: () => undefined },
-} as never, probeTarget, entry);
-assert.equal(builderPayload.flags, MessageFlags.IsComponentsV2);
-assert.deepEqual(builderPayload.embeds, []);
-
-const productionPayload = await buildYouTubeWatcherPayload({
-  client: builderClient,
-  config: {
-    BOT_PROFILE: "production",
-    YOUTUBE_DATA_API_KEY: "",
-    YOUTUBE_REQUEST_TIMEOUT_MS: 1_000,
-    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
-    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
-    ADHD_VIDEO_MIN_FREE_BYTES: 1_000,
-  },
-  log: { warn: () => undefined },
-} as never, probeTarget, entry, { media: {
-  mediaMode: "vps",
-  mediaUrl: "https://media.example/adhd/video-1.mp4",
-  lastError: null,
-} });
-const productionContainer = productionPayload.components?.[0] as APIContainerComponent | undefined;
-assert.equal(productionContainer?.type, ComponentType.Container);
-if (productionContainer?.type === ComponentType.Container) {
-  const media = productionContainer.components.find((component) => component.type === ComponentType.MediaGallery);
-  assert.equal(media?.items[0]?.media.url, "https://media.example/adhd/video-1.mp4");
-  assert.equal(JSON.stringify(productionPayload).includes("cdn.discordapp.com/attachments/1/2/video.mp4"), false);
-}
-
-const originalFetch = globalThis.fetch;
-globalThis.fetch = async () => new Response("metadata unavailable", { status: 500 });
-try {
-  const metadataFailureEntry = {
-    ...entry,
-    videoId: "metadata-http-500",
-    videoUrl: "https://www.youtube.com/watch?v=metadata-http-500",
-  };
-  const googleMetadataFailurePayload = await buildYouTubeWatcherPayload({
-    client: builderClient,
-    config: { YOUTUBE_DATA_API_KEY: "key", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
-    log: { warn: () => undefined },
-  } as never, probeTarget, metadataFailureEntry, { media: {
-    mediaMode: "google",
-    mediaUrl: "https://rr.example.googlevideo.com/videoplayback?expire=1",
-    lastError: "cache_unavailable",
-  } });
-  const googleMetadataFailureJson = JSON.stringify(googleMetadataFailurePayload);
-  assert.equal(googleMetadataFailureJson.includes("rr.example.googlevideo.com/videoplayback?expire=1"), true);
-  assert.equal(googleMetadataFailureJson.includes('"type":11'), false);
-
-  const noneMetadataFailurePayload = await buildYouTubeWatcherPayload({
-    client: builderClient,
-    config: { YOUTUBE_DATA_API_KEY: "key", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
-    log: { warn: () => undefined },
-  } as never, probeTarget, { ...metadataFailureEntry, videoId: "metadata-http-500-none" }, { media: {
-    mediaMode: "none",
-    lastError: "cache_unavailable",
-  } });
-  const noneMetadataFailureJson = JSON.stringify(noneMetadataFailurePayload);
-  assert.equal(noneMetadataFailureJson.includes("MediaGallery"), false);
-  assert.equal(noneMetadataFailureJson.includes('"type":11'), false);
-} finally {
-  globalThis.fetch = originalFetch;
-}
-
-await buildYouTubeWatcherPayload({
-  client: builderClient,
-  config: {
-    BOT_PROFILE: "debug",
-    YOUTUBE_DATA_API_KEY: "",
-    YOUTUBE_REQUEST_TIMEOUT_MS: 1_000,
-  },
-  log: { warn: () => undefined },
-} as never, probeTarget, entry);
 
 const noPublicWatcher = startYouTubeWatcher({
   config: {
@@ -208,29 +32,6 @@ const noPublicWatcher = startYouTubeWatcher({
 assert.notEqual(noPublicWatcher, null);
 noPublicWatcher?.stop();
 assert.equal(startYouTubeWatcher({ config: { BOT_PROFILE: "debug", ADHD_WATCHER_ENABLED: false } } as never), null);
-
-const originalRepairComponents = [{
-  type: ComponentType.Container,
-  components: [
-    { type: ComponentType.TextDisplay, content: "original body" },
-    {
-      type: ComponentType.MediaGallery,
-      items: [{ media: { url: "https://rr.example.googlevideo.com/expired.mp4" }, description: "video" }],
-    },
-    {
-      type: ComponentType.ActionRow,
-      components: [{ type: ComponentType.Button, style: 5, label: "YouTubeで開く", url: entry.videoUrl }],
-    },
-  ],
-}];
-const replacedRepairComponents = replaceYouTubeWatcherMediaUrl(
-  originalRepairComponents,
-  "https://media.example/adhd/video-1.mp4",
-);
-assert.equal(JSON.stringify(originalRepairComponents).includes("expired.mp4"), true);
-assert.equal(JSON.stringify(replacedRepairComponents).includes("expired.mp4"), false);
-assert.equal(JSON.stringify(replacedRepairComponents).includes("original body"), true);
-assert.equal(JSON.stringify(replacedRepairComponents).includes(entry.videoUrl), true);
 
 const productionRepairContext = {
   client: {
@@ -254,61 +55,6 @@ await repairOneYouTubeWatcherMessage(productionRepairContext as never, {} as nev
   },
 });
 assert.equal(oldRepairPersistCalls, 0);
-
-const sendBuildOptions: boolean[] = [];
-const sendAttempts: unknown[] = [];
-const firstSendPayload = buildYouTubeNotificationPayload(entry, nativeEmbed);
-const retrySendPayload = buildYouTubeNotificationPayload(entry);
-const sendTarget = {
-  send: async (payload: unknown) => {
-    sendAttempts.push(payload);
-    if (sendAttempts.length === 1) throw new Error("native payload rejected");
-    return { id: "sent-after-retry" };
-  },
-} as never;
-const sentMessage = await sendYouTubeWatcherNotification({
-  client: builderClient,
-  config: {},
-  log: { warn: () => undefined },
-} as never, sendTarget, entry, {
-  buildPayload: async (_ctx, _target, _entry, options) => {
-    sendBuildOptions.push(options?.skipNativeEmbed === true);
-    return options?.skipNativeEmbed ? retrySendPayload : firstSendPayload;
-  },
-});
-assert.equal(sentMessage.message.id, "sent-after-retry");
-assert.deepEqual(sendBuildOptions, [false, true]);
-assert.equal(sendAttempts.length, 2);
-
-let retryCacheCalls = 0;
-const retryMediaUrls: Array<string | undefined> = [];
-let retrySends = 0;
-const retriedCachedMessage = await sendYouTubeWatcherNotification({
-  client: builderClient,
-  config: {},
-  log: { warn: () => undefined },
-} as never, {
-  send: async () => {
-    retrySends += 1;
-    if (retrySends === 1) throw new Error("native payload rejected");
-    return { id: "cached-after-retry" };
-  },
-} as never, entry, {
-  cacheForPost: async () => {
-    retryCacheCalls += 1;
-    return { mediaMode: "vps", mediaUrl: "https://media.example/adhd/video-1.mp4", lastError: null };
-  },
-  buildPayload: async (_ctx, _target, _entry, options) => {
-    retryMediaUrls.push(options?.media?.mediaUrl);
-    return options?.skipNativeEmbed ? retrySendPayload : firstSendPayload;
-  },
-});
-assert.equal(retriedCachedMessage.message.id, "cached-after-retry");
-assert.equal(retryCacheCalls, 1);
-assert.deepEqual(retryMediaUrls, [
-  "https://media.example/adhd/video-1.mp4",
-  "https://media.example/adhd/video-1.mp4",
-]);
 
 assert.equal(shouldMarkYouTubeWatcherPostFailed(false, new Error("send failed")), true);
 assert.equal(shouldMarkYouTubeWatcherPostFailed(true, new Error("reference save failed")), false);
@@ -386,6 +132,48 @@ const recoveryEditJson = JSON.stringify(recoveryEditPayload);
 assert.equal(recoveryEditJson.includes("media.example/old-vps.mp4"), false);
 assert.equal(recoveryEditJson.includes("rr.example.googlevideo.com/recovery.mp4"), true);
 assert.deepEqual(recoveryLegacyWrites, [{
+  status: "sent",
+  messageId: "message-recovery",
+  durableMediaUrl: null,
+}]);
+
+let thumbnailRecoveryEdit: unknown;
+const thumbnailRecoveryWrites: Array<{ status: string; messageId?: string; durableMediaUrl?: string | null }> = [];
+let thumbnailRecoveryUpserts = 0;
+await recoverYouTubeWatcherVideoCacheReferenceCandidate({
+  config: {
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: undefined,
+    YOUTUBE_REQUEST_TIMEOUT_MS: 1_000,
+  },
+  client: {
+    user: { id: "bot-1" },
+    channels: { fetch: async () => ({ messages: { fetch: async () => ({
+      author: { id: "bot-1" },
+      components: [{ toJSON: () => ({
+        type: ComponentType.Container,
+        components: [{ type: ComponentType.MediaGallery, items: [{ media: { url: "https://media.example/old-vps.mp4" } }] }],
+      }) }],
+      edit: async (payload: unknown) => { thumbnailRecoveryEdit = payload; },
+    }) } }) },
+  },
+  log: { warn: () => undefined },
+} as never, {
+  savePost: async (_subscriptionId: string, _entry: unknown, input: { status: string; messageId?: string; durableMediaUrl?: string | null }) => { thumbnailRecoveryWrites.push(input); },
+} as never, {
+  withVideoCacheLock: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  upsertVideoCacheReference: async () => { thumbnailRecoveryUpserts += 1; },
+  updateVideoCacheReferenceMedia: async () => undefined,
+} as never, recoveryCandidate, {
+  videoExists: async () => false,
+  resolveMedia: async () => ({ status: "fallback", reason: "unavailable" }),
+});
+const thumbnailRecoveryJson = JSON.stringify(thumbnailRecoveryEdit);
+assert.equal(thumbnailRecoveryJson.includes(entry.thumbnailUrl), false);
+assert.equal(thumbnailRecoveryJson.includes("https://i.ytimg.com/vi/video-recovery/hqdefault.jpg"), false);
+assert.equal(thumbnailRecoveryJson.includes("https://media.example/old-vps.mp4"), false);
+assert.equal(thumbnailRecoveryUpserts, 1);
+assert.deepEqual(thumbnailRecoveryWrites, [{
   status: "sent",
   messageId: "message-recovery",
   durableMediaUrl: null,
@@ -616,7 +404,9 @@ assert.deepEqual(cacheCallOrder, [
   "restore:video-1:https://media.example/adhd/video-1.mp4",
   "lock:end",
 ]);
-assert.deepEqual(persistedOptions, {
+assert.equal(typeof persistedOptions?.mediaResolver, "function");
+const { mediaResolver: _persistedMediaResolver, ...persistedBaseOptions } = persistedOptions ?? {};
+assert.deepEqual(persistedBaseOptions, {
   directory: "C:\\adhd-videos",
   publicBaseUrl: "https://media.example/adhd/",
   timeoutMs: 3_000,

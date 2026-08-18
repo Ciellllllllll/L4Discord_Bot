@@ -306,6 +306,19 @@ export interface VxTwitterPreviewStatesRow {
   updated_at: Date;
 }
 
+export interface PreviewTranslationStatesRow {
+  message_id: string;
+  guild_id: string;
+  channel_id: string;
+  source_kind: "x" | "youtube";
+  source_url: string;
+  document: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  translations: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  expires_at: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface PollsRow {
   id: string;
   guild_id: string;
@@ -377,4 +390,5 @@ export interface Database {
   anonymous_survey_responses: AnonymousSurveyResponsesRow;
   anonymous_survey_user_state: AnonymousSurveyUserStateRow;
   vx_twitter_preview_states: VxTwitterPreviewStatesRow;
+  preview_translation_states: PreviewTranslationStatesRow;
 }

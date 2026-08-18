@@ -106,6 +106,34 @@ test("video cache references can be saved, retrieved by video and media mode, up
   assert.deepEqual(calls.at(-1)?.params, ["message-1"]);
 });
 
+test("due GoogleVideo retries select only pending none references older than the cutoff", async () => {
+  const calls: Array<{ sql: string; params: unknown[] | undefined }> = [];
+  const pool = {
+    query: async (sql: string, params?: unknown[]) => {
+      calls.push({ sql: sql.replace(/\s+/g, " ").trim(), params });
+      return { rows: [{
+        message_id: "message-pending",
+        video_id: "video-pending",
+        guild_id: "guild-1",
+        channel_id: "channel-1",
+        youtube_url: "https://www.youtube.com/watch?v=video-pending",
+        media_mode: "none",
+        last_error: "googlevideo_pending:timeout",
+        created_at: new Date("2026-08-16T00:00:00Z"),
+        updated_at: new Date("2026-08-17T00:00:00Z"),
+      }], rowCount: 1 };
+    },
+  };
+  const repo = new PostgresYouTubeWatcherRepository(pool as never);
+  const cutoff = new Date("2026-08-17T12:00:00Z");
+  assert.equal((await repo.listDueGoogleVideoRetries(cutoff, 100))[0]?.messageId, "message-pending");
+  assert.match(calls[0]!.sql, /media_mode = 'none'/);
+  assert.match(calls[0]!.sql, /LEFT\(last_error, char_length\(\$1\)\) = \$1/);
+  assert.match(calls[0]!.sql, /updated_at <= \$2/);
+  assert.match(calls[0]!.sql, /ORDER BY updated_at ASC LIMIT \$3/);
+  assert.deepEqual(calls[0]!.params, ["googlevideo_pending:", cutoff, 100]);
+});
+
 test("VPS cache references can be retrieved for one video", async () => {
   const pool = {
     query: async () => ({ rows: [{
@@ -193,6 +221,27 @@ test("global cache session lock unlocks and releases the client when its callbac
   ]);
   assert.equal(released, true);
   assert.match(String((releaseError as Error).message), /unlock failed/);
+});
+
+test("daily GoogleVideo retries use a session lock separate from VPS cache maintenance", async () => {
+  const calls: string[] = [];
+  let released = false;
+  const client = {
+    query: async (sql: string) => {
+      calls.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => { released = true; },
+  };
+  const repo = new PostgresYouTubeWatcherRepository({ connect: async () => client } as never);
+  await repo.withGoogleVideoRetryLock(async (lockedRepo) => {
+    assert.ok(lockedRepo instanceof PostgresYouTubeWatcherRepository);
+  });
+  assert.deepEqual(calls, [
+    "SELECT pg_advisory_lock(hashtext('youtube_googlevideo_retry'))",
+    "SELECT pg_advisory_unlock(hashtext('youtube_googlevideo_retry'))",
+  ]);
+  assert.equal(released, true);
 });
 
 test("global cache session lock permits a compensation query after a callback SQL failure", async () => {

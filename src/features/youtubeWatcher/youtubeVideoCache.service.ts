@@ -3,10 +3,13 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { MessageFlags } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { replaceYouTubePreviewMedia } from "../utilities/youtubePreview.js";
-import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
+import { replacePreviewMedia } from "../linkPreviews/shared/previewRenderer.js";
+import {
+  resolveYouTubeVideoMedia,
+  resolveYouTubeVideoMediaWithRetry,
+} from "../utilities/youtubeVideoMedia.js";
 import { cleanupYouTubeVideoCache, persistYouTubeVideo, youtubeVideoPublicUrl } from "./youtubeWatcher.videoStore.js";
-import { PostgresYouTubeWatcherRepository, type YouTubeVideoCacheMediaMode, type YouTubeVideoCacheReference as RepositoryReference } from "./youtubeWatcher.repository.js";
+import { PostgresYouTubeWatcherRepository, YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX, youtubeGoogleVideoPendingError, type YouTubeVideoCacheMediaMode, type YouTubeVideoCacheReference as RepositoryReference } from "./youtubeWatcher.repository.js";
 
 export type YouTubeVideoCacheReference = Omit<RepositoryReference, "createdAt" | "updatedAt">;
 
@@ -14,17 +17,24 @@ export type YouTubeVideoCachePostMedia = {
   mediaMode: YouTubeVideoCacheMediaMode;
   mediaUrl?: string;
   lastError: string | null;
+  resolvedGoogleVideoUrl?: string;
 };
+
+export function youtubeVideoThumbnailUrl(videoId: string): string {
+  return `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
+}
 
 type CacheReferenceRepository = {
   listVpsVideoCacheReferences(videoId?: string): Promise<YouTubeVideoCacheReference[]>;
   listVideoCacheReferences(videoId: string, mediaMode?: YouTubeVideoCacheMediaMode): Promise<YouTubeVideoCacheReference[]>;
   updateVideoCacheReferenceMedia(messageId: string, mediaMode: YouTubeVideoCacheMediaMode, lastError: string | null): Promise<void>;
   deleteVideoCacheReference(messageId: string): Promise<void>;
+  listDueGoogleVideoRetries?(cutoff: Date, limit: number): Promise<YouTubeVideoCacheReference[]>;
 };
 
 type CacheReferenceLockingRepository = CacheReferenceRepository & {
   withVideoCacheLock?<T>(run: (repo: CacheReferenceRepository) => Promise<T>): Promise<T>;
+  withGoogleVideoRetryLock?<T>(run: (repo: CacheReferenceRepository) => Promise<T>): Promise<T>;
 };
 
 type EditableMessage = {
@@ -43,9 +53,12 @@ type MaintenanceDependencies = {
   cleanup(): Promise<{ evictedVideoIds: string[] }>;
   videoExists(videoId: string): Promise<boolean>;
   withLock?<T>(run: (repo: CacheReferenceRepository) => Promise<T>): Promise<T>;
+  withRetryLock?<T>(run: (repo: CacheReferenceRepository) => Promise<T>): Promise<T>;
   setInterval?(callback: () => void, delay: number): NodeJS.Timeout;
   clearInterval?(timer: NodeJS.Timeout): void;
   onError?(error: unknown): void;
+  enableVpsMaintenance?: boolean;
+  now?: () => Date;
 };
 
 export type YouTubeVideoCacheMaintenanceController = { stop(): void };
@@ -89,7 +102,7 @@ export function createYouTubeVideoCacheMaintenanceForContext(
   return createYouTubeVideoCacheMaintenanceService({
     repo,
     client: ctx.client as never,
-    resolveMedia: (url) => resolveYouTubeVideoMedia(url, {
+    resolveMedia: (url) => resolveYouTubeVideoMediaWithRetry(url, {
       timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
       maxBytes: Number.MAX_SAFE_INTEGER,
     }),
@@ -101,6 +114,7 @@ export function createYouTubeVideoCacheMaintenanceForContext(
     videoExists: async (videoId) => access(join(ctx.config.ADHD_VIDEO_FILES_DIR, `${videoId}.mp4`), constants.F_OK)
       .then(() => true)
       .catch(() => false),
+    enableVpsMaintenance: ctx.config.BOT_PROFILE === "production",
     onError: (error) => ctx.log.warn({ err: error }, "youtube video cache maintenance failed"),
   });
 }
@@ -113,13 +127,20 @@ export async function cacheYouTubeVideoForPost(
     maintenance?: YouTubeVideoCachePostMaintenance;
     persistVideo?: typeof persistYouTubeVideo;
     resolveMedia?: (url: string) => Promise<{ status: "ok"; mediaUrl: string } | { status: "fallback"; reason: string }>;
+    mediaResolver?: typeof resolveYouTubeVideoMedia;
   } = {},
 ): Promise<YouTubeVideoCachePostMedia> {
   if (ctx.config.BOT_PROFILE !== "production") return { mediaMode: "none", lastError: null };
 
   const repo = deps.repo ?? new PostgresYouTubeWatcherRepository(ctx.mainPgPool);
   const maintenance = deps.maintenance ?? createYouTubeVideoCacheMaintenanceForContext(ctx);
-  const resolveMedia = deps.resolveMedia ?? ((url) => resolveYouTubeVideoMedia(url, {
+  const baseMediaResolver = deps.mediaResolver ?? resolveYouTubeVideoMedia;
+  let mediaResolution: ReturnType<typeof resolveYouTubeVideoMediaWithRetry> | undefined;
+  const mediaResolver: typeof resolveYouTubeVideoMedia = (url, options) => {
+    mediaResolution ??= resolveYouTubeVideoMediaWithRetry(url, options, { resolver: baseMediaResolver });
+    return mediaResolution;
+  };
+  const resolveMedia = deps.resolveMedia ?? ((url) => mediaResolver(url, {
     timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
     maxBytes: Number.MAX_SAFE_INTEGER,
   }));
@@ -129,10 +150,10 @@ export async function cacheYouTubeVideoForPost(
       if (resolved.status === "ok" && isGoogleVideoUrl(resolved.mediaUrl)) {
         return { mediaMode: "google", mediaUrl: resolved.mediaUrl, lastError };
       }
-      return { mediaMode: "none", lastError: `media_resolver_${resolved.status === "ok" ? "invalid_google_url" : resolved.reason}` };
+      return { mediaMode: "none", lastError: youtubeGoogleVideoPendingError(resolved.status === "ok" ? "invalid_google_url" : resolved.reason) };
     } catch (error) {
       ctx.log.warn({ err: error, videoId: input.videoId }, "youtube cache fallback media resolution failed");
-      return { mediaMode: "none", lastError: "media_resolver_error" };
+      return { mediaMode: "none", lastError: youtubeGoogleVideoPendingError("inner_tube_error") };
     }
   };
 
@@ -147,6 +168,7 @@ export async function cacheYouTubeVideoForPost(
         minFreeBytes: ctx.config.ADHD_VIDEO_MIN_FREE_BYTES,
         cacheMaxBytes: ctx.config.ADHD_VIDEO_CACHE_MAX_BYTES,
         retentionDays: ctx.config.ADHD_VIDEO_RETENTION_DAYS,
+        mediaResolver,
       });
       try {
         await maintenance.fallbackVideos(persisted.evictedVideoIds, lockedRepo);
@@ -159,11 +181,19 @@ export async function cacheYouTubeVideoForPost(
         } catch (error) {
           ctx.log.warn({ err: error, videoId: input.videoId }, "youtube cached video restore failed");
         }
-        return { mediaMode: "vps", mediaUrl: persisted.mediaUrl, lastError: null };
+        const resolved = mediaResolution ? await mediaResolution : undefined;
+        return {
+          mediaMode: "vps",
+          mediaUrl: persisted.mediaUrl,
+          lastError: null,
+          ...(resolved?.status === "ok" && isGoogleVideoUrl(resolved.mediaUrl)
+            ? { resolvedGoogleVideoUrl: resolved.mediaUrl }
+            : {}),
+        };
       }
       return persisted.googleVideoUrl && isGoogleVideoUrl(persisted.googleVideoUrl)
         ? { mediaMode: "google", mediaUrl: persisted.googleVideoUrl, lastError: persisted.reason }
-        : { mediaMode: "none", lastError: persisted.reason };
+        : await fallback(persisted.reason);
     });
   } catch (error) {
     ctx.log.warn({ err: error, videoId: input.videoId }, "youtube video cache persistence failed");
@@ -190,29 +220,49 @@ export async function saveYouTubeVideoCacheReferenceForPost(
     videoExists?: (videoId: string) => Promise<boolean>;
   } = {},
 ): Promise<YouTubeVideoCachePostMedia> {
-  const resolveFallback = async (): Promise<YouTubeVideoCachePostMedia> => {
+  const resolveFallbackUncached = async (): Promise<YouTubeVideoCachePostMedia> => {
     if (notification.media.mediaMode === "google" && notification.media.mediaUrl) {
       return { ...notification.media, lastError: "reference_save_error" };
     }
+    if (notification.media.resolvedGoogleVideoUrl && isGoogleVideoUrl(notification.media.resolvedGoogleVideoUrl)) {
+      return {
+        mediaMode: "google",
+        mediaUrl: notification.media.resolvedGoogleVideoUrl,
+        lastError: "reference_save_error",
+      };
+    }
+    if (notification.media.mediaMode === "none"
+      && notification.media.lastError?.startsWith(YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX)) {
+      return notification.media;
+    }
     try {
-      const resolved = await (deps.resolveMedia ?? ((url) => resolveYouTubeVideoMedia(url, {
+      const resolved = await (deps.resolveMedia ?? ((url) => resolveYouTubeVideoMediaWithRetry(url, {
         timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
         maxBytes: Number.MAX_SAFE_INTEGER,
       })))(input.videoUrl);
       if (resolved.status === "ok" && isGoogleVideoUrl(resolved.mediaUrl)) {
         return { mediaMode: "google", mediaUrl: resolved.mediaUrl, lastError: "reference_save_error" };
       }
+      if (resolved.status === "fallback") {
+        return { mediaMode: "none", lastError: youtubeGoogleVideoPendingError(resolved.reason) };
+      }
     } catch (resolveError) {
       ctx.log.warn({ err: resolveError, videoId: input.videoId }, "youtube reference fallback media resolution failed");
+      return { mediaMode: "none", lastError: youtubeGoogleVideoPendingError("inner_tube_error") };
     }
-    return { mediaMode: "none", lastError: "reference_save_error" };
+    return { mediaMode: "none", lastError: youtubeGoogleVideoPendingError("invalid_google_url") };
   };
+  let fallbackPromise: Promise<YouTubeVideoCachePostMedia> | undefined;
+  const resolveFallback = (): Promise<YouTubeVideoCachePostMedia> => (
+    fallbackPromise ??= resolveFallbackUncached()
+  );
   const editMedia = async (media: YouTubeVideoCachePostMedia): Promise<void> => {
+    const displayMediaUrl = media.mediaMode === "none" ? undefined : media.mediaUrl;
     await notification.message.edit({
-      components: replaceYouTubePreviewMedia(
+      components: replacePreviewMedia(
         notification.message.components.map((component) => component.toJSON()),
-        media.mediaUrl,
-        { fallback: media.mediaMode !== "vps" },
+        displayMediaUrl,
+        { fallback: media.mediaMode !== "vps", description: "YouTube video" },
       ),
       flags: MessageFlags.IsComponentsV2,
       allowedMentions: { parse: [], repliedUser: false },
@@ -246,12 +296,17 @@ export async function saveYouTubeVideoCacheReferenceForPost(
     const publicMediaUrl = ctx.config.ADHD_VIDEO_PUBLIC_BASE_URL
       ? youtubeVideoPublicUrl(ctx.config.ADHD_VIDEO_PUBLIC_BASE_URL, input.videoId)
       : null;
-    const cachedFileExists = await videoExists(input.videoId);
+    const cachedFileExists = ctx.config.BOT_PROFILE === "debug"
+      ? false
+      : await videoExists(input.videoId);
     let desiredMedia: YouTubeVideoCachePostMedia = cachedFileExists && publicMediaUrl
       ? { mediaMode: "vps", mediaUrl: publicMediaUrl, lastError: null }
       : notification.media;
     if (!cachedFileExists && notification.media.mediaMode === "vps") {
-      desiredMedia = { ...await resolveFallback(), lastError: "vps_file_missing" };
+      const fallbackMedia = await resolveFallback();
+      desiredMedia = fallbackMedia.mediaMode === "google"
+        ? { ...fallbackMedia, lastError: "vps_file_missing" }
+        : fallbackMedia;
     }
 
     let displayedMedia = notification.media;
@@ -310,6 +365,11 @@ export async function saveYouTubeVideoCacheReferenceForPost(
 }
 
 export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDependencies) {
+  const referenceRetryError = (reference: YouTubeVideoCacheReference, error: unknown): string => (
+    reference.lastError?.startsWith(YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX)
+      ? youtubeGoogleVideoPendingError(errorMessage(error))
+      : errorMessage(error)
+  );
   const editReference = async (
     reference: YouTubeVideoCacheReference,
     mediaUrl: string | undefined,
@@ -322,7 +382,7 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
       channel = await deps.client.channels.fetch(reference.channelId);
     } catch (error) {
       if (isUnknownDiscordResourceError(error)) await cacheRepo.deleteVideoCacheReference(reference.messageId);
-      else await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, errorMessage(error));
+      else await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, referenceRetryError(reference, error));
       return;
     }
     if (!channel?.messages) {
@@ -335,7 +395,7 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
       message = await channel.messages.fetch(reference.messageId);
     } catch (error) {
       if (isUnknownDiscordResourceError(error)) await cacheRepo.deleteVideoCacheReference(reference.messageId);
-      else await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, errorMessage(error));
+      else await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, referenceRetryError(reference, error));
       return;
     }
     const messageComponents = message.components;
@@ -346,8 +406,9 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
 
     const edit = async () => {
       const components = messageComponents.map((component) => component.toJSON?.() ?? component);
+      const displayMediaUrl = nextMode === "none" ? undefined : mediaUrl;
       await message.edit({
-        components: replaceYouTubePreviewMedia(components, mediaUrl, { fallback: true }),
+        components: replacePreviewMedia(components, displayMediaUrl, { fallback: true, description: "YouTube video" }),
         flags: MessageFlags.IsComponentsV2,
         allowedMentions: { parse: [], repliedUser: false },
       });
@@ -365,7 +426,7 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
           await cacheRepo.deleteVideoCacheReference(reference.messageId);
           return;
         }
-        await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, errorMessage(error)).catch(() => undefined);
+        await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, referenceRetryError(reference, error)).catch(() => undefined);
       }
       return;
     }
@@ -376,7 +437,7 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
         await cacheRepo.deleteVideoCacheReference(reference.messageId);
         return;
       }
-      await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, errorMessage(error)).catch(() => undefined);
+      await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, reference.mediaMode, referenceRetryError(reference, error)).catch(() => undefined);
       return;
     }
     await cacheRepo.updateVideoCacheReferenceMedia(reference.messageId, nextMode, nextError).catch(() => undefined);
@@ -393,7 +454,7 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
     }
     const mediaUrl = resolved.status === "ok" && isGoogleVideoUrl(resolved.mediaUrl) ? resolved.mediaUrl : undefined;
     const mediaMode: YouTubeVideoCacheMediaMode = mediaUrl ? "google" : "none";
-    const lastError = mediaUrl ? null : `media_resolver_${resolved.status === "ok" ? "invalid_google_url" : resolved.reason}`;
+    const lastError = mediaUrl ? null : youtubeGoogleVideoPendingError(resolved.status === "ok" ? "invalid_google_url" : resolved.reason);
     for (const reference of references) {
       await editReference(reference, mediaUrl, mediaMode, lastError, cacheRepo);
     }
@@ -424,15 +485,62 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
     await fallbackVideos(await missingVpsVideoIds());
   };
 
+  const retryPendingGoogleVideos = async (cacheRepo: CacheReferenceRepository = deps.repo): Promise<void> => {
+    if (!cacheRepo.listDueGoogleVideoRetries) return;
+    const cutoff = new Date((deps.now?.() ?? new Date()).getTime() - 24 * 60 * 60 * 1000);
+    const references = await cacheRepo.listDueGoogleVideoRetries(cutoff, 100);
+    const byVideo = new Map<string, YouTubeVideoCacheReference[]>();
+    for (const reference of references) {
+      const group = byVideo.get(reference.videoId) ?? [];
+      group.push(reference);
+      byVideo.set(reference.videoId, group);
+    }
+    for (const group of byVideo.values()) {
+      let resolved: Awaited<ReturnType<MaintenanceDependencies["resolveMedia"]>>;
+      try {
+        resolved = await deps.resolveMedia(group[0]!.youtubeUrl);
+      } catch (error) {
+        resolved = { status: "fallback", reason: errorMessage(error) };
+      }
+      const mediaUrl = resolved.status === "ok" && isGoogleVideoUrl(resolved.mediaUrl)
+        ? resolved.mediaUrl
+        : undefined;
+      if (!mediaUrl) {
+        const reason = resolved.status === "ok" ? "invalid_google_url" : resolved.reason;
+        for (const reference of group) {
+          await cacheRepo.updateVideoCacheReferenceMedia(
+            reference.messageId,
+            "none",
+            youtubeGoogleVideoPendingError(reason),
+          );
+        }
+        continue;
+      }
+      for (const reference of group) {
+        await editReference(reference, mediaUrl, "google", null, cacheRepo);
+      }
+    }
+  };
+
   const withLock = async <T>(run: (repo: CacheReferenceRepository) => Promise<T>): Promise<T> => {
     if (deps.withLock) return deps.withLock(run);
     if (deps.repo.withVideoCacheLock) return deps.repo.withVideoCacheLock(run);
     return run(deps.repo);
   };
+  const withRetryLock = async <T>(run: (repo: CacheReferenceRepository) => Promise<T>): Promise<T> => {
+    if (deps.withRetryLock) return deps.withRetryLock(run);
+    if (deps.repo.withGoogleVideoRetryLock) return deps.repo.withGoogleVideoRetryLock(run);
+    return run(deps.repo);
+  };
   const runMaintenance = async (): Promise<void> => {
-    await withLock(async (lockedRepo) => {
-      const result = await deps.cleanup();
-      await fallbackVideos([...result.evictedVideoIds, ...await missingVpsVideoIds(lockedRepo)], lockedRepo);
+    if (deps.enableVpsMaintenance !== false) {
+      await withLock(async (lockedRepo) => {
+        const result = await deps.cleanup();
+        await fallbackVideos([...result.evictedVideoIds, ...await missingVpsVideoIds(lockedRepo)], lockedRepo);
+      });
+    }
+    await withRetryLock(async (lockedRepo) => {
+      await retryPendingGoogleVideos(lockedRepo);
     });
   };
   const runCleanup = runMaintenance;
@@ -454,11 +562,11 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
   };
   const start = (): Promise<YouTubeVideoCacheMaintenanceController> => {
     if (startPromise) return startPromise;
-    startPromise = (async () => {
-      await runScheduled();
+    startPromise = Promise.resolve().then(() => {
       const setRepeated = deps.setInterval ?? setInterval;
       const clearRepeated = deps.clearInterval ?? clearInterval;
       timer = setRepeated(() => { void runScheduled(); }, 60 * 60 * 1000);
+      void runScheduled();
       return {
         stop: () => {
           if (stopped) return;
@@ -466,9 +574,9 @@ export function createYouTubeVideoCacheMaintenanceService(deps: MaintenanceDepen
           if (timer) clearRepeated(timer);
         },
       };
-    })();
+    });
     return startPromise;
   };
 
-  return { fallbackVideos, repairMissingVpsVideos, restoreCachedVideo, runCleanup, runMaintenance, start };
+  return { fallbackVideos, repairMissingVpsVideos, restoreCachedVideo, retryPendingGoogleVideos, runCleanup, runMaintenance, start };
 }

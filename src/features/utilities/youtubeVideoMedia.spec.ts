@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   resolveYouTubeVideoMedia,
+  resolveYouTubeVideoMediaWithRetry,
   type YouTubeStreamingClient,
   type YouTubeStreamingFormat,
 } from "./youtubeVideoMedia.js";
@@ -188,6 +189,88 @@ async function run(): Promise<void> {
   assert.equal((await resolveYouTubeVideoMedia(cacheUrl, cacheOptions)).status, "ok");
   assert.equal(cacheFactoryCalls, 2);
   assert.equal(cacheClientCalls, 2);
+
+  const bypassUrl = "https://www.youtube.com/watch?v=bypass-fallback-cache";
+  const fallbackClient = makeClient({
+    "720p": {
+      url: "https://rr.example.googlevideo.com/video-only.mp4",
+      mime_type: "video/mp4",
+      height: 720,
+      has_video: true,
+      has_audio: false,
+    },
+  }, []);
+  assert.equal((await resolveYouTubeVideoMedia(bypassUrl, {
+    clientFactory: factoryFor(fallbackClient),
+  })).status, "fallback");
+  const bypassed = await resolveYouTubeVideoMedia(bypassUrl, {
+    bypassCache: true,
+    clientFactory: factoryFor(makeClient({
+      "720p": {
+        url: "https://rr.example.googlevideo.com/bypass-success.mp4",
+        mime_type: "video/mp4",
+        height: 720,
+        has_video: true,
+        has_audio: true,
+      },
+    }, [])),
+  });
+  assert.deepEqual(bypassed, {
+    status: "ok",
+    mediaUrl: "https://rr.example.googlevideo.com/bypass-success.mp4",
+  });
+
+  const retryCalls: Array<{ bypassCache?: boolean }> = [];
+  const waits: number[] = [];
+  const retried = await resolveYouTubeVideoMediaWithRetry(
+    "https://www.youtube.com/watch?v=retry-success",
+    { timeoutMs: 1234 },
+    {
+      resolver: async (_url, options) => {
+        retryCalls.push({ bypassCache: options?.bypassCache });
+        return retryCalls.length === 1
+          ? { status: "fallback", reason: "inner_tube_error" }
+          : { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/retry-success.mp4" };
+      },
+      wait: async (delayMs) => { waits.push(delayMs); },
+    },
+  );
+  assert.deepEqual(retried, {
+    status: "ok",
+    mediaUrl: "https://rr.example.googlevideo.com/retry-success.mp4",
+  });
+  assert.deepEqual(retryCalls, [{ bypassCache: undefined }, { bypassCache: true }]);
+  assert.deepEqual(waits, [500]);
+
+  let invalidAttempts = 0;
+  const invalidGoogleUrl = await resolveYouTubeVideoMediaWithRetry(
+    "https://www.youtube.com/watch?v=invalid-google-url",
+    {},
+    {
+      resolver: async () => {
+        invalidAttempts += 1;
+        return { status: "ok", mediaUrl: "https://example.com/not-google.mp4" };
+      },
+      wait: async () => undefined,
+    },
+  );
+  assert.deepEqual(invalidGoogleUrl, { status: "fallback", reason: "invalid_google_url" });
+  assert.equal(invalidAttempts, 2);
+
+  let exceptionAttempts = 0;
+  const exception = await resolveYouTubeVideoMediaWithRetry(
+    "https://www.youtube.com/watch?v=retry-exception",
+    {},
+    {
+      resolver: async () => {
+        exceptionAttempts += 1;
+        throw new Error("temporary failure");
+      },
+      wait: async () => undefined,
+    },
+  );
+  assert.deepEqual(exception, { status: "fallback", reason: "inner_tube_error" });
+  assert.equal(exceptionAttempts, 2);
 }
 
 run()

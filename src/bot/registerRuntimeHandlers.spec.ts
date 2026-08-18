@@ -1,6 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createRuntimeResourceLifecycle, createRuntimeShutdown, initializeJapaneseRuntime, respondToInteractionError, shouldStartYouTubeVideoCacheMaintenance, shutdownModerationFlowRuntimes, startClientReadyBackgroundServices } from "./registerRuntimeHandlers.js";
+import { createRuntimeResourceLifecycle, createRuntimeShutdown, initializeJapaneseRuntime, respondToInteractionError, shouldStartYouTubeVideoCacheMaintenance, shutdownModerationFlowRuntimes, startClientReadyBackgroundServices, startPreviewStateCleanup } from "./registerRuntimeHandlers.js";
+
+test("preview state cleanup runs common and legacy cleanup immediately and every hour", async () => {
+  const calls: string[] = [];
+  let scheduled: (() => void) | undefined;
+  const timer = startPreviewStateCleanup({
+    deleteCommon: async () => { calls.push("common"); },
+    deleteLegacy: async () => { calls.push("legacy"); },
+    logWarning: () => undefined,
+    setInterval: (callback, delay) => {
+      assert.equal(delay, 60 * 60 * 1_000);
+      scheduled = callback;
+      return { marker: "cleanup" } as unknown as NodeJS.Timeout;
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["common", "legacy"]);
+  scheduled?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["common", "legacy", "common", "legacy"]);
+  assert.equal((timer as unknown as { marker: string }).marker, "cleanup");
+});
 
 test("interaction errors reply, edit deferred replies, and fall back to follow-up", async () => {
   const calls: string[] = [];
@@ -200,7 +221,7 @@ test("Japanese runtime startup failure shuts down the lifecycle before propagati
   assert.equal(lifecycle.isClosed(), true);
 });
 
-test("YouTube cache maintenance starts in production when either preview path is enabled", async () => {
+test("YouTube cache maintenance starts in debug and production when either preview path is enabled", async () => {
   assert.equal(shouldStartYouTubeVideoCacheMaintenance({
     BOT_PROFILE: "production", YOUTUBE_PREVIEW_ENABLED: true, ADHD_WATCHER_ENABLED: false,
   } as never), true);
@@ -212,6 +233,9 @@ test("YouTube cache maintenance starts in production when either preview path is
   } as never), false);
   assert.equal(shouldStartYouTubeVideoCacheMaintenance({
     BOT_PROFILE: "debug", YOUTUBE_PREVIEW_ENABLED: true, ADHD_WATCHER_ENABLED: true,
+  } as never), true);
+  assert.equal(shouldStartYouTubeVideoCacheMaintenance({
+    BOT_PROFILE: "debug", YOUTUBE_PREVIEW_ENABLED: false, ADHD_WATCHER_ENABLED: false,
   } as never), false);
 });
 

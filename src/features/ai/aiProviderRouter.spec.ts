@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { AiProviderRouter } from "./aiProviderRouter.js";
+import { AiProviderRouter, type AiTask } from "./aiProviderRouter.js";
 import { AiRequestError } from "./aiRequestError.js";
 import type {
   AiProviderBudgetRepository,
@@ -51,6 +51,43 @@ function repositories(
 }
 
 async function main() {
+  {
+    const previewTranslationTask: AiTask = "preview_translation";
+    const repo = repositories({ provider: "openai", openAiModel: "gpt54_mini" });
+    let maxOutputTokens: number | undefined;
+    const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
+      usageClient: { async getTodaySnapshot() { return { usageDate: "2026-07-10", organizationTokens: 1, botProjectTokens: 1 }; } },
+      async openAiChat(_messages, options, model) {
+        maxOutputTokens = options.maxOutputTokens;
+        assert.equal(model, "gpt-5.4-mini-2026-03-17");
+        return { content: "translated", ms: 1, model: "gpt-5.4-mini-response", usageTotalTokens: 10 };
+      },
+      async deepSeekChat() { throw new Error("unexpected"); },
+    });
+    const result = await router.chat("guild", previewTranslationTask, [{ role: "user", content: "translate" }], { thinking: false });
+    assert.equal(maxOutputTokens, 4_096);
+    assert.equal(result.model, "gpt-5.4-mini-response");
+
+    const fallbackRouter = new AiProviderRouter(
+      { ...baseConfig, OPENAI_API_KEY: "" },
+      repo.settings,
+      repo.budget,
+      {
+        usageClient: { async getTodaySnapshot() { throw new Error("usage must not be read"); } },
+        async openAiChat() { throw new Error("unexpected"); },
+        async deepSeekChat() { return { content: "fallback", ms: 1, model: "deepseek-preview" }; },
+      },
+    );
+    const fallback = await fallbackRouter.chat(
+      "guild",
+      previewTranslationTask,
+      [{ role: "user", content: "translate" }],
+      { thinking: false },
+    );
+    assert.equal(fallback.provider, "deepseek");
+    assert.equal(fallback.fallbackReason, "openai_unconfigured");
+  }
+
   {
     const repo = repositories();
     let openAiCalls = 0;
