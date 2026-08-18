@@ -4,10 +4,12 @@ import { CatApiResponder } from "./catApiResponder.js";
 import { DogApiResponder } from "./dogApiResponder.js";
 import { KeywordResponder } from "./keywordResponder.js";
 import { LeaveNotifierMessageHandler } from "./leaveNotifier.js";
-import { LinkAndColdLaugh } from "./linkAndColdLaugh.js";
+import { ColdLaughHandler } from "./coldLaugh.js";
+import { LinkPreviewMessageHandler } from "../linkPreviews/linkPreviewMessageHandler.js";
 
 export type UtilitiesMessageBundle = {
-  linkAndColdLaugh: LinkAndColdLaugh;
+  coldLaugh: ColdLaughHandler;
+  linkPreview: LinkPreviewMessageHandler;
   catApiResponder: CatApiResponder;
   dogApiResponder: DogApiResponder;
   keywordResponder: KeywordResponder;
@@ -16,7 +18,8 @@ export type UtilitiesMessageBundle = {
 
 export function createUtilitiesMessageHandlers(ctx: BotContext): UtilitiesMessageBundle {
   return {
-    linkAndColdLaugh: new LinkAndColdLaugh(ctx),
+    coldLaugh: new ColdLaughHandler(ctx),
+    linkPreview: new LinkPreviewMessageHandler(ctx),
     catApiResponder: new CatApiResponder(ctx),
     dogApiResponder: new DogApiResponder(ctx),
     keywordResponder: new KeywordResponder(ctx),
@@ -24,10 +27,11 @@ export function createUtilitiesMessageHandlers(ctx: BotContext): UtilitiesMessag
   };
 }
 
-// DiscordBOTv2 `Utilities.js` setup() と同じ順序（Link → Keyword → Leave の onMessage）
+// DiscordBOTv2 `Utilities.js` setup() と同じ順序（Cold laugh → Link → Keyword → Leave）
 
 export async function runUtilitiesMessageChain(bundle: UtilitiesMessageBundle, message: Message): Promise<void> {
-  await bundle.linkAndColdLaugh.onMessage(message);
+  await bundle.coldLaugh.onMessage(message);
+  await bundle.linkPreview.onMessage(message);
   await bundle.catApiResponder.onMessage(message);
   await bundle.dogApiResponder.onMessage(message);
   await bundle.keywordResponder.onMessage(message);

@@ -36,6 +36,7 @@ import { handleAiChatMonitorMessage } from "../features/ai/aiQueryService.js";
 import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDeletePostgres, ingestMessageUpdatePostgres } from "../features/messageLog/index.js";
 import { scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { deleteExpiredVxTwitterPreviewStates } from "../features/utilities/vxtwitterPreviewState.js";
+import { deleteExpiredPreviewTranslationStates } from "../features/linkPreviews/shared/previewState.repository.js";
 
 export type RuntimeHandlerHandle = { shutdown(): Promise<void> };
 
@@ -96,7 +97,21 @@ export function shutdownModerationFlowRuntimes(): void {
 }
 
 export function shouldStartYouTubeVideoCacheMaintenance(config: Pick<BotContext["config"], "BOT_PROFILE" | "YOUTUBE_PREVIEW_ENABLED" | "ADHD_WATCHER_ENABLED">): boolean {
-  return config.BOT_PROFILE === "production" && (config.YOUTUBE_PREVIEW_ENABLED || config.ADHD_WATCHER_ENABLED);
+  return config.YOUTUBE_PREVIEW_ENABLED || config.ADHD_WATCHER_ENABLED;
+}
+
+export function startPreviewStateCleanup(options: {
+  deleteCommon(): Promise<unknown>;
+  deleteLegacy(): Promise<unknown>;
+  logWarning(error: unknown, message: string): void;
+  setInterval?: (callback: () => void, delay: number) => NodeJS.Timeout;
+}): NodeJS.Timeout {
+  const run = () => {
+    void options.deleteCommon().catch((error) => options.logWarning(error, "preview translation state cleanup failed"));
+    void options.deleteLegacy().catch((error) => options.logWarning(error, "vxtwitter preview state cleanup failed"));
+  };
+  run();
+  return (options.setInterval ?? setInterval)(run, 60 * 60 * 1_000);
 }
 
 export async function respondToInteractionError(
@@ -332,8 +347,11 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
       startPresence: () => startPresenceRotation(client, log, config.BOT_VERSION),
       startReminder: () => startReminderScheduler(ctx),
       startVxTwitterPreviewCleanup: () => {
-        void deleteExpiredVxTwitterPreviewStates(ctx.db).catch((err) => log.warn({ err }, "vxtwitter preview state cleanup failed"));
-        return setInterval(() => void deleteExpiredVxTwitterPreviewStates(ctx.db).catch((err) => log.warn({ err }, "vxtwitter preview state cleanup failed")), 60 * 60 * 1000);
+        return startPreviewStateCleanup({
+          deleteCommon: () => deleteExpiredPreviewTranslationStates(ctx.db),
+          deleteLegacy: () => deleteExpiredVxTwitterPreviewStates(ctx.db),
+          logWarning: (err, message) => log.warn({ err }, message),
+        });
       },
       startGameDeal: () => startGameDealWatcher(ctx),
       startYouTubeVideoCacheMaintenance: shouldStartYouTubeVideoCacheMaintenance(config)
