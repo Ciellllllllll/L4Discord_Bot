@@ -180,6 +180,14 @@ function buildActionRow(
     label,
     url: document.url,
   }];
+  if (document.secondaryAction) {
+    components.push({
+      type: ComponentType.Button,
+      style: ButtonStyle.Link,
+      label: document.secondaryAction.label,
+      url: document.secondaryAction.url,
+    });
+  }
   if (translated) {
     components.push({
       type: ComponentType.Button,

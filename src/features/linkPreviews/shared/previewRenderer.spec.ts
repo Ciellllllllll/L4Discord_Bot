@@ -306,4 +306,32 @@ function textDisplays(value: unknown): Array<Record<string, unknown>> {
   assert.equal(findButton(components, PREVIEW_SHOW_ORIGINAL_ID)?.label, "原文を表示");
 }
 
+{
+  const steamDocument: PreviewDocument = {
+    version: 1,
+    source: "steam",
+    url: "https://store.steampowered.com/app/730/",
+    openLabel: "ブラウザで閲覧",
+    secondaryAction: {
+      label: "Steam Clientで開く",
+      url: "https://s.team/a/730",
+    },
+    blocks: [{ type: "text", id: "steam", lines: [{ parts: [{ text: "Counter-Strike 2", strong: true }] }] }],
+  };
+  const rendered = buildPreviewComponents(steamDocument, { translations: {} });
+  const links: Array<Record<string, unknown>> = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const component = value as Record<string, unknown>;
+    if (component.type === ComponentType.Button && component.style === ButtonStyle.Link) links.push(component);
+    if (Array.isArray(component.components)) component.components.forEach(visit);
+  };
+  visit(rendered);
+  assert.deepEqual(links, [
+    { type: ComponentType.Button, style: ButtonStyle.Link, label: "ブラウザで閲覧", url: "https://store.steampowered.com/app/730/" },
+    { type: ComponentType.Button, style: ButtonStyle.Link, label: "Steam Clientで開く", url: "https://s.team/a/730" },
+  ]);
+}
+
 console.log("previewRenderer.spec.ts: all assertions passed");

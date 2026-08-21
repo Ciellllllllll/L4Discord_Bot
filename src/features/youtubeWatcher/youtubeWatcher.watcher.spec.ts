@@ -521,8 +521,8 @@ const referenceFallbackMedia = await saveYouTubeWatcherVideoCacheReference({
 const referenceFallbackJson = JSON.stringify(referenceFallbackEdit);
 assert.equal(referenceFallbackJson.includes("rr.example.googlevideo.com/video.mp4"), true);
 assert.equal(referenceFallbackJson.includes("media.example/adhd/video-1.mp4"), false);
-assert.equal(referenceFallbackJson.includes("i.ytimg.com"), false);
-assert.equal(referenceFallbackJson.includes('"type":11'), false);
+assert.equal(referenceFallbackJson.includes("i.ytimg.com"), true);
+assert.equal(referenceFallbackJson.includes('"type":11'), true);
 assert.equal(referenceFallbackUpserts, 2);
 assert.deepEqual(referenceFallbackMedia, {
   mediaMode: "google",

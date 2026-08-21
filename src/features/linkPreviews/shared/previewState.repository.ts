@@ -48,7 +48,7 @@ export type PreviewTranslationState = PreviewTranslationStateV1 | LegacyPreviewT
 
 const boundedString = (max: number) => z.string().min(1).max(max);
 const httpsUrl = z.string().url().max(2_048).refine((value) => new URL(value).protocol === "https:", "HTTPS URL required");
-const sourceSchema = z.enum(["x", "youtube"]);
+const sourceSchema = z.enum(["x", "youtube", "steam"]);
 
 const textPartSchema = z.object({
   text: z.string().max(4_000),
@@ -84,6 +84,10 @@ const documentSchema = z.object({
   source: sourceSchema,
   url: httpsUrl,
   openLabel: boundedString(100),
+  secondaryAction: z.object({
+    label: boundedString(100),
+    url: httpsUrl,
+  }).passthrough().optional(),
   blocks: z.array(z.discriminatedUnion("type", [textBlockSchema, mediaBlockSchema])).max(25),
 }).passthrough();
 
@@ -278,7 +282,7 @@ export async function migratePostgresPreviewTranslationStates(pool: PgQueryable)
       message_id text PRIMARY KEY,
       guild_id text NOT NULL,
       channel_id text NOT NULL,
-      source_kind text NOT NULL CHECK (source_kind IN ('x', 'youtube')),
+      source_kind text NOT NULL CHECK (source_kind IN ('x', 'youtube', 'steam')),
       source_url text NOT NULL,
       document jsonb NOT NULL,
       translations jsonb NOT NULL,
@@ -308,5 +312,15 @@ export async function migratePostgresPreviewTranslationStates(pool: PgQueryable)
       END IF;
     END
     $preview_state_migration$;
+  `);
+}
+
+export async function migratePostgresSteamPreviewSupport(pool: PgQueryable): Promise<void> {
+  await pool.query(`
+    ALTER TABLE preview_translation_states
+      DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check;
+    ALTER TABLE preview_translation_states
+      ADD CONSTRAINT preview_translation_states_source_kind_check
+      CHECK (source_kind IN ('x', 'youtube', 'steam'));
   `);
 }

@@ -47,6 +47,24 @@ assert.equal(JSON.stringify(built?.previewState?.document).includes("https://med
 assert.equal(JSON.stringify(built?.previewState?.document).includes("https://i.ytimg.com/original.jpg"), true);
 assert.equal(JSON.stringify(built).includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID), true);
 
+const descriptionTarget: YouTubeReplyTarget = {
+  ...target,
+  originalUrl: "https://youtu.be/video-description-1",
+  canonicalUrl: "https://www.youtube.com/watch?v=video-description-1",
+  id: "video-description-1",
+};
+const [descriptionPayload] = await buildYouTubeReplyPayloads([descriptionTarget], {
+  fetcher: async () => new Response(JSON.stringify({
+    title: "動画タイトル",
+    description: "紹介文 https://store.steampowered.com/app/730/Counter_Strike_2/",
+    thumbnail_url: "https://i.ytimg.com/description.jpg",
+  }), { status: 200 }),
+  translate: async () => ({ translations: {} }),
+});
+assert.deepEqual(descriptionPayload?.detectedSteamLinks, [
+  "https://store.steampowered.com/app/730/Counter_Strike_2/",
+]);
+
 for (const preview of [
   { kind: "playlist" as const, url: "https://www.youtube.com/playlist?list=PL1234567890", title: "Playlist" },
   { kind: "channel" as const, url: "https://www.youtube.com/@example", title: "Channel" },

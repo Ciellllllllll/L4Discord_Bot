@@ -1,4 +1,9 @@
-export type PreviewSource = "x" | "youtube";
+export type PreviewSource = "x" | "youtube" | "steam";
+
+export type PreviewAction = {
+  label: string;
+  url: string;
+};
 
 export type PreviewTextPart = {
   text: string;
@@ -38,5 +43,6 @@ export type PreviewDocument = {
   source: PreviewSource;
   url: string;
   openLabel: string;
+  secondaryAction?: PreviewAction;
   blocks: PreviewBlock[];
 };
