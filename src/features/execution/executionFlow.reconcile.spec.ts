@@ -164,23 +164,23 @@ try {
   flowTargetLocks.clear();
   {
     const rows: PollRow[] = [
-      { id: "sqlite-execution-state", guild_id: "guild-sqlite-execution", status: "open", message_id: null, state: JSON.stringify(executionState("target-sqlite-execution", now + 60_000)), updated_at: new Date(now) },
+      { id: "postgres-execution-state", guild_id: "guild-postgres-execution", status: "open", message_id: null, state: JSON.stringify(executionState("target-postgres-execution", now + 60_000)), updated_at: new Date(now) },
     ];
     const { ctx } = createContext(rows, { channel: "text" });
     const timerCount = timers.length;
     await reconcileExecutionFlows(ctx as never);
-    assert.equal(timers.length, timerCount + 1, "SQLite の TEXT JSON state も execution flow を復元する");
+    assert.equal(timers.length, timerCount + 1, "JSON state から execution flow を復元する");
   }
 
   flowTargetLocks.clear();
   {
     const rows: PollRow[] = [
-      { id: "sqlite-timeout-state", guild_id: "guild-sqlite-timeout", status: "open", message_id: null, state: JSON.stringify(timeoutExtendState("target-sqlite-timeout", now + 60_000)), updated_at: new Date(now) },
+      { id: "postgres-timeout-state", guild_id: "guild-postgres-timeout", status: "open", message_id: null, state: JSON.stringify(timeoutExtendState("target-postgres-timeout", now + 60_000)), updated_at: new Date(now) },
     ];
     const { ctx } = createContext(rows, { channel: "text" });
     const timerCount = timers.length;
     await reconcileTimeoutExtendFlows(ctx as never);
-    assert.equal(timers.length, timerCount + 1, "SQLite の TEXT JSON state も timeout flow を復元する");
+    assert.equal(timers.length, timerCount + 1, "JSON state から timeout flow を復元する");
   }
 
   flowTargetLocks.clear();
