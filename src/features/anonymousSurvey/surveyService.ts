@@ -1,4 +1,3 @@
-import type DatabaseLib from "better-sqlite3";
 import type { Kysely, Transaction } from "kysely";
 import { randomUUID } from "node:crypto";
 import { createSession, getSession } from "../../core/interactionSessions.js";
@@ -81,26 +80,6 @@ function payloadMatchesSession(
 
 function iso(date: Date): string {
   return date.toISOString();
-}
-
-export function ensureAnonymousSurveySchema(db: DatabaseLib.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS anonymous_survey_responses (
-      id TEXT PRIMARY KEY NOT NULL,
-      guild_id TEXT NOT NULL,
-      rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS anonymous_survey_user_state (
-      guild_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      last_action TEXT NOT NULL CHECK (last_action IN ('answer', 'skip')),
-      next_prompt_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (guild_id, user_id)
-    );
-  `);
 }
 
 export async function canPromptAnonymousSurvey(

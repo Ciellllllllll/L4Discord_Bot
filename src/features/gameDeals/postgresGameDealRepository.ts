@@ -1,5 +1,5 @@
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { quotePgIdent, type PgQueryable } from "../../core/db/postgres.js";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -316,7 +316,7 @@ export class PostgresGameDealRepository {
   }
 
   async enableNotifyChannel(guildId: string, channelId: string): Promise<{ alreadyEnabledInChannel: boolean }> {
-    const now = sqliteTimestamp();
+    const now = nowIso();
     const existing = await this.getNotifyChannel(guildId);
     if (existing?.enabled && existing.channelId === channelId) return { alreadyEnabledInChannel: true };
     await this.pool.query(
@@ -336,7 +336,7 @@ export class PostgresGameDealRepository {
   async disableNotifyChannel(guildId: string): Promise<void> {
     await this.pool.query(
       "UPDATE game_deal_notify_channels SET enabled = false, updated_at = $1 WHERE guild_id = $2",
-      [sqliteTimestamp(), guildId],
+      [nowIso(), guildId],
     );
   }
 
@@ -359,7 +359,7 @@ export class PostgresGameDealRepository {
     };
   }
 
-  async markScanStarted(now = sqliteTimestamp()): Promise<void> {
+  async markScanStarted(now = nowIso()): Promise<void> {
     await this.pool.query(
       `
       INSERT INTO game_deal_watcher_status (id, last_scan_at, last_detected_count)
@@ -370,7 +370,7 @@ export class PostgresGameDealRepository {
     );
   }
 
-  async markScanSuccess(count: number, now = sqliteTimestamp()): Promise<void> {
+  async markScanSuccess(count: number, now = nowIso()): Promise<void> {
     await this.pool.query(
       `
       INSERT INTO game_deal_watcher_status (id, last_scan_at, last_success_at, last_error, last_detected_count)
@@ -385,7 +385,7 @@ export class PostgresGameDealRepository {
     );
   }
 
-  async markScanError(error: string, now = sqliteTimestamp()): Promise<void> {
+  async markScanError(error: string, now = nowIso()): Promise<void> {
     await this.pool.query(
       `
       INSERT INTO game_deal_watcher_status (id, last_scan_at, last_error, last_detected_count)
@@ -425,7 +425,7 @@ export class PostgresGameDealRepository {
     markNotified: boolean,
   ): Promise<{ shouldNotify: boolean }> {
     return this.withConflictKeyLock(FREE_SEEN_LOCK_NAMESPACE, input.dedupeKey, async (client) => {
-      const now = sqliteTimestamp();
+      const now = nowIso();
       const existing = await client.query<{ notified_at: string | null }>(
         "SELECT notified_at FROM game_deal_detected_items WHERE dedupe_key = $1",
         [input.dedupeKey],
@@ -462,7 +462,7 @@ export class PostgresGameDealRepository {
 
   async markFreeNotified(dedupeKey: string): Promise<void> {
     await this.pool.query("UPDATE game_deal_detected_items SET notified_at = $1 WHERE dedupe_key = $2", [
-      sqliteTimestamp(),
+      nowIso(),
       dedupeKey,
     ]);
   }
@@ -476,7 +476,7 @@ export class PostgresGameDealRepository {
     url: string;
     title?: string | null;
   }): Promise<GameDealSubscription> {
-    const now = sqliteTimestamp();
+    const now = nowIso();
     const id = randomUUID();
     const result = await this.pool.query<SubRow>(
       `
@@ -524,7 +524,7 @@ export class PostgresGameDealRepository {
           updated_at = $4
       WHERE id = $5
     `,
-      [hit.title, hit.stateKey, shouldNotify, sqliteTimestamp(), hit.subscription.id],
+      [hit.title, hit.stateKey, shouldNotify, nowIso(), hit.subscription.id],
     );
     return { shouldNotify };
   }
@@ -536,7 +536,7 @@ export class PostgresGameDealRepository {
       INSERT INTO game_deal_subscription_notifications (id, subscription_id, user_id, created_at)
       VALUES ($1, $2, $3, $4)
     `,
-      [id, subscriptionId, userId, sqliteTimestamp()],
+      [id, subscriptionId, userId, nowIso()],
     );
     return id;
   }
@@ -555,7 +555,7 @@ export class PostgresGameDealRepository {
         (id, subscription_id, user_id, guild_id, target_platform, target_id, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
     `,
-      [id, input.subscriptionId, input.userId, input.guildId, input.platform, input.targetId, sqliteTimestamp()],
+      [id, input.subscriptionId, input.userId, input.guildId, input.platform, input.targetId, nowIso()],
     );
     return id;
   }
@@ -599,13 +599,13 @@ export class PostgresGameDealRepository {
   async markNotificationPressed(notificationId: string, action: string): Promise<void> {
     await this.pool.query(
       "UPDATE game_deal_subscription_notifications SET action_pressed = $1, pressed_at = $2 WHERE id = $3",
-      [action, sqliteTimestamp(), notificationId],
+      [action, nowIso(), notificationId],
     );
   }
 
   async deactivateSubscription(subscriptionId: string): Promise<void> {
     await this.pool.query("UPDATE game_deal_subscriptions SET active = false, updated_at = $1 WHERE id = $2", [
-      sqliteTimestamp(),
+      nowIso(),
       subscriptionId,
     ]);
   }
@@ -626,14 +626,14 @@ export class PostgresGameDealRepository {
         AND target_id = $5
         AND active = true
     `,
-      [sqliteTimestamp(), input.guildId, input.userId, input.platform, input.targetId],
+      [nowIso(), input.guildId, input.userId, input.platform, input.targetId],
     );
     return result.rowCount ?? 0;
   }
 
   async upsertSteamFreeEvent(input: SteamFreeEvent): Promise<{ shouldNotify: boolean }> {
     return this.withConflictKeyLock(STEAM_FREE_EVENT_LOCK_NAMESPACE, input.stateKey, async (client) => {
-      const now = sqliteTimestamp();
+      const now = nowIso();
       const existing = await client.query<{ notified_at: string | null }>(
         "SELECT notified_at FROM steam_free_events WHERE state_key = $1",
         [input.stateKey],
@@ -685,7 +685,7 @@ export class PostgresGameDealRepository {
   }
 
   async markSteamFreeEventNotified(stateKey: string): Promise<void> {
-    await this.pool.query("UPDATE steam_free_events SET notified_at = $1 WHERE state_key = $2", [sqliteTimestamp(), stateKey]);
+    await this.pool.query("UPDATE steam_free_events SET notified_at = $1 WHERE state_key = $2", [nowIso(), stateKey]);
   }
 
   async listActiveSteamFreeEvents(limit = 20): Promise<SteamFreeEvent[]> {

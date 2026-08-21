@@ -8,7 +8,7 @@ import {
   PermissionsBitField,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { getAppealById, getAppealHoldByThreadId } from "../appeals/appealService.js";
 import {
   attachmentMetaToJson,
@@ -140,7 +140,7 @@ export async function editModmailConfirmMessage(
 
 export async function cancelPendingRepliesBySource(ctx: BotContext, sourceMessageId: string): Promise<void> {
   const rows = await pendingRepliesBySource(ctx, sourceMessageId);
-  const at = sqliteTimestamp();
+  const at = nowIso();
   for (const row of rows) {
     const ok = await updateReplyStatus(ctx, row.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_SOURCE_DELETE, {
       cancelled_at: at,
@@ -159,7 +159,7 @@ export async function cancelPendingRepliesByTicket(
   closerId: string,
 ): Promise<void> {
   const rows = await pendingRepliesByTicket(ctx, ticketId);
-  const at = sqliteTimestamp();
+  const at = nowIso();
   for (const row of rows) {
     const ok = await updateReplyStatus(ctx, row.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
       cancelled_at: at,
@@ -178,7 +178,7 @@ export async function cancelPendingRepliesByTicket(
 
 export async function cancelPendingRepliesByAppeal(ctx: BotContext, appealId: string): Promise<void> {
   const rows = await pendingRepliesByAppealId(ctx, appealId);
-  const at = sqliteTimestamp();
+  const at = nowIso();
   for (const row of rows) {
     const ok = await updateReplyStatus(ctx, row.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
       cancelled_at: at,
@@ -203,7 +203,7 @@ export async function approveModmailReply(
   if (reply.appeal_id) {
     const appeal = await getAppealById(ctx, reply.appeal_id);
     if (!appeal || appeal.status !== "hold") {
-      const at = sqliteTimestamp();
+      const at = nowIso();
       await updateReplyStatus(ctx, reply.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
         cancelled_at: at,
         cancel_reason: "appeal_not_hold",
@@ -212,7 +212,7 @@ export async function approveModmailReply(
       return { ok: false, message: "この異議申し立ては保留中ではありません。" };
     }
 
-    const at = sqliteTimestamp();
+    const at = nowIso();
     const ok = await updateReplyStatus(ctx, reply.id, REPLY_STATUS.PENDING, REPLY_STATUS.APPROVED_SENT, {
       approver_staff_id: staffId,
       approved_at: at,
@@ -248,7 +248,7 @@ export async function approveModmailReply(
     }
 
     if (dmErr) {
-      const ft = sqliteTimestamp();
+      const ft = nowIso();
       await updateReplyStatus(ctx, reply.id, REPLY_STATUS.APPROVED_SENT, REPLY_STATUS.FAILED, {
         failed_at: ft,
         failure_reason: String(dmErr),
@@ -265,7 +265,7 @@ export async function approveModmailReply(
 
   const ticket = await getModmailTicketRow(ctx, reply.ticket_id);
   if (!ticket || ticket.status !== "open") {
-    const at = sqliteTimestamp();
+    const at = nowIso();
     await updateReplyStatus(ctx, reply.id, REPLY_STATUS.PENDING, REPLY_STATUS.CANCELLED_TICKET_CLOSE, {
       cancelled_at: at,
       cancel_reason: "ticket_closed",
@@ -274,7 +274,7 @@ export async function approveModmailReply(
     return { ok: false, message: "チケットがクローズされています。" };
   }
 
-  const at = sqliteTimestamp();
+  const at = nowIso();
   const ok = await updateReplyStatus(ctx, reply.id, REPLY_STATUS.PENDING, REPLY_STATUS.APPROVED_SENT, {
     approver_staff_id: staffId,
     approved_at: at,
@@ -310,7 +310,7 @@ export async function approveModmailReply(
   }
 
   if (dmErr) {
-    const ft = sqliteTimestamp();
+    const ft = nowIso();
     await updateReplyStatus(ctx, reply.id, REPLY_STATUS.APPROVED_SENT, REPLY_STATUS.FAILED, {
       failed_at: ft,
       failure_reason: String(dmErr),
@@ -334,7 +334,7 @@ export async function rejectModmailReply(
   const reply = await replyById(ctx, replyId);
   if (!reply) return { ok: false, message: "返信予約が見つかりません。" };
   if (reply.status !== REPLY_STATUS.PENDING) return { ok: false, message: "この返信予約は既に処理済みです。" };
-  const at = sqliteTimestamp();
+  const at = nowIso();
   const ok = await updateReplyStatus(ctx, replyId, REPLY_STATUS.PENDING, REPLY_STATUS.REJECTED, {
     approver_staff_id: staffId,
     rejected_at: at,
@@ -425,7 +425,7 @@ export async function handleModmailStaffReplyCommand(message: Message, ctx: BotC
 
   const attach = serializeAttachmentsFromMessage(message);
   const replyId = randomUUID();
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   await createReplyRow(ctx, {
     id: replyId,
     ticket_id: ticket ? ticket.id : appealHold!.id,

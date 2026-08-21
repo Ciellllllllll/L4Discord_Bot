@@ -1,5 +1,6 @@
 import {
   MessageFlags,
+  type AttachmentBuilder,
   type APIEmbed,
   type APIMessageTopLevelComponent,
   type Client,
@@ -31,6 +32,11 @@ import {
   type YouTubeReplyTarget,
 } from "./youtubePreviewSource.js";
 import { addYouTubeMediaRefreshButton } from "./youtubeMediaRefresh.js";
+import {
+  downloadYouTubeMediaAttachment,
+  youtubeAttachmentSizeLimitForPremiumTier,
+  type YouTubeMediaAttachmentOptions,
+} from "./youtubeMediaAttachment.js";
 
 const NATIVE_EMBED_WAIT_MS = 3_000;
 
@@ -40,6 +46,7 @@ export type YouTubeWatcherNotificationPayload = {
   flags: MessageFlags.IsComponentsV2;
   components: APIMessageTopLevelComponent[];
   allowedMentions: { parse: never[] };
+  files?: AttachmentBuilder[];
 };
 export type YouTubeWatcherNotificationResult = {
   message: Message;
@@ -61,6 +68,8 @@ type PrepareDeps = {
   fetchPreview?: (target: YouTubeReplyTarget) => Promise<YouTubePreviewResult>;
   translate?: (document: PreviewDocument) => Promise<PreviewDocumentTranslations>;
   mediaResolver?: typeof resolveYouTubeVideoMedia;
+  fetcher?: YouTubeMediaAttachmentOptions["fetcher"];
+  attachmentSizeLimitBytes?: number;
 };
 
 function isGoogleVideoUrl(value: string): boolean {
@@ -76,13 +85,14 @@ async function resolveAdhdMedia(
   entry: YouTubeFeedEntry,
   cached: YouTubeWatcherPostMedia | undefined,
   resolver: typeof resolveYouTubeVideoMedia,
+  attachmentSizeLimitBytes: number,
 ): Promise<YouTubeWatcherPostMedia | undefined> {
   if ((cached?.mediaMode === "vps" || cached?.mediaMode === "google") && cached.mediaUrl) return cached;
   if (cached?.mediaMode === "none" && cached.lastError?.startsWith(YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX)) return cached;
   try {
     const resolved = await resolveYouTubeVideoMediaWithRetry(entry.videoUrl, {
       timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
-      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxBytes: attachmentSizeLimitBytes,
     }, { resolver });
     if (resolved.status === "ok" && isGoogleVideoUrl(resolved.mediaUrl)) {
       return { mediaMode: "google", mediaUrl: resolved.mediaUrl, lastError: cached?.lastError ?? null };
@@ -182,7 +192,7 @@ function watcherDocument(
 function payload(
   document: PreviewDocument,
   translations: PreviewDocumentTranslations,
-  media: { replace: boolean; url?: string; fallback?: boolean },
+  media: { replace: boolean; url?: string; fallback?: boolean; files?: AttachmentBuilder[] },
 ): YouTubeWatcherNotificationPayload {
   const rendered = buildPreviewComponents(document, translations);
   const withMedia = media.replace
@@ -193,14 +203,45 @@ function payload(
     flags: MessageFlags.IsComponentsV2,
     components: addYouTubeMediaRefreshButton(withMedia),
     allowedMentions: { parse: [] },
+    ...(media.files?.length && !media.fallback ? { files: media.files } : {}),
   };
 }
 
-function mediaRendering(
+type MediaRendering = {
+  replace: boolean;
+  url?: string;
+  fallback?: boolean;
+  files?: AttachmentBuilder[];
+  persistedMedia?: YouTubeWatcherPostMedia;
+};
+
+async function mediaRendering(
   media: YouTubeWatcherPostMedia | undefined,
-): { replace: boolean; url?: string; fallback?: boolean } {
+  options: Pick<PrepareDeps, "fetcher" | "attachmentSizeLimitBytes">,
+): Promise<MediaRendering> {
   if (media?.mediaMode === "vps" && media.mediaUrl) return { replace: true, url: media.mediaUrl };
-  if (media?.mediaMode === "google" && media.mediaUrl) return { replace: true, url: media.mediaUrl, fallback: true };
+  if (media?.mediaMode === "google" && media.mediaUrl) {
+    const attachment = await downloadYouTubeMediaAttachment(media.mediaUrl, {
+      fetcher: options.fetcher,
+      attachmentSizeLimitBytes: options.attachmentSizeLimitBytes,
+    });
+    if (attachment) {
+      return {
+        replace: true,
+        url: attachment.mediaUrl,
+        files: attachment.files,
+        persistedMedia: media,
+      };
+    }
+    return {
+      replace: true,
+      fallback: true,
+      persistedMedia: {
+        mediaMode: "none",
+        lastError: youtubeGoogleVideoPendingError("attachment_unavailable"),
+      },
+    };
+  }
   if (media?.mediaMode === "none") return { replace: true, fallback: true };
   return { replace: false };
 }
@@ -213,7 +254,9 @@ export async function prepareAdhdYouTubeNotification(
 ): Promise<PreparedAdhdYouTubeNotification> {
   const baseMediaResolver = deps.mediaResolver ?? resolveYouTubeVideoMedia;
   const cachedMedia = await deps.cacheForPost?.(entry, baseMediaResolver);
-  const media = await resolveAdhdMedia(ctx, entry, cachedMedia, baseMediaResolver);
+  const attachmentSizeLimitBytes = deps.attachmentSizeLimitBytes
+    ?? youtubeAttachmentSizeLimitForPremiumTier(target.guild?.premiumTier);
+  const media = await resolveAdhdMedia(ctx, entry, cachedMedia, baseMediaResolver, attachmentSizeLimitBytes);
   let nativeEmbed: APIEmbed | null = null;
   try {
     nativeEmbed = await (deps.probeNative ?? probeYouTubeNativeEmbed)(target, entry, ctx.client);
@@ -253,13 +296,14 @@ export async function prepareAdhdYouTubeNotification(
     })),
   });
   const translations = built.state?.translations ?? { translations: {} };
+  const renderedMedia = await mediaRendering(media, { ...deps, attachmentSizeLimitBytes });
   return {
     document,
     translations,
     ...(built.state ? { state: built.state } : {}),
-    ...(media ? { media } : {}),
-    firstPayload: payload(document, translations, mediaRendering(media)),
-    retryPayload: payload(document, translations, mediaRendering(media)),
+    ...(renderedMedia.persistedMedia ? { media: renderedMedia.persistedMedia } : media ? { media } : {}),
+    firstPayload: payload(document, translations, renderedMedia),
+    retryPayload: payload(document, translations, renderedMedia),
   };
 }
 
@@ -272,6 +316,8 @@ type SendDeps = {
   fetchPreview?: PrepareDeps["fetchPreview"];
   translate?: PrepareDeps["translate"];
   mediaResolver?: PrepareDeps["mediaResolver"];
+  fetcher?: PrepareDeps["fetcher"];
+  attachmentSizeLimitBytes?: PrepareDeps["attachmentSizeLimitBytes"];
 };
 
 export async function sendYouTubeWatcherNotification(
@@ -287,6 +333,8 @@ export async function sendYouTubeWatcherNotification(
     fetchPreview: deps.fetchPreview,
     translate: deps.translate,
     mediaResolver: deps.mediaResolver,
+    fetcher: deps.fetcher,
+    attachmentSizeLimitBytes: deps.attachmentSizeLimitBytes,
   });
   let message: Message;
   try {

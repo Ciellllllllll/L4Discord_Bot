@@ -10,7 +10,7 @@ import {
   type User,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import {
   attachmentMetaToJson,
   buildForwardDmFiles,
@@ -130,7 +130,7 @@ function buildParentTicketEmbed(row: ModmailThreadRow, data: Record<string, unkn
 }
 
 export async function upsertModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   await ctx.ticketDb
     .insertInto("modmail_intakes")
     .values({
@@ -153,7 +153,7 @@ export async function upsertModmailIntake(ctx: BotContext, guildId: string, user
 }
 
 export async function consumeModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   await ctx.ticketDb
     .updateTable("modmail_intakes")
     .set({
@@ -166,7 +166,7 @@ export async function consumeModmailIntake(ctx: BotContext, guildId: string, use
 }
 
 export async function cancelModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   const result = await ctx.ticketDb
     .updateTable("modmail_intakes")
     .set({
@@ -260,7 +260,7 @@ async function createModmailSkeleton(
   source: string,
 ): Promise<string> {
   const id = randomUUID();
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   const data = {
     body: trimMax(body, 1000),
     subject: subject ? trimMax(subject, 120) : null,
@@ -327,7 +327,7 @@ export async function closeModmailTicketInDb(
   if (!row || row.status !== MM_OPEN) return { ok: false };
   const merged = {
     ...parseModmailRowData(row.data),
-    closed_at: sqliteTimestamp(),
+    closed_at: nowIso(),
     close_reason: reason,
     closer_staff_id: closerId,
   };

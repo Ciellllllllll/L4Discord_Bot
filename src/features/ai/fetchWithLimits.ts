@@ -32,6 +32,9 @@ export async function readResponseArrayBufferWithLimit(res: Response, maxRespons
       }
       chunks.push(value);
     }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
   } finally {
     reader.releaseLock();
   }

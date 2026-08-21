@@ -27,19 +27,6 @@ function runtimeConfig(overrides: NodeJS.ProcessEnv) {
   });
 }
 
-function runtimePaths(root: string): NodeJS.ProcessEnv {
-  return {
-    DATABASE_PATH: join(root, "main.sqlite"),
-    TICKET_DATABASE_PATH: join(root, "ticket.sqlite"),
-    MESSAGE_LOG_DB_PATH: join(root, "message-log.sqlite"),
-    MESSAGE_ATTACHMENT_STORE_DB_PATH: join(root, "attachment.sqlite"),
-    VC_TIME_DATABASE_PATH: join(root, "vc-time.sqlite"),
-    AI_HISTORY_DATABASE_PATH: join(root, "ai-history.sqlite"),
-    AUTOMODERATION_DATABASE_PATH: join(root, "automod.sqlite"),
-    REMINDER_DATABASE_PATH: join(root, "reminder.sqlite"),
-  };
-}
-
 test("ensurePostgresMainSchema creates polls with a bigint state revision", async () => {
   const connectionString = getOptionalPostgresTestUrl("TEST_DATABASE_URL", "databaseRuntime.spec.ts");
   if (!connectionString) return;
@@ -90,7 +77,6 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
   try {
     const runtime = await createDatabaseRuntime(runtimeConfig({
       DATABASE_URL: connectionString,
-      ...runtimePaths(root),
       POSTGRES_MAIN_SCHEMA: schemas.main,
       POSTGRES_TICKET_SCHEMA: schemas.ticket,
       POSTGRES_MESSAGE_LOG_SCHEMA: schemas.messageLog,
@@ -101,7 +87,6 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
       POSTGRES_REMINDER_SCHEMA: schemas.reminder,
     }), silentLogger);
     assert.equal("usePostgres" in runtime, false);
-    assert.equal("sqlite" in runtime, false);
     assert.ok(runtime.mainPgPool);
     assert.ok(runtime.messageLogPgPool);
     assert.ok(runtime.vcTimePgPool);
@@ -182,7 +167,6 @@ test("createDatabaseRuntime applies pending polls and guild settings revision mi
 
     runtime = await createDatabaseRuntime(runtimeConfig({
       DATABASE_URL: connectionString,
-      ...runtimePaths(root),
       POSTGRES_MAIN_SCHEMA: schemas.main,
       POSTGRES_TICKET_SCHEMA: schemas.ticket,
       POSTGRES_MESSAGE_LOG_SCHEMA: schemas.messageLog,
@@ -276,7 +260,6 @@ test("createDatabaseRuntime repairs legacy Pacchi bigint flags through migration
 
     runtime = await createDatabaseRuntime(runtimeConfig({
       DATABASE_URL: connectionString,
-      ...runtimePaths(root),
       POSTGRES_MAIN_SCHEMA: schemas.main,
       POSTGRES_TICKET_SCHEMA: schemas.ticket,
       POSTGRES_MESSAGE_LOG_SCHEMA: schemas.messageLog,
@@ -357,7 +340,6 @@ test("closeDatabaseRuntime tries every resource when one close operation fails",
     mainPgPool: { end: async () => { calls.push("mainPool"); } },
     vcTimePgPool: { end: async () => { calls.push("vcPool"); } },
     messageAttachmentPgPool: { end: async () => { calls.push("attachmentPool"); } },
-    sqlite: { close: () => { calls.push("unexpectedSqlite"); } },
   };
 
   await assert.rejects(closeDatabaseRuntime(runtime as never), /main close failed/);

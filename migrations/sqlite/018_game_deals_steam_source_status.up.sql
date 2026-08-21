@@ -1,3 +1,0 @@
-ALTER TABLE game_deal_watcher_status ADD COLUMN last_steam_search_status TEXT;
-ALTER TABLE game_deal_watcher_status ADD COLUMN last_steam_search_error TEXT;
-ALTER TABLE game_deal_watcher_status ADD COLUMN steam_search_cooldown_until TEXT;

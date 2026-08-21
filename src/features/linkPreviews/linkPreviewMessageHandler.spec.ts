@@ -317,7 +317,7 @@ async function run(): Promise<void> {
   assert.equal(failedNativeResolverCalls, 1);
   assert.equal(failedNativeReplies.length, 1);
   assert.equal((failedNativeReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
-  assert.equal(JSON.stringify(failedNativeReplies[0]).includes("rr.example.googlevideo.com/native-send-failed.mp4"), true);
+  assert.equal(JSON.stringify(failedNativeReplies[0]).includes("rr.example.googlevideo.com/native-send-failed.mp4"), false);
 
   let thumbnailNativeFallbackCalled = false;
   let thumbnailNativeResolverCalls = 0;
@@ -360,7 +360,7 @@ async function run(): Promise<void> {
   assert.equal(thumbnailNativeResolverCalls, 1);
   assert.equal(thumbnailNativeReplies.length, 1);
   assert.equal((thumbnailNativeReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
-  assert.equal(JSON.stringify(thumbnailNativeReplies[0]).includes("rr.example.googlevideo.com/thumbnail-native.mp4"), true);
+  assert.equal(JSON.stringify(thumbnailNativeReplies[0]).includes("rr.example.googlevideo.com/thumbnail-native.mp4"), false);
 
   let urllessNativeFallbackTargets: string[] = [];
   const urllessReplies: unknown[] = [];
@@ -544,7 +544,7 @@ async function run(): Promise<void> {
     },
   } as never);
   const fallbackJson = JSON.stringify(fallbackPayloads[0]);
-  assert.equal(fallbackJson.includes("rr.example.googlevideo.com/direct.mp4"), true);
+  assert.equal(fallbackJson.includes("rr.example.googlevideo.com/direct.mp4"), false);
   assert.equal(fallbackJson.includes("i.ytimg.com"), false);
   assert.equal(fallbackJson.includes("attachment://"), false);
 

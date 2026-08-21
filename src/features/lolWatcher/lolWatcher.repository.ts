@@ -1,8 +1,7 @@
-import type DatabaseLib from "better-sqlite3";
 import type { Pool } from "pg";
 import type { PgQueryable } from "../../core/db/postgres.js";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import type {
   LolWatcherAccount,
   LolWatcherActiveGame,
@@ -40,69 +39,6 @@ type StatusRow = {
   value: string | null;
   updated_at: string;
 };
-
-export function ensureLolWatcherSchema(db: DatabaseLib.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS lol_watcher_accounts (
-      account_key TEXT NOT NULL,
-      account_key_norm TEXT NOT NULL UNIQUE,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS lol_watcher_active_games (
-      account_key_norm TEXT NOT NULL,
-      game_id TEXT NOT NULL,
-      message_id TEXT,
-      status TEXT NOT NULL,
-      started_at TEXT,
-      last_seen_at TEXT NOT NULL,
-      missing_since TEXT,
-      error_message TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(account_key_norm, game_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS lol_watcher_notifications (
-      account_key_norm TEXT NOT NULL,
-      game_id TEXT NOT NULL,
-      message_id TEXT,
-      notification_type TEXT NOT NULL,
-      status TEXT NOT NULL,
-      error_message TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(account_key_norm, game_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS lol_watcher_status (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_lol_watcher_accounts_enabled
-      ON lol_watcher_accounts (enabled, account_key_norm);
-
-    CREATE INDEX IF NOT EXISTS idx_lol_watcher_active_games_status
-      ON lol_watcher_active_games (status, account_key_norm);
-  `);
-  ensureColumn(db, "lol_watcher_accounts", "user_id", "TEXT");
-  ensureColumn(db, "lol_watcher_accounts", "channel_id", "TEXT");
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_lol_watcher_accounts_user_id_unique
-      ON lol_watcher_accounts (user_id)
-      WHERE user_id IS NOT NULL;
-  `);
-}
-function ensureColumn(db: DatabaseLib.Database, table: string, column: string, definition: string): void {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!rows.some((row) => row.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-}
 
 function toAccount(row: AccountRow): LolWatcherAccount {
   return {
@@ -191,7 +127,7 @@ export class PostgresLolWatcherRepository {
     await this.pool.query(
       `INSERT INTO lol_watcher_status (key, value, updated_at) VALUES ($1, $2, $3)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      [key, value, sqliteTimestamp()],
+      [key, value, nowIso()],
     );
   }
 
@@ -228,7 +164,7 @@ export class PostgresLolWatcherRepository {
 
   async upsertAccount(accountKey: string, accountKeyNorm: string): Promise<{ created: boolean; account: LolWatcherAccount }> {
     const existing = await this.getAccount(accountKeyNorm);
-    const now = sqliteTimestamp();
+    const now = nowIso();
     await this.pool.query(
       `INSERT INTO lol_watcher_accounts (account_key, account_key_norm, enabled, created_at, updated_at)
        VALUES ($1, $2, true, $3, $3)
@@ -244,7 +180,7 @@ export class PostgresLolWatcherRepository {
     const existingForAccount = await this.getAccount(accountKeyNorm);
     if (existingForAccount && existingForAccount.userId !== userId) return { ok: false, reason: "duplicate_account", account: existingForAccount };
     const existingForUser = await this.getAccountByUserId(userId);
-    const now = sqliteTimestamp();
+    const now = nowIso();
     if (existingForUser) {
       if (existingForUser.enabled && existingForUser.accountKeyNorm !== accountKeyNorm) return { ok: false, reason: "already_registered", account: existingForUser };
       await this.pool.query("UPDATE lol_watcher_accounts SET account_key = $1, account_key_norm = $2, enabled = true, updated_at = $3 WHERE user_id = $4", [accountKey, accountKeyNorm, now, userId]);
@@ -259,14 +195,14 @@ export class PostgresLolWatcherRepository {
   }
 
   async disableAccount(accountKeyNorm: string): Promise<number> {
-    const result = await this.pool.query("UPDATE lol_watcher_accounts SET enabled = false, updated_at = $1 WHERE account_key_norm = $2", [sqliteTimestamp(), accountKeyNorm]);
+    const result = await this.pool.query("UPDATE lol_watcher_accounts SET enabled = false, updated_at = $1 WHERE account_key_norm = $2", [nowIso(), accountKeyNorm]);
     return result.rowCount ?? 0;
   }
 
   async disableAccountForUser(userId: string): Promise<LolWatcherAccount | null> {
     const account = await this.getAccountByUserId(userId);
     if (!account || !account.enabled) return null;
-    await this.pool.query("UPDATE lol_watcher_accounts SET enabled = false, updated_at = $1 WHERE user_id = $2", [sqliteTimestamp(), userId]);
+    await this.pool.query("UPDATE lol_watcher_accounts SET enabled = false, updated_at = $1 WHERE user_id = $2", [nowIso(), userId]);
     return account;
   }
 
@@ -286,14 +222,14 @@ export class PostgresLolWatcherRepository {
   }
 
   async upsertActiveGame(input: { accountKeyNorm: string; gameId: string; messageId: string | null; startedAt: string | null; status: LolWatcherActiveStatus; errorMessage?: string | null }): Promise<void> {
-    const now = sqliteTimestamp();
+    const now = nowIso();
     await this.pool.query(`INSERT INTO lol_watcher_active_games (account_key_norm, game_id, message_id, status, started_at, last_seen_at, missing_since, error_message, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $6, $6) ON CONFLICT(account_key_norm, game_id) DO UPDATE SET message_id = COALESCE(excluded.message_id, lol_watcher_active_games.message_id), status = excluded.status, started_at = COALESCE(excluded.started_at, lol_watcher_active_games.started_at), last_seen_at = excluded.last_seen_at, missing_since = NULL, error_message = excluded.error_message, updated_at = excluded.updated_at`, [input.accountKeyNorm, input.gameId, input.messageId, input.status, input.startedAt, now, input.errorMessage ?? null]);
   }
 
-  async markActiveSeen(accountKeyNorm: string, gameId: string): Promise<void> { await this.pool.query("UPDATE lol_watcher_active_games SET status = 'active', last_seen_at = $1, missing_since = NULL, error_message = NULL, updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3", [sqliteTimestamp(), accountKeyNorm, gameId]); }
-  async markMissing(game: LolWatcherActiveGame): Promise<void> { const now = sqliteTimestamp(); await this.pool.query("UPDATE lol_watcher_active_games SET status = 'missing', missing_since = COALESCE(missing_since, $1), updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3 AND status != 'stale'", [now, game.accountKeyNorm, game.gameId]); }
-  async markStale(game: LolWatcherActiveGame): Promise<void> { await this.pool.query("UPDATE lol_watcher_active_games SET status = 'stale', updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3", [sqliteTimestamp(), game.accountKeyNorm, game.gameId]); }
-  async markCompleted(accountKeyNorm: string, gameId: string): Promise<void> { await this.pool.query("UPDATE lol_watcher_active_games SET status = 'completed', missing_since = NULL, error_message = NULL, updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3", [sqliteTimestamp(), accountKeyNorm, gameId]); }
+  async markActiveSeen(accountKeyNorm: string, gameId: string): Promise<void> { await this.pool.query("UPDATE lol_watcher_active_games SET status = 'active', last_seen_at = $1, missing_since = NULL, error_message = NULL, updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3", [nowIso(), accountKeyNorm, gameId]); }
+  async markMissing(game: LolWatcherActiveGame): Promise<void> { const now = nowIso(); await this.pool.query("UPDATE lol_watcher_active_games SET status = 'missing', missing_since = COALESCE(missing_since, $1), updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3 AND status != 'stale'", [now, game.accountKeyNorm, game.gameId]); }
+  async markStale(game: LolWatcherActiveGame): Promise<void> { await this.pool.query("UPDATE lol_watcher_active_games SET status = 'stale', updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3", [nowIso(), game.accountKeyNorm, game.gameId]); }
+  async markCompleted(accountKeyNorm: string, gameId: string): Promise<void> { await this.pool.query("UPDATE lol_watcher_active_games SET status = 'completed', missing_since = NULL, error_message = NULL, updated_at = $1 WHERE account_key_norm = $2 AND game_id = $3", [nowIso(), accountKeyNorm, gameId]); }
   async hasNotification(accountKeyNorm: string, gameId: string): Promise<boolean> { const result = await this.pool.query("SELECT 1 FROM lol_watcher_notifications WHERE account_key_norm = $1 AND game_id = $2", [accountKeyNorm, gameId]); return (result.rowCount ?? 0) > 0; }
-  async saveNotification(input: { accountKeyNorm: string; gameId: string; messageId: string | null; notificationType: LolWatcherNotificationType; status: LolWatcherNotificationStatus; errorMessage?: string | null }): Promise<void> { const now = sqliteTimestamp(); await this.pool.query(`INSERT INTO lol_watcher_notifications (account_key_norm, game_id, message_id, notification_type, status, error_message, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7) ON CONFLICT(account_key_norm, game_id) DO UPDATE SET message_id = COALESCE(excluded.message_id, lol_watcher_notifications.message_id), notification_type = excluded.notification_type, status = excluded.status, error_message = excluded.error_message, updated_at = excluded.updated_at`, [input.accountKeyNorm, input.gameId, input.messageId, input.notificationType, input.status, input.errorMessage ?? null, now]); }
+  async saveNotification(input: { accountKeyNorm: string; gameId: string; messageId: string | null; notificationType: LolWatcherNotificationType; status: LolWatcherNotificationStatus; errorMessage?: string | null }): Promise<void> { const now = nowIso(); await this.pool.query(`INSERT INTO lol_watcher_notifications (account_key_norm, game_id, message_id, notification_type, status, error_message, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7) ON CONFLICT(account_key_norm, game_id) DO UPDATE SET message_id = COALESCE(excluded.message_id, lol_watcher_notifications.message_id), notification_type = excluded.notification_type, status = excluded.status, error_message = excluded.error_message, updated_at = excluded.updated_at`, [input.accountKeyNorm, input.gameId, input.messageId, input.notificationType, input.status, input.errorMessage ?? null, now]); }
 }

@@ -9,6 +9,7 @@ import {
   type YouTubeWatcherPostMedia,
 } from "../linkPreviews/youtube/adhdYouTubeExpansion.js";
 import { replacePreviewMedia } from "../linkPreviews/shared/previewRenderer.js";
+import { youtubeAttachmentSizeLimitForPremiumTier } from "../linkPreviews/youtube/youtubeMediaAttachment.js";
 import {
   resolveYouTubeVideoMedia,
   resolveYouTubeVideoMediaWithRetry,
@@ -36,6 +37,7 @@ export async function cacheYouTubeWatcherVideo(
     persistVideo?: typeof persistYouTubeVideo;
     resolveMedia?: (url: string) => Promise<{ status: "ok"; mediaUrl: string } | { status: "fallback"; reason: string }>;
     mediaResolver?: typeof resolveYouTubeVideoMedia;
+    attachmentSizeLimitBytes?: number;
     maintenance: YouTubeWatcherCacheMaintenance;
   },
 ): Promise<YouTubeWatcherPostMedia> {
@@ -258,7 +260,11 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
         await repo.savePost(subscription.id, entry, { status: "pending" });
         notification = await sendYouTubeWatcherNotification(ctx, target, entry, {
           cacheForPost: cacheMaintenance
-            ? (candidate, mediaResolver) => cacheYouTubeWatcherVideo(ctx, candidate, cacheRepo, { maintenance: cacheMaintenance, mediaResolver })
+            ? (candidate, mediaResolver) => cacheYouTubeWatcherVideo(ctx, candidate, cacheRepo, {
+              maintenance: cacheMaintenance,
+              mediaResolver,
+              attachmentSizeLimitBytes: youtubeAttachmentSizeLimitForPremiumTier(target.guild?.premiumTier),
+            })
             : undefined,
         });
         sentToDiscord = true;
