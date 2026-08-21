@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { PreviewDocument, PreviewSource } from "./previewDocument.js";
 
-const supportedSources: PreviewSource[] = ["x", "youtube"];
+const supportedSources: PreviewSource[] = ["x", "youtube", "steam"];
 
 const document: PreviewDocument = {
   version: 1,
@@ -32,7 +32,7 @@ const document: PreviewDocument = {
 };
 
 assert.equal(document.version, 1);
-assert.deepEqual(supportedSources, ["x", "youtube"]);
+assert.deepEqual(supportedSources, ["x", "youtube", "steam"]);
 assert.equal(document.blocks[0]?.type, "text");
 assert.equal(document.blocks[1]?.type, "media");
 console.log("previewDocument.spec.ts: all assertions passed");
