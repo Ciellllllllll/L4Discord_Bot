@@ -109,6 +109,33 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
       const result = await sql<{ schema: string | null }>`SELECT current_schema() AS schema`.execute(database);
       assert.equal(result.rows[0]?.schema, schema);
     }
+    const steamPrimaryKey = await adminPool.query<{ columns: string[] }>(
+      `SELECT json_agg(attribute.attname ORDER BY attribute.attnum) AS columns
+       FROM pg_index AS index_data
+       JOIN pg_class AS table_object ON table_object.oid = index_data.indrelid
+       JOIN pg_namespace AS namespace ON namespace.oid = table_object.relnamespace
+       JOIN pg_attribute AS attribute ON attribute.attrelid = table_object.oid AND attribute.attnum = ANY(index_data.indkey)
+       WHERE index_data.indisprimary AND namespace.nspname = $1 AND table_object.relname = 'steam_exchange_rates'
+       GROUP BY index_data.indexrelid`,
+      [schemas.main],
+    );
+    assert.deepEqual(steamPrimaryKey.rows, [{ columns: ["rate_date"] }]);
+    const steamLatestIndex = await adminPool.query<{ indexdef: string }>(
+      `SELECT indexdef
+       FROM pg_indexes
+       WHERE schemaname = $1 AND tablename = 'steam_exchange_rates' AND indexname = 'idx_steam_exchange_rates_latest'`,
+      [schemas.main],
+    );
+    assert.equal(steamLatestIndex.rows.length, 1);
+    assert.match(steamLatestIndex.rows[0]!.indexdef, /\(rate_date DESC\)/i);
+    assert.doesNotMatch(steamLatestIndex.rows[0]!.indexdef, /symbol/i);
+    const steamMigrations = await adminPool.query<{ version: number; name: string }>(
+      `SELECT version, name
+       FROM ${quotePgIdent(schemas.main)}.postgres_schema_migrations
+       WHERE version >= 16
+       ORDER BY version`,
+    );
+    assert.deepEqual(steamMigrations.rows, [{ version: 16, name: "steam_link_preview" }]);
     await Promise.all([
       upsertGuildSettingsData(runtime.db, "guild", { ai_thinking_enabled: true }),
       upsertGuildSettingsData(runtime.db, "guild", { member_leave_channel_id: "channel" }),
