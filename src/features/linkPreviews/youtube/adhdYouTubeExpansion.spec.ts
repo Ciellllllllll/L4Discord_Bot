@@ -36,6 +36,11 @@ const translations: PreviewDocumentTranslations = {
   },
 };
 const googleVideoUrl = "https://rr.example.googlevideo.com/videoplayback?id=video-adhd";
+const attachmentVideoUrl = "attachment://youtube-preview.mp4";
+const videoFetcher = async () => new Response(Buffer.from("mp4"), {
+  status: 200,
+  headers: { "content-type": "video/mp4", "content-length": "3" },
+});
 
 function textFrom(payload: { components?: readonly unknown[] }): string {
   const text: string[] = [];
@@ -85,7 +90,7 @@ function hasMedia(payload: { components?: readonly unknown[] }, url: string): bo
     client: {} as never,
     config: { YOUTUBE_DATA_API_KEY: "key", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
     log: { warn() {} },
-  } as never, { guildId: "guild-1", id: "channel-1" } as never, entry, {
+  } as never, { guildId: "guild-1", id: "channel-1", guild: { premiumTier: 3 } } as never, entry, {
     cacheForPost: async () => {
       cacheCalls += 1;
       return { mediaMode: "none", lastError: "no_media" };
@@ -101,11 +106,12 @@ function hasMedia(payload: { components?: readonly unknown[] }, url: string): bo
       assert.equal(JSON.stringify(document).includes("RSS channel"), true);
       return translations;
     },
+    fetcher: videoFetcher,
     mediaResolver: async (url, options) => {
       resolverCalls += 1;
       assert.equal(url, entry.videoUrl);
       assert.equal(options?.timeoutMs, 1_000);
-      assert.equal(options?.maxBytes, Number.MAX_SAFE_INTEGER);
+      assert.equal(options?.maxBytes, 100 * 1000 * 1000);
       return resolverCalls === 1
         ? { status: "fallback", reason: "temporary_failure" }
         : { status: "ok", mediaUrl: googleVideoUrl };
@@ -131,8 +137,12 @@ function hasMedia(payload: { components?: readonly unknown[] }, url: string): bo
   assert.equal(JSON.stringify(plan.retryPayload).includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID), true);
   assert.equal(hasMedia(plan.firstPayload, nativeEmbed.video!.proxy_url!), false);
   assert.equal(hasMedia(plan.retryPayload, nativeEmbed.video!.proxy_url!), false);
-  assert.equal(hasMedia(plan.firstPayload, googleVideoUrl), true);
-  assert.equal(hasMedia(plan.retryPayload, googleVideoUrl), true);
+  assert.equal(hasMedia(plan.firstPayload, googleVideoUrl), false);
+  assert.equal(hasMedia(plan.retryPayload, googleVideoUrl), false);
+  assert.equal(hasMedia(plan.firstPayload, attachmentVideoUrl), true);
+  assert.equal(hasMedia(plan.retryPayload, attachmentVideoUrl), true);
+  assert.equal(plan.firstPayload.files?.length, 1);
+  assert.equal(plan.retryPayload.files?.length, 1);
   assert.deepEqual(plan.media, { mediaMode: "google", mediaUrl: googleVideoUrl, lastError: "no_media" });
 }
 
@@ -181,16 +191,55 @@ function hasMedia(payload: { components?: readonly unknown[] }, url: string): bo
     cacheForPost: async () => ({ mediaMode: "google", mediaUrl: googleVideoUrl, lastError: "cache_unavailable" }),
     probeNative: async () => nativeEmbed,
     translate: async () => translations,
+    fetcher: videoFetcher,
     mediaResolver: async () => {
       cachedResolverCalls += 1;
       return { status: "fallback", reason: "must_not_run" };
     },
   });
   assert.equal(textFrom(googlePlan.firstPayload).includes("翻訳タイトル"), true);
-  assert.equal(hasMedia(googlePlan.firstPayload, googleVideoUrl), true);
-  assert.equal(hasMedia(googlePlan.retryPayload, googleVideoUrl), true);
+  assert.equal(hasMedia(googlePlan.firstPayload, googleVideoUrl), false);
+  assert.equal(hasMedia(googlePlan.retryPayload, googleVideoUrl), false);
+  assert.equal(hasMedia(googlePlan.firstPayload, attachmentVideoUrl), true);
+  assert.equal(hasMedia(googlePlan.retryPayload, attachmentVideoUrl), true);
   assert.equal(hasMedia(googlePlan.firstPayload, nativeEmbed.video!.proxy_url!), false);
   assert.equal(cachedResolverCalls, 0);
+
+  const attachedPlan = await prepareAdhdYouTubeNotification({
+    client: {} as never,
+    config: { YOUTUBE_DATA_API_KEY: "", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
+    log: { warn() {} },
+  } as never, {} as never, entry, {
+    cacheForPost: async () => ({ mediaMode: "google", mediaUrl: googleVideoUrl, lastError: null }),
+    probeNative: async () => nativeEmbed,
+    translate: async () => translations,
+    fetcher: async (url) => {
+      assert.equal(url, googleVideoUrl);
+      return new Response(Buffer.from("mp4"), {
+        status: 200,
+        headers: { "content-type": "video/mp4", "content-length": "3" },
+      });
+    },
+  });
+  assert.equal(hasMedia(attachedPlan.firstPayload, attachmentVideoUrl), true);
+  assert.equal(hasMedia(attachedPlan.firstPayload, googleVideoUrl), false);
+  assert.equal(attachedPlan.firstPayload.files?.length, 1);
+
+  const failedAttachmentPlan = await prepareAdhdYouTubeNotification({
+    client: {} as never,
+    config: { YOUTUBE_DATA_API_KEY: "", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
+    log: { warn() {} },
+  } as never, {} as never, entry, {
+    cacheForPost: async () => ({ mediaMode: "google", mediaUrl: googleVideoUrl, lastError: null }),
+    probeNative: async () => nativeEmbed,
+    translate: async () => translations,
+    fetcher: async () => new Response("unavailable", { status: 503 }),
+  });
+  assert.equal(hasMedia(failedAttachmentPlan.firstPayload, googleVideoUrl), false);
+  assert.equal(hasMedia(failedAttachmentPlan.firstPayload, entry.thumbnailUrl), false);
+  assert.equal(hasMedia(failedAttachmentPlan.firstPayload, nativeEmbed.video!.proxy_url!), false);
+  assert.equal(JSON.stringify(failedAttachmentPlan.firstPayload.components).includes('"type":12'), false);
+  assert.match(failedAttachmentPlan.media?.lastError ?? "", /^googlevideo_pending:attachment_unavailable$/);
 
   let directResolverCalls = 0;
   const directPlan = await prepareAdhdYouTubeNotification({
@@ -200,6 +249,7 @@ function hasMedia(payload: { components?: readonly unknown[] }, url: string): bo
   } as never, {} as never, entry, {
     probeNative: async () => nativeEmbed,
     translate: async () => translations,
+    fetcher: videoFetcher,
     mediaResolver: async () => {
       directResolverCalls += 1;
       return directResolverCalls === 1
@@ -208,8 +258,10 @@ function hasMedia(payload: { components?: readonly unknown[] }, url: string): bo
     },
   });
   assert.equal(directResolverCalls, 2);
-  assert.equal(hasMedia(directPlan.firstPayload, googleVideoUrl), true);
-  assert.equal(hasMedia(directPlan.retryPayload, googleVideoUrl), true);
+  assert.equal(hasMedia(directPlan.firstPayload, googleVideoUrl), false);
+  assert.equal(hasMedia(directPlan.retryPayload, googleVideoUrl), false);
+  assert.equal(hasMedia(directPlan.firstPayload, attachmentVideoUrl), true);
+  assert.equal(hasMedia(directPlan.retryPayload, attachmentVideoUrl), true);
   assert.equal(hasMedia(directPlan.firstPayload, nativeEmbed.video!.proxy_url!), false);
   assert.equal(JSON.stringify(directPlan.retryPayload).includes("preview:show-original"), true);
 }
@@ -329,13 +381,15 @@ for (const mediaResolver of [
       resolverCalls += 1;
       return { status: "ok", mediaUrl: googleVideoUrl };
     },
+    fetcher: videoFetcher,
   });
   assert.equal(cacheCalls, 1);
   assert.equal(probeCalls, 1);
   assert.equal(translationCalls, 1);
   assert.equal(resolverCalls, 1);
   assert.equal(sends, 2);
-  assert.equal(payloads.every((candidate) => hasMedia(candidate as never, googleVideoUrl)), true);
+  assert.equal(payloads.every((candidate) => !hasMedia(candidate as never, googleVideoUrl)), true);
+  assert.equal(payloads.every((candidate) => hasMedia(candidate as never, attachmentVideoUrl)), true);
   assert.equal(payloads.every((candidate) => !hasMedia(candidate as never, nativeEmbed.video!.proxy_url!)), true);
   assert.deepEqual(sent.media, { mediaMode: "google", mediaUrl: googleVideoUrl, lastError: "cache_failed" });
 }

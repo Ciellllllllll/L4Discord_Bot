@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AppConfig } from "../../core/config.js";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import type { ChatMessage } from "./chatTypes.js";
 import { getAiThinkingEnabled } from "./thinkingSettings.js";
 import { classifyUserIntent } from "./queryJudge.js";
@@ -427,7 +427,7 @@ export class AiQueryService {
     assistantContent: string,
     metaValue: Record<string, unknown> = {},
   ): Promise<void> {
-    const now = sqliteTimestamp() as unknown as Date;
+    const now = nowIso() as unknown as Date;
     const meta = JSON.stringify(metaValue) as unknown as Record<string, unknown>;
     await this.ctx.aiHistoryDb
       .insertInto("ai_history")

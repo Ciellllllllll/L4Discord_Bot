@@ -1,5 +1,5 @@
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import {
   attachmentMetaToJson,
   mergeAttachmentLists,
@@ -116,7 +116,7 @@ export async function createReplyRow(ctx: BotContext, input: {
   fixed_reply_body: string;
   attachment_metadata: string;
 }): Promise<void> {
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   await ctx.ticketDb
     .insertInto("modmail_replies")
     .values({
@@ -149,7 +149,7 @@ export async function createReplyRow(ctx: BotContext, input: {
 }
 
 export async function setReplyConfirmMessageId(ctx: BotContext, replyId: string, confirmId: string): Promise<void> {
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   await ctx.ticketDb
     .updateTable("modmail_replies")
     .set({
@@ -177,7 +177,7 @@ export async function updateReplyStatus(
     close_reason: string | null;
   }>,
 ): Promise<number> {
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   const result = await ctx.ticketDb
     .updateTable("modmail_replies")
     .set({
@@ -200,7 +200,7 @@ export async function appendReplyAttachmentsMeta(
   if (!row) return false;
   const base = parseAttachmentMetadata(row.attachment_metadata);
   const merged = mergeAttachmentLists(base, extra);
-  const ts = sqliteTimestamp();
+  const ts = nowIso();
   await ctx.ticketDb
     .updateTable("modmail_replies")
     .set({

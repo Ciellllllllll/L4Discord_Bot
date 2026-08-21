@@ -1,5 +1,5 @@
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 
 export async function logModmailEvent(
   ctx: BotContext,
@@ -12,7 +12,7 @@ export async function logModmailEvent(
       .values({
         event_type: eventType,
         payload: JSON.stringify(payload),
-        created_at: sqliteTimestamp() as unknown as Date,
+        created_at: nowIso() as unknown as Date,
       })
       .execute();
   } catch (e) {

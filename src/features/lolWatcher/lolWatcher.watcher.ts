@@ -1,7 +1,7 @@
 import type { Client, GuildTextBasedChannel } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { componentCardsPayload } from "../panels/componentCard.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { buildLolWatcherCompletedEmbed, buildLolWatcherStartEmbed } from "./lolWatcher.embeds.js";
 import { buildDeepLolDetailUrl, LolWatcherRiotClient } from "./lolWatcher.client.js";
 import { createLolWatcherRepository, ensurePostgresLolWatcherSchema, type LolWatcherRepositoryLike } from "./lolWatcher.repository.js";
@@ -397,7 +397,7 @@ export async function scanLolWatcher(
       completedIds,
       ctx.config.DEEPLOL_ACTIVE_STALE_MS,
     );
-    await repo.setStatus(`account_success:${watchAccount.accountKeyNorm}`, sqliteTimestamp());
+    await repo.setStatus(`account_success:${watchAccount.accountKeyNorm}`, nowIso());
   }
   await repo.setStatus("last_scan_result", JSON.stringify(result));
   return result;

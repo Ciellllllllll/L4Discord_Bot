@@ -1,1 +1,0 @@
--- SQLite cannot drop columns without rebuilding the table. Keep this down migration as a no-op.

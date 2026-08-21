@@ -10,7 +10,7 @@ import {
 } from "./flowLifecycle.js";
 import type { Kysely } from "kysely";
 import type { Database } from "../../core/db/types.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { MessageFlags, type ButtonInteraction, type GuildMember, type MessageEditOptions, type TextChannel } from "discord.js";
 
 type FlowRuntimeRow = {
@@ -539,7 +539,7 @@ export function createTwoStagePollRuntime<
         ctx.log.warn({ flowId: row.id, guildId: row.guild_id, phase: "invalid" }, `${spec.namespace}: cancelling malformed open flow`);
         await ctx.db.updateTable("polls").set({
           status: "cancelled",
-          updated_at: sqliteTimestamp() as unknown as Date,
+          updated_at: nowIso() as unknown as Date,
         }).where("id", "=", row.id).where("status", "=", "open").execute();
         continue;
       }
@@ -547,7 +547,7 @@ export function createTwoStagePollRuntime<
         spec.releaseTarget(row.id);
         await ctx.db.updateTable("polls").set({
           status: state.phase === "completed" ? "completed" : "cancelled",
-          updated_at: sqliteTimestamp() as unknown as Date,
+          updated_at: nowIso() as unknown as Date,
         }).where("id", "=", row.id).where("status", "=", "open").execute();
         continue;
       }

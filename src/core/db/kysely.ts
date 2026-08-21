@@ -1,13 +1,6 @@
-import type DatabaseLib from "better-sqlite3";
-import { Kysely, PostgresDialect, SqliteDialect } from "kysely";
+import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
-import type {
-  AiHistoryDatabase,
-  AutomoderationDatabase,
-  Database,
-  ReminderDatabase,
-  TicketDatabase,
-} from "./types.js";
+import type { AiHistoryDatabase, AutomoderationDatabase, Database, ReminderDatabase, TicketDatabase } from "./types.js";
 import { pgSearchPathOption } from "./postgres.js";
 
 export type PostgresKyselyOptions = {
@@ -25,36 +18,12 @@ function createPostgresKysely<T>(options: PostgresKyselyOptions): Kysely<T> {
   });
 }
 
-export function createKysely(sqlite: DatabaseLib.Database): Kysely<Database> {
-  return new Kysely<Database>({
-    dialect: new SqliteDialect({
-      database: sqlite,
-    }),
-  });
-}
-
 export function createPostgresMainKysely(options: PostgresKyselyOptions): Kysely<Database> {
   return createPostgresKysely<Database>(options);
 }
 
-export function createTicketKysely(sqlite: DatabaseLib.Database): Kysely<TicketDatabase> {
-  return new Kysely<TicketDatabase>({
-    dialect: new SqliteDialect({
-      database: sqlite,
-    }),
-  });
-}
-
 export function createPostgresTicketKysely(options: PostgresKyselyOptions): Kysely<TicketDatabase> {
   return createPostgresKysely<TicketDatabase>(options);
-}
-
-export function createAiHistoryKysely(sqlite: DatabaseLib.Database): Kysely<AiHistoryDatabase> {
-  return new Kysely<AiHistoryDatabase>({
-    dialect: new SqliteDialect({
-      database: sqlite,
-    }),
-  });
 }
 
 export function createPostgresAiHistoryKysely(options: PostgresKyselyOptions): Kysely<AiHistoryDatabase> {

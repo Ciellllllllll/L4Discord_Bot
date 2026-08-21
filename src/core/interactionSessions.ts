@@ -1,5 +1,5 @@
 import type { Kysely } from "kysely";
-import { sqliteTimestamp } from "./db/sqliteTimestamp.js";
+import { nowIso } from "./db/nowIso.js";
 import type { Database } from "./db/types.js";
 
 const DEFAULT_TTL_HOURS = 48;
@@ -19,7 +19,7 @@ export async function createSession(
   const hours = input.ttlHours ?? DEFAULT_TTL_HOURS;
   const expiresAt = new Date(Date.now() + hours * 3600_000);
   const expiresIso = expiresAt.toISOString();
-  const createdIso = sqliteTimestamp();
+  const createdIso = nowIso();
   await db
     .insertInto("interaction_sessions")
     .values({
@@ -45,12 +45,12 @@ export async function getSession(
   action: string;
   executor_user_id: string | null;
 } | null> {
-  const nowIso = sqliteTimestamp();
+  const currentIso = nowIso();
   const row = await db
     .selectFrom("interaction_sessions")
     .selectAll()
     .where("id", "=", id)
-    .where("expires_at", ">", nowIso as unknown as Date)
+    .where("expires_at", ">", currentIso as unknown as Date)
     .executeTakeFirst();
   if (!row) return null;
   const p = row.payload;

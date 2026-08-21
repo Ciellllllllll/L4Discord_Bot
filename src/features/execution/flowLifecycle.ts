@@ -1,6 +1,6 @@
 import type { Kysely } from "kysely";
 import type { Database } from "../../core/db/types.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 
 export type OpenPollFlow<T> = {
   id: string;
@@ -111,7 +111,7 @@ export class PollFlowStateStore {
       .set({
         state: JSON.stringify(input.nextState) as unknown as Record<string, unknown>,
         state_revision: nextRevision,
-        updated_at: sqliteTimestamp() as unknown as Date,
+        updated_at: nowIso() as unknown as Date,
         ...(input.messageId === undefined ? {} : { message_id: input.messageId }),
         ...(input.status === undefined ? {} : { status: input.status }),
       })
@@ -120,7 +120,7 @@ export class PollFlowStateStore {
       .where("state_revision", "=", input.expectedRevision);
 
     // expectedRawState がある場合は、revision が旧スキーマから手動変更されてもphaseを含む
-    // 読取り時状態以外を更新できない。JSONB/SQLite双方で列の型に従って比較される。
+    // 読取り時状態以外を更新できない。JSONB列の値を読取り時状態と一致させる。
     if (input.expectedRawState !== undefined) {
       update = update.where("state", "=", input.expectedRawState as never);
     }

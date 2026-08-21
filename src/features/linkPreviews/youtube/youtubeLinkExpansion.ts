@@ -39,10 +39,12 @@ import {
   type YouTubeSourceFetchOptions,
 } from "./youtubePreviewSource.js";
 import { addYouTubeMediaRefreshButton } from "./youtubeMediaRefresh.js";
+import {
+  DEFAULT_YOUTUBE_MEDIA_ATTACHMENT_MAX_BYTES,
+  downloadYouTubeMediaAttachment,
+  YOUTUBE_MEDIA_ATTACHMENT_FILENAME,
+} from "./youtubeMediaAttachment.js";
 
-const REQUEST_TIMEOUT_MS = 10_000;
-const MEDIA_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
-const MEDIA_ATTACHMENT_FILENAME = "youtube-preview.mp4";
 const NATIVE_EMBED_WAIT_MS = 3_000;
 
 type LoggerLike = { warn: (...args: unknown[]) => void };
@@ -87,7 +89,7 @@ function isGoogleVideoUrl(value: string): boolean {
 }
 
 function safeMediaUrl(value: unknown): string | undefined {
-  if (value === `attachment://${MEDIA_ATTACHMENT_FILENAME}`) return value;
+  if (value === `attachment://${YOUTUBE_MEDIA_ATTACHMENT_FILENAME}`) return value;
   return safeYouTubeHttpsUrl(value);
 }
 
@@ -95,7 +97,8 @@ function selectedMediaUrl(options: YouTubePreviewPayloadOptions): string | undef
   if (options.mediaMode === "none") return undefined;
   const media = safeMediaUrl(options.mediaUrl);
   if (!media) return undefined;
-  return options.mediaMode === "google" && !isGoogleVideoUrl(media) ? undefined : media;
+  if (options.mediaMode === "google") return media.startsWith("attachment://") ? media : undefined;
+  return media;
 }
 
 export function replaceYouTubePreviewMedia(
@@ -146,24 +149,15 @@ export function buildYouTubeComponentsOnlyFallbackPayload(url: string): YouTubeP
   }, { translations: {} });
 }
 
-type ResolvedMedia = { mediaUrl: string; files?: AttachmentBuilder[] };
+type ResolvedMedia = { mediaUrl: string; files?: AttachmentBuilder[]; sourceUrl?: string };
 type MediaResolution = { media?: ResolvedMedia; failureReason?: string };
 async function downloadAttachment(mediaUrl: string, options: YouTubePreviewBuildOptions): Promise<ResolvedMedia | undefined> {
-  const url = safeYouTubeHttpsUrl(mediaUrl);
-  if (!url) return undefined;
-  try {
-    const response = await (options.fetcher ?? fetch)(url, { signal: AbortSignal.timeout(options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS), headers: { Accept: "video/mp4,video/*;q=0.9,*/*;q=0.1" } });
-    if (!response.ok) return undefined;
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    if (contentType && !contentType.startsWith("video/")) return undefined;
-    const max = options.attachmentSizeLimitBytes ?? MEDIA_ATTACHMENT_MAX_BYTES;
-    const length = Number(response.headers.get("content-length") ?? "");
-    if (Number.isFinite(length) && length > max) { await response.body?.cancel().catch(() => undefined); return { mediaUrl }; }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return buffer.byteLength > max
-      ? { mediaUrl }
-      : { mediaUrl: `attachment://${MEDIA_ATTACHMENT_FILENAME}`, files: [new AttachmentBuilder(buffer, { name: MEDIA_ATTACHMENT_FILENAME })] };
-  } catch { return undefined; }
+  const attachment = await downloadYouTubeMediaAttachment(mediaUrl, {
+    fetcher: options.fetcher,
+    requestTimeoutMs: options.requestTimeoutMs,
+    attachmentSizeLimitBytes: options.attachmentSizeLimitBytes ?? DEFAULT_YOUTUBE_MEDIA_ATTACHMENT_MAX_BYTES,
+  });
+  return attachment ? { ...attachment, sourceUrl: mediaUrl } : undefined;
 }
 
 async function resolveMedia(target: YouTubeReplyTarget, options: YouTubePreviewBuildOptions): Promise<MediaResolution> {
@@ -175,7 +169,8 @@ async function resolveMedia(target: YouTubeReplyTarget, options: YouTubePreviewB
       timeoutMs: options.requestTimeoutMs, maxBytes: options.attachmentSizeLimitBytes,
     }, { resolver: options.mediaResolver });
     if (resolved.status !== "ok") return { failureReason: resolved.reason };
-    return { media: await downloadAttachment(resolved.mediaUrl, options) ?? { mediaUrl: resolved.mediaUrl } };
+    const media = await downloadAttachment(resolved.mediaUrl, options);
+    return media ? { media } : { failureReason: "attachment_unavailable" };
   } catch (error) {
     options.log?.warn?.({ error, url: target.canonicalUrl }, "youtube preview media resolver error");
     return { failureReason: "inner_tube_error" };
@@ -198,15 +193,37 @@ async function translateDocument(document: PreviewDocument, options: YouTubePrev
 async function buildDocumentPayload(
   document: PreviewDocument,
   options: YouTubePreviewBuildOptions,
-  media?: ResolvedMedia,
+  resolution: MediaResolution = {},
 ): Promise<YouTubePreviewPayload> {
   const built = await buildTranslatedPreview(document, { translate: async () => await translateDocument(document, options) });
+  const override = options.mediaMode === "none" ? undefined : safeMediaUrl(options.mediaUrlOverride);
+  const requestedMedia = options.mediaMode
+    ? (options.mediaMode === "google" && override && !isGoogleVideoUrl(override)
+      ? undefined
+      : override ? { mediaUrl: override } : undefined)
+    : resolution.media;
+  let media = requestedMedia;
+  let failureReason = resolution.failureReason;
+  if (
+    media
+    && !media.files?.length
+    && !media.mediaUrl.startsWith(`attachment://`)
+    && (options.mediaMode === "google" || isGoogleVideoUrl(media.mediaUrl))
+  ) {
+    media = await downloadAttachment(media.mediaUrl, options);
+    if (!media) failureReason ??= "attachment_unavailable";
+  }
+  const fallback = Boolean(options.mediaMode || failureReason || requestedMedia) && !media;
   const payload = payloadFromDocument(document, built.state?.translations ?? { translations: {} }, {
-    ...(options.mediaMode ? { fallback: true, mediaMode: options.mediaMode, mediaUrl: options.mediaUrlOverride } : {
-      mediaUrl: media?.mediaUrl, files: media?.files,
-    }),
+    mediaUrl: media?.mediaUrl,
+    files: media?.files,
+    ...(fallback ? { fallback: true } : {}),
   }, built.state);
-  return { ...payload, ...(media ? { resolvedMedia: media } : {}) };
+  return {
+    ...payload,
+    ...(media ? { resolvedMedia: media } : {}),
+    ...(failureReason ? { mediaResolutionError: failureReason } : {}),
+  };
 }
 
 export async function buildYouTubeReplyPayloads(
@@ -225,8 +242,7 @@ export async function buildYouTubeReplyPayloads(
     const resolution = options.mediaMode || !["video", "oembed"].includes(result.preview.kind)
       ? {}
       : await resolveMedia(target, options);
-    const payload = await buildDocumentPayload(document, options, resolution.media);
-    return resolution.failureReason ? { ...payload, mediaResolutionError: resolution.failureReason } : payload;
+    return await buildDocumentPayload(document, options, resolution);
   }));
 }
 
@@ -356,14 +372,18 @@ export async function sendYouTubeLinkExpansion(
       }
       if (useNative) {
         const preferredMediaUrl = usableCachedMedia?.mediaUrl ?? getYouTubeNativeEmbedVideoUrl(item.nativeEmbed!);
-        const selectedMedia = preferredMediaUrl
-          ? { mediaUrl: preferredMediaUrl }
-          : finalFallbackAttempted ? undefined : await resolveFinalFallback();
+        const selectedResolution: MediaResolution = preferredMediaUrl
+          ? { media: { mediaUrl: preferredMediaUrl } }
+          : finalFallbackAttempted
+            ? { failureReason: finalFallbackReason }
+            : await resolveFinalFallback().then((media) => media ? { media } : { failureReason: finalFallbackReason });
         payload = await buildDocumentPayload(nativeYouTubeEmbedToDocument(item.nativeEmbed!, item.target.canonicalUrl), {
           config: deps.config, aiRouter: deps.aiRouter, guildId: message.guildId ?? deps.config.GUILD_ID,
           log: deps.log, translate: deps.translate,
+          attachmentSizeLimitBytes: deps.attachmentSizeLimitBytes,
+          ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
           ...(usableCachedMedia ? { mediaMode: usableCachedMedia.mediaMode, mediaUrlOverride: usableCachedMedia.mediaUrl } : {}),
-        }, selectedMedia);
+        }, selectedResolution);
       } else {
         const [built] = await (deps.buildReplyPayloads ?? buildYouTubeReplyPayloads)([item.target], {
           apiKey: deps.config.YOUTUBE_DATA_API_KEY, requestTimeoutMs: deps.config.YOUTUBE_REQUEST_TIMEOUT_MS,
@@ -380,27 +400,26 @@ export async function sendYouTubeLinkExpansion(
         payload = built && (built as { flags?: number }).flags === MessageFlags.IsComponentsV2
           ? built as YouTubePreviewPayload
           : buildYouTubeComponentsOnlyFallbackPayload(item.target.canonicalUrl);
-        if (usableCachedMedia) {
-          payload = {
-            ...payload,
-            components: replaceYouTubePreviewMedia(payload.components, usableCachedMedia.mediaUrl, { fallback: true }),
-          };
-        }
       }
       if (
         item.target.kind === "video"
-        && !usableCachedMedia
-        && !payload.resolvedMedia
-        && !payload.mediaResolutionError
         && !finalFallbackAttempted
+        && (!payload.resolvedMedia || Boolean(payload.mediaResolutionError))
       ) {
         const resolvedMedia = await resolveFinalFallback();
         if (resolvedMedia) {
+          const { mediaResolutionError: _mediaError, ...payloadWithoutError } = payload;
           payload = {
-            ...payload,
-            components: replaceYouTubePreviewMedia(payload.components, resolvedMedia.mediaUrl, { fallback: true }),
+            ...payloadWithoutError,
+            components: replaceYouTubePreviewMedia(payload.components, resolvedMedia.mediaUrl),
             files: resolvedMedia.files ?? [],
             resolvedMedia,
+          };
+        } else if (payload.mediaResolutionError) {
+          payload = {
+            ...payload,
+            components: replaceYouTubePreviewMedia(payload.components, undefined, { fallback: true }),
+            files: [],
           };
         }
       }
@@ -422,16 +441,20 @@ export async function sendYouTubeLinkExpansion(
       catch (error) {
         if (!useNative) throw error;
         deps.log.warn({ error }, "youtube preview reply error; retrying without native media");
-        const retryMedia = usableCachedMedia?.mediaUrl
-          ? { mediaUrl: usableCachedMedia.mediaUrl }
+        const retryMedia = usableCachedMedia?.mediaMode === "vps"
+          ? undefined
           : await resolveFinalFallback();
         reply = await message.reply({
           ...sendPayload,
-          components: replaceYouTubePreviewMedia(sendPayload.components, retryMedia?.mediaUrl, { fallback: true }),
+          components: replaceYouTubePreviewMedia(
+            sendPayload.components,
+            retryMedia?.mediaUrl,
+            { fallback: !retryMedia },
+          ),
           files: retryMedia?.files ?? [],
         });
-        if (finalFallbackReason) {
-          pendingMedia = { mediaMode: "none", lastError: youtubeGoogleVideoPendingError(finalFallbackReason) };
+        if (!retryMedia) {
+          pendingMedia = { mediaMode: "none", lastError: youtubeGoogleVideoPendingError(finalFallbackReason ?? "discord_send_error") };
         }
       }
       if (previewState && message.guildId) {
@@ -446,11 +469,9 @@ export async function sendYouTubeLinkExpansion(
         try {
           if (!deps.saveReference) throw new Error("youtube cache reference saver is not configured");
           const resolvedDisplayMedia = finalFallbackMedia ?? payloadResolvedMedia;
-          const displayedMedia: YouTubeVideoCachePostMedia = usableCachedMedia ?? (resolvedDisplayMedia
-            && !resolvedDisplayMedia.files?.length
-            && isGoogleVideoUrl(resolvedDisplayMedia.mediaUrl)
-            ? { mediaMode: "google", mediaUrl: resolvedDisplayMedia.mediaUrl, lastError: null }
-            : pendingMedia ?? item.media!);
+          const displayedMedia: YouTubeVideoCachePostMedia = pendingMedia ?? usableCachedMedia ?? (resolvedDisplayMedia?.sourceUrl && isGoogleVideoUrl(resolvedDisplayMedia.sourceUrl)
+            ? { mediaMode: "google", mediaUrl: resolvedDisplayMedia.sourceUrl, lastError: null }
+            : item.media!);
           const repo = deps.cacheReferenceRepo
             ?? deps.createCacheReferenceRepo?.()
             ?? new PostgresYouTubeWatcherRepository(deps.mainPgPool!);
