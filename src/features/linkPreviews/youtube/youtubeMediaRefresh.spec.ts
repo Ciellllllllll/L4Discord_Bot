@@ -6,6 +6,11 @@ import {
   PREVIEW_YOUTUBE_MEDIA_REFRESH_ID,
 } from "./youtubeMediaRefresh.js";
 
+const videoFetcher = async () => new Response(Buffer.from("mp4"), {
+  status: 200,
+  headers: { "content-type": "video/mp4", "content-length": "3" },
+});
+
 function previewComponents(url: string): unknown[] {
   return [{
     type: ComponentType.Container,
@@ -135,6 +140,10 @@ function interactionFixture(options: {
       followUps.push(payload);
       events.push("followUp");
     },
+    async reply(payload: Record<string, unknown>) {
+      followUps.push(payload);
+      events.push("reply");
+    },
   };
   return { interaction, edits, followUps, events, getFetches: () => fetches };
 }
@@ -154,6 +163,13 @@ function interactionFixture(options: {
       resolverOptions.push(options as Record<string, unknown>);
       return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback?id=abcdefghijk" };
     },
+    fetcher: async (url) => {
+      assert.equal(String(url), "https://rr.example.googlevideo.com/videoplayback?id=abcdefghijk");
+      return new Response(Buffer.from("mp4"), {
+        status: 200,
+        headers: { "content-type": "video/mp4", "content-length": "3" },
+      });
+    },
     updateReference: async (messageId, mediaMode, lastError) => {
       assert.equal(messageId, "message-1");
       assert.equal(mediaMode, "google");
@@ -166,7 +182,7 @@ function interactionFixture(options: {
   assert.deepEqual(resolverOptions, [{
     bypassCache: true,
     timeoutMs: 1_234,
-    maxBytes: Number.MAX_SAFE_INTEGER,
+    maxBytes: 10 * 1024 * 1024,
   }]);
   assert.equal(fixture.getFetches(), 2);
   assert.deepEqual(fixture.events, ["defer", "fetch:1", "fetch:2", "edit", "db"]);
@@ -175,12 +191,74 @@ function interactionFixture(options: {
   const edited = JSON.stringify(fixture.edits[0]);
   assert.equal(edited.includes("取得中に更新された本文"), true);
   assert.equal(edited.includes("https://media.example/newer.mp4"), false);
-  assert.equal(edited.includes("https://rr.example.googlevideo.com/videoplayback?id=abcdefghijk"), true);
+  assert.equal(edited.includes("https://rr.example.googlevideo.com/videoplayback?id=abcdefghijk"), false);
+  assert.equal(edited.includes("attachment://youtube-preview.mp4"), true);
   assert.equal(edited.includes("translation-model"), true);
   assert.equal(edited.includes("https://images.example/channel-icon.jpg"), true);
   assert.equal(edited.includes("preview:show-original"), true);
   assert.equal(edited.includes(PREVIEW_YOUTUBE_MEDIA_REFRESH_ID), true);
+  assert.deepEqual(fixture.edits[0]?.attachments, []);
+  assert.equal((fixture.edits[0]?.files as unknown[] | undefined)?.length, 1);
   assert.equal(fixture.followUps.length, 0);
+}
+
+{
+  const fixture = interactionFixture();
+  let release!: () => void;
+  let markStarted!: () => void;
+  const blocker = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  let resolverCalls = 0;
+  const ctx = {
+    config: { GUILD_ID: "guild-1", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
+    client: { user: { id: "bot-1" } },
+    mainPgPool: {},
+    log: { warn() {} },
+  } as never;
+  const first = handleYouTubeMediaRefresh(fixture.interaction as never, ctx, {
+    resolveMedia: async () => {
+      resolverCalls += 1;
+      markStarted();
+      await blocker;
+      return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback?id=busy" };
+    },
+    fetcher: videoFetcher,
+    updateReference: async () => {},
+  });
+  await started;
+  assert.equal(await handleYouTubeMediaRefresh(fixture.interaction as never, ctx, {
+    resolveMedia: async () => {
+      resolverCalls += 1;
+      return { status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback?id=unexpected" };
+    },
+  }), true);
+  assert.equal(resolverCalls, 1);
+  assert.equal(fixture.followUps.length, 1);
+  assert.match(String(fixture.followUps[0]?.content), /再取得中/);
+  release();
+  assert.equal(await first, true);
+}
+
+{
+  const fixture = interactionFixture();
+  let referenceUpdate: [string, string | null] | undefined;
+  await handleYouTubeMediaRefresh(fixture.interaction as never, {
+    config: { GUILD_ID: "guild-1", YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 },
+    client: { user: { id: "bot-1" } },
+    mainPgPool: {},
+    log: { warn() {} },
+  } as never, {
+    resolveMedia: async () => ({ status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback?id=failed" }),
+    fetcher: async () => new Response("unavailable", { status: 503 }),
+    updateReference: async (_messageId, mediaMode, lastError) => {
+      assert.equal(mediaMode, "none");
+      referenceUpdate = [mediaMode, lastError];
+    },
+  });
+  assert.equal(fixture.edits.length, 0);
+  assert.equal(referenceUpdate, undefined);
+  assert.equal(fixture.followUps.length, 1);
+  assert.match(String(fixture.followUps[0]?.content), /再取得できませんでした/);
 }
 
 {
@@ -218,6 +296,7 @@ function interactionFixture(options: {
     log: { warn() {} },
   } as never, {
     resolveMedia: async () => ({ status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback" }),
+    fetcher: videoFetcher,
     updateReference: async () => { referenceUpdates += 1; },
   });
   assert.equal(referenceUpdates, 0);
@@ -237,6 +316,7 @@ for (const latestUrl of [
     log: { warn() {} },
   } as never, {
     resolveMedia: async () => ({ status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback" }),
+    fetcher: videoFetcher,
     updateReference: async () => { referenceUpdates += 1; },
   });
   assert.equal(fixture.edits.length, 0);
@@ -271,6 +351,7 @@ for (const latestUrl of [
     log: { warn() { warnings += 1; } },
   } as never, {
     resolveMedia: async () => ({ status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback" }),
+    fetcher: videoFetcher,
     updateReference: async () => { throw new Error("database unavailable"); },
   });
   assert.equal(fixture.edits.length, 1);
@@ -293,6 +374,7 @@ for (const latestUrl of [
     log: { warn() {} },
   } as never, {
     resolveMedia: async () => ({ status: "ok", mediaUrl: "https://rr.example.googlevideo.com/videoplayback" }),
+    fetcher: videoFetcher,
   });
   assert.equal(fixture.edits.length, 1);
   assert.equal(queries.length, 1);
