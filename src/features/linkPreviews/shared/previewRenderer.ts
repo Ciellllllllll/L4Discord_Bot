@@ -272,9 +272,6 @@ export function replacePreviewMedia(
   const transform = (children: unknown[]): Array<Record<string, unknown>> => children.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const component = value as Record<string, unknown>;
-    if (options.fallback && component.type === ComponentType.Section) {
-      return Array.isArray(component.components) ? transform(component.components) : [];
-    }
     if (Array.isArray(component.components)) component.components = transform(component.components);
     return [component];
   });

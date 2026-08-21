@@ -170,7 +170,8 @@ function textDisplays(value: unknown): Array<Record<string, unknown>> {
   const json = JSON.stringify(replaced);
   assert.equal(json.includes("https://media.example/shared.mp4"), true);
   assert.equal(json.includes("https://expired.example/video.mp4"), false);
-  assert.equal(json.includes(`\"type\":${ComponentType.Section}`), false);
+  assert.equal(json.includes(`\"type\":${ComponentType.Section}`), true);
+  assert.equal(json.includes("https://example.test/channel.jpg"), true);
   assert.equal(json.includes("こんにちは世界"), true);
   assert.equal(findButton(replaced, PREVIEW_SHOW_ORIGINAL_ID)?.label, "原文を表示");
 }
@@ -191,7 +192,7 @@ function textDisplays(value: unknown): Array<Record<string, unknown>> {
   ]);
   assert.equal(JSON.stringify(patched).includes("https://media.example/repaired.mp4"), true);
   assert.equal(JSON.stringify(patched).includes("https://expired.example/video.mp4"), false);
-  assert.equal(JSON.stringify(patched).includes(`\"type\":${ComponentType.Section}`), false);
+  assert.equal(JSON.stringify(patched).includes(`\"type\":${ComponentType.Section}`), true);
   assert.equal(findButton(patched, PREVIEW_SHOW_TRANSLATION_ID)?.label, "翻訳を表示");
 
   const beforeChildren = containerChildren(repairedBeforeToggle);
