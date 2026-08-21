@@ -14,6 +14,11 @@ import {
 } from "./twitter/twitterLinkExpansion.js";
 import { collectTwitterReplyTargets, parseXStatusUrl } from "./twitter/twitterPreviewSource.js";
 import {
+  buildSteamReplyPayloads,
+  sendSteamLinkExpansion,
+} from "./steam/steamLinkExpansion.js";
+import { collectSteamReplyTargets, extractSteamLinks, parseSteamUrl } from "./steam/steamPreviewSource.js";
+import {
   buildYouTubeReplyPayloads,
   prepareYouTubeLinkExpansion,
   sendYouTubeLinkExpansion,
@@ -98,7 +103,37 @@ type LinkPreviewMessageHandlerDeps = {
   saveYouTubeVideoCacheReference?: typeof saveYouTubeVideoCacheReferenceForPost;
   mediaResolver?: YouTubePreviewBuildOptions["mediaResolver"];
   fetcher?: YouTubePreviewBuildOptions["fetcher"];
+  buildSteamReplyPayloads?: typeof buildSteamReplyPayloads;
 };
+
+function extractSteamLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
+  const values: string[] = [String(message.content || "")];
+  for (const embed of message.embeds ?? []) {
+    const raw = typeof (embed as { toJSON?: unknown }).toJSON === "function"
+      ? (embed as { toJSON: () => unknown }).toJSON()
+      : embed;
+    if (!raw || typeof raw !== "object") continue;
+    const value = raw as {
+      url?: unknown;
+      title?: unknown;
+      description?: unknown;
+      fields?: Array<{ name?: unknown; value?: unknown }>;
+      author?: { name?: unknown };
+      footer?: { text?: unknown };
+    };
+    for (const item of [value.url, value.title, value.description]) {
+      if (typeof item === "string") values.push(item);
+    }
+    for (const item of [value.author?.name, value.footer?.text]) {
+      if (typeof item === "string") values.push(item);
+    }
+    for (const field of value.fields ?? []) {
+      if (typeof field.name === "string") values.push(field.name);
+      if (typeof field.value === "string") values.push(field.value);
+    }
+  }
+  return values.flatMap((value) => extractSteamLinks(value));
+}
 
 export class LinkPreviewMessageHandler {
   private readonly deps: Required<LinkPreviewMessageHandlerDeps>;
@@ -112,6 +147,7 @@ export class LinkPreviewMessageHandler {
       saveYouTubeVideoCacheReference: deps.saveYouTubeVideoCacheReference ?? saveYouTubeVideoCacheReferenceForPost,
       mediaResolver: deps.mediaResolver ?? resolveYouTubeVideoMedia,
       fetcher: deps.fetcher ?? fetch,
+      buildSteamReplyPayloads: deps.buildSteamReplyPayloads ?? buildSteamReplyPayloads,
     };
   }
 
@@ -122,55 +158,80 @@ export class LinkPreviewMessageHandler {
     if (settings.auto_reply_excluded_channel_ids?.includes(message.channelId)) return;
 
     const content = String(message.content || "");
+    const directSteamLinks = extractSteamLinksFromMessage(message);
     const twitterTargets = collectTwitterReplyTargets(extractXLinks(content));
     const youtubeTargets = this.ctx.config.YOUTUBE_PREVIEW_ENABLED
       ? collectYouTubeReplyTargets(extractYouTubeLinks(content))
       : [];
-    if (twitterTargets.length === 0 && youtubeTargets.length === 0) return;
+    if (directSteamLinks.length === 0 && twitterTargets.length === 0 && youtubeTargets.length === 0) return;
 
-    const youtubePlan = await prepareYouTubeLinkExpansion(message, youtubeTargets, {
-      production: this.ctx.config.BOT_PROFILE === "production",
-      cache: async (target) => await this.deps.cacheYouTubeVideoForPost(this.ctx, {
-        videoId: target.id!,
-        videoUrl: target.canonicalUrl,
-      }, { attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message) }),
-      waitForNative: async (target) => await waitForNativeYouTubeEmbed(
-        message,
-        target,
-        youtubeTargets.length === 1,
-        this.ctx.client as unknown as { on?: (...args: unknown[]) => unknown; off?: (...args: unknown[]) => unknown },
-      ),
-    });
+    const youtubePlan = youtubeTargets.length > 0
+      ? await prepareYouTubeLinkExpansion(message, youtubeTargets, {
+        production: this.ctx.config.BOT_PROFILE === "production",
+        cache: async (target) => await this.deps.cacheYouTubeVideoForPost(this.ctx, {
+          videoId: target.id!,
+          videoUrl: target.canonicalUrl,
+        }, { attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message) }),
+        waitForNative: async (target) => await waitForNativeYouTubeEmbed(
+          message,
+          target,
+          youtubeTargets.length === 1,
+          this.ctx.client as unknown as { on?: (...args: unknown[]) => unknown; off?: (...args: unknown[]) => unknown },
+        ),
+      })
+      : null;
 
-    try {
-      await message.suppressEmbeds(true);
-    } catch {}
+    if (directSteamLinks.length > 0 || twitterTargets.length > 0 || youtubeTargets.length > 0) {
+      try {
+        await message.suppressEmbeds(true);
+      } catch {}
+    }
 
-    await this.deps.expandTwitterLinks(message, twitterTargets, {
-      db: this.ctx.db,
-      log: this.ctx.log,
-      config: this.ctx.config,
-      aiRouter: this.ctx.aiRouter,
-      buildReplyPayloads: this.deps.buildVxTwitterReplyPayloads,
-    });
-    await sendYouTubeLinkExpansion(message, youtubePlan, {
-      db: this.ctx.db,
-      mainPgPool: this.ctx.mainPgPool,
-      config: this.ctx.config,
-      log: this.ctx.log,
-      aiRouter: this.ctx.aiRouter,
-      buildReplyPayloads: this.deps.buildYouTubeReplyPayloads,
-      attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
-      saveReference: this.deps.saveYouTubeVideoCacheReference,
-      mediaResolver: this.deps.mediaResolver,
-      fetcher: this.deps.fetcher,
-    });
+    const nestedTwitterSteamLinks = twitterTargets.length > 0
+      ? await this.deps.expandTwitterLinks(message, twitterTargets, {
+        db: this.ctx.db,
+        log: this.ctx.log,
+        config: this.ctx.config,
+        aiRouter: this.ctx.aiRouter,
+        buildReplyPayloads: this.deps.buildVxTwitterReplyPayloads,
+      })
+      : [];
+    const nestedYouTubeSteamLinks = youtubePlan
+      ? await sendYouTubeLinkExpansion(message, youtubePlan, {
+        db: this.ctx.db,
+        mainPgPool: this.ctx.mainPgPool,
+        config: this.ctx.config,
+        log: this.ctx.log,
+        aiRouter: this.ctx.aiRouter,
+        buildReplyPayloads: this.deps.buildYouTubeReplyPayloads,
+        attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
+        saveReference: this.deps.saveYouTubeVideoCacheReference,
+        mediaResolver: this.deps.mediaResolver,
+        fetcher: this.deps.fetcher,
+      })
+      : [];
+    const steamTargets = collectSteamReplyTargets([
+      ...directSteamLinks,
+      ...nestedTwitterSteamLinks,
+      ...nestedYouTubeSteamLinks,
+    ]);
+    if (steamTargets.length > 0) {
+      await sendSteamLinkExpansion(message, steamTargets, {
+        db: this.ctx.db,
+        mainPgPool: this.ctx.mainPgPool,
+        config: this.ctx.config,
+        log: this.ctx.log,
+        aiRouter: this.ctx.aiRouter,
+        buildReplyPayloads: this.deps.buildSteamReplyPayloads,
+      });
+    }
   }
 }
 
 type RefreshDeps = {
   buildTwitter?: typeof buildTwitterReplyPayloads;
   buildYouTube?: typeof buildYouTubeReplyPayloads;
+  buildSteam?: typeof buildSteamReplyPayloads;
 };
 
 function componentUrls(components: readonly unknown[]): string[] {
@@ -191,12 +252,29 @@ function componentUrls(components: readonly unknown[]): string[] {
 
 export async function refreshPreviewTranslationState(
   message: Pick<Message, "id" | "components">,
-  ctx: Pick<BotContext, "config" | "log" | "aiRouter">,
+  ctx: Pick<BotContext, "config" | "log" | "aiRouter"> & Partial<Pick<BotContext, "mainPgPool">>,
   guildId: string,
   channelId: string,
   deps: RefreshDeps = {},
 ): Promise<PreviewTranslationStateV1 | null> {
   const urls = componentUrls(message.components);
+  for (const url of urls) {
+    const steam = parseSteamUrl(url);
+    if (!steam) continue;
+    const [payload] = await (deps.buildSteam ?? buildSteamReplyPayloads)([steam], {
+      mainPgPool: ctx.mainPgPool,
+      config: ctx.config,
+      log: ctx.log,
+      aiRouter: ctx.aiRouter,
+      guildId,
+    });
+    if (!payload?.previewState) return null;
+    return {
+      version: 1, messageId: message.id, guildId, channelId,
+      sourceUrl: payload.previewState.document.url,
+      ...payload.previewState,
+    };
+  }
   for (const url of urls) {
     const x = parseXStatusUrl(url);
     if (x) {

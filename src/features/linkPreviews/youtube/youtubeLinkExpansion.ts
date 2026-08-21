@@ -38,6 +38,7 @@ import {
   type YouTubeReplyTarget,
   type YouTubeSourceFetchOptions,
 } from "./youtubePreviewSource.js";
+import { extractSteamLinks } from "../steam/steamPreviewSource.js";
 import { addYouTubeMediaRefreshButton } from "./youtubeMediaRefresh.js";
 import {
   DEFAULT_YOUTUBE_MEDIA_ATTACHMENT_MAX_BYTES,
@@ -58,8 +59,12 @@ export type YouTubePreviewPayload = {
   previewState?: PreviewPipelineState;
   resolvedMedia?: ResolvedMedia;
   mediaResolutionError?: string;
+  detectedSteamLinks?: string[];
 };
-export type YouTubeReplyPayload = MessageCreateOptions & { previewState?: PreviewPipelineState };
+export type YouTubeReplyPayload = MessageCreateOptions & {
+  previewState?: PreviewPipelineState;
+  detectedSteamLinks?: string[];
+};
 
 export type YouTubePreviewBuildOptions = YouTubeSourceFetchOptions & {
   attachmentSizeLimitBytes?: number;
@@ -79,6 +84,7 @@ export type YouTubePreviewPayloadOptions = {
   files?: AttachmentBuilder[];
   fallback?: boolean;
   mediaMode?: "vps" | "google" | "none";
+  detectedSteamLinks?: string[];
 };
 
 function isGoogleVideoUrl(value: string): boolean {
@@ -128,6 +134,7 @@ function payloadFromDocument(
     allowedMentions: { parse: [], repliedUser: false },
     ...(options.files?.length && !options.fallback ? { files: options.files } : {}),
     ...(state ? { previewState: state } : {}),
+    ...(options.detectedSteamLinks?.length ? { detectedSteamLinks: options.detectedSteamLinks } : {}),
   };
 }
 
@@ -242,7 +249,11 @@ export async function buildYouTubeReplyPayloads(
     const resolution = options.mediaMode || !["video", "oembed"].includes(result.preview.kind)
       ? {}
       : await resolveMedia(target, options);
-    return await buildDocumentPayload(document, options, resolution);
+    const payload = await buildDocumentPayload(document, options, resolution);
+    return {
+      ...payload,
+      detectedSteamLinks: extractSteamLinks(result.preview.description ?? ""),
+    };
   }));
 }
 
@@ -341,7 +352,8 @@ export async function sendYouTubeLinkExpansion(
   message: Message,
   plan: PreparedYouTubeLinkExpansion,
   deps: SendYouTubeExpansionDeps,
-): Promise<void> {
+): Promise<string[]> {
+  const detectedSteamLinks: string[] = [];
   for (const item of plan.items) {
     try {
       const useNative = item.nativeEmbed !== null;
@@ -384,6 +396,10 @@ export async function sendYouTubeLinkExpansion(
           ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
           ...(usableCachedMedia ? { mediaMode: usableCachedMedia.mediaMode, mediaUrlOverride: usableCachedMedia.mediaUrl } : {}),
         }, selectedResolution);
+        payload = {
+          ...payload,
+          detectedSteamLinks: extractSteamLinks(item.nativeEmbed?.description ?? ""),
+        };
       } else {
         const [built] = await (deps.buildReplyPayloads ?? buildYouTubeReplyPayloads)([item.target], {
           apiKey: deps.config.YOUTUBE_DATA_API_KEY, requestTimeoutMs: deps.config.YOUTUBE_REQUEST_TIMEOUT_MS,
@@ -424,6 +440,7 @@ export async function sendYouTubeLinkExpansion(
         }
       }
       const previewState = payload.previewState;
+      detectedSteamLinks.push(...(payload.detectedSteamLinks ?? []));
       const payloadResolvedMedia = payload.resolvedMedia;
       if (payload.mediaResolutionError) {
         finalFallbackAttempted = true;
@@ -432,7 +449,13 @@ export async function sendYouTubeLinkExpansion(
       let pendingMedia: YouTubeVideoCachePostMedia | undefined = finalFallbackReason
         ? { mediaMode: "none", lastError: youtubeGoogleVideoPendingError(finalFallbackReason) }
         : undefined;
-      const { previewState: _state, resolvedMedia: _resolvedMedia, mediaResolutionError: _mediaError, ...baseSendPayload } = payload;
+      const {
+        previewState: _state,
+        resolvedMedia: _resolvedMedia,
+        mediaResolutionError: _mediaError,
+        detectedSteamLinks: _detectedSteamLinks,
+        ...baseSendPayload
+      } = payload;
       const sendPayload = pendingMedia
         ? { ...baseSendPayload, components: replaceYouTubePreviewMedia(baseSendPayload.components, undefined, { fallback: true }), files: [] }
         : baseSendPayload;
@@ -482,4 +505,5 @@ export async function sendYouTubeLinkExpansion(
       }
     } catch (error) { deps.log.warn({ error }, "youtube preview reply error"); }
   }
+  return detectedSteamLinks;
 }
