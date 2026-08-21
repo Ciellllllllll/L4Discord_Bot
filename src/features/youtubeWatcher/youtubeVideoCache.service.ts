@@ -128,6 +128,7 @@ export async function cacheYouTubeVideoForPost(
     persistVideo?: typeof persistYouTubeVideo;
     resolveMedia?: (url: string) => Promise<{ status: "ok"; mediaUrl: string } | { status: "fallback"; reason: string }>;
     mediaResolver?: typeof resolveYouTubeVideoMedia;
+    attachmentSizeLimitBytes?: number;
   } = {},
 ): Promise<YouTubeVideoCachePostMedia> {
   if (ctx.config.BOT_PROFILE !== "production") return { mediaMode: "none", lastError: null };
@@ -140,10 +141,15 @@ export async function cacheYouTubeVideoForPost(
     mediaResolution ??= resolveYouTubeVideoMediaWithRetry(url, options, { resolver: baseMediaResolver });
     return mediaResolution;
   };
-  const resolveMedia = deps.resolveMedia ?? ((url) => mediaResolver(url, {
-    timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
-    maxBytes: Number.MAX_SAFE_INTEGER,
-  }));
+  const resolveMedia = deps.resolveMedia ?? (deps.attachmentSizeLimitBytes === undefined
+    ? ((url) => mediaResolver(url, {
+      timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+    }))
+    : ((url) => resolveYouTubeVideoMediaWithRetry(url, {
+      timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+      maxBytes: deps.attachmentSizeLimitBytes,
+    }, { resolver: baseMediaResolver })));
   const fallback = async (lastError: string): Promise<YouTubeVideoCachePostMedia> => {
     try {
       const resolved = await resolveMedia(input.videoUrl);
@@ -191,9 +197,12 @@ export async function cacheYouTubeVideoForPost(
             : {}),
         };
       }
-      return persisted.googleVideoUrl && isGoogleVideoUrl(persisted.googleVideoUrl)
-        ? { mediaMode: "google", mediaUrl: persisted.googleVideoUrl, lastError: persisted.reason }
-        : await fallback(persisted.reason);
+      if (deps.attachmentSizeLimitBytes === undefined
+        && persisted.googleVideoUrl
+        && isGoogleVideoUrl(persisted.googleVideoUrl)) {
+        return { mediaMode: "google", mediaUrl: persisted.googleVideoUrl, lastError: persisted.reason };
+      }
+      return await fallback(persisted.reason);
     });
   } catch (error) {
     ctx.log.warn({ err: error, videoId: input.videoId }, "youtube video cache persistence failed");

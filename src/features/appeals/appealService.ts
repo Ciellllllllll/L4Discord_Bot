@@ -13,7 +13,7 @@ import {
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import type { AppealsRow } from "../../core/db/types.js";
 import {
   attachmentMetaToJson,
@@ -167,8 +167,8 @@ export async function createAppealRecord(
       status: "pending",
       appeal_reason: safeText(appealReason, "-"),
       detecter_incident_id: pending.detecterIncidentId,
-      created_at: sqliteTimestamp() as unknown as Date,
-      updated_at: sqliteTimestamp() as unknown as Date,
+      created_at: nowIso() as unknown as Date,
+      updated_at: nowIso() as unknown as Date,
       reviewer_id: null,
       review_note: null,
       review_message_id: null,
@@ -206,7 +206,7 @@ export async function patchAppeal(
 ): Promise<void> {
   await ctx.ticketDb
     .updateTable("appeals")
-    .set({ ...patch, updated_at: sqliteTimestamp() as unknown as Date })
+    .set({ ...patch, updated_at: nowIso() as unknown as Date })
     .where("id", "=", appealId)
     .execute();
 }
@@ -251,7 +251,7 @@ export async function sendAppealReviewMessage(
     .updateTable("appeals")
     .set({
       review_message_id: sent.id,
-      updated_at: sqliteTimestamp() as unknown as Date,
+      updated_at: nowIso() as unknown as Date,
     })
     .where("id", "=", appeal.id)
     .execute();

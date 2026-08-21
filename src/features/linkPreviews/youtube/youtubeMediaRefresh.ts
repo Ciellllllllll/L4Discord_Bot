@@ -13,11 +13,19 @@ import {
 } from "../../utilities/youtubeVideoMedia.js";
 import { replacePreviewMedia } from "../shared/previewRenderer.js";
 import { parseYouTubeUrl } from "./youtubePreviewSource.js";
+import {
+  downloadYouTubeMediaAttachment,
+  youtubeAttachmentSizeLimitForPremiumTier,
+  type YouTubeMediaAttachmentOptions,
+} from "./youtubeMediaAttachment.js";
 
 export const PREVIEW_YOUTUBE_MEDIA_REFRESH_ID = "preview:youtube-refresh";
+const refreshInFlightMessageIds = new Set<string>();
 
 type YouTubeMediaRefreshDeps = {
   resolveMedia?: typeof resolveYouTubeVideoMediaWithRetry;
+  fetcher?: YouTubeMediaAttachmentOptions["fetcher"];
+  attachmentSizeLimitBytes?: number;
   updateReference?: (
     messageId: string,
     mediaMode: "google",
@@ -113,6 +121,18 @@ async function reportRefreshFailure(interaction: ButtonInteraction): Promise<voi
   await interaction.reply(payload).catch(() => undefined);
 }
 
+async function reportRefreshBusy(interaction: ButtonInteraction): Promise<void> {
+  const payload = {
+    content: "この動画は現在再取得中です。完了してからもう一度お試しください。",
+    flags: MessageFlags.Ephemeral,
+  } as const;
+  if (interaction.deferred || interaction.replied) {
+    await interaction.followUp(payload).catch(() => undefined);
+    return;
+  }
+  await interaction.reply(payload).catch(() => undefined);
+}
+
 export async function handleYouTubeMediaRefresh(
   interaction: ButtonInteraction,
   ctx: BotContext,
@@ -126,6 +146,13 @@ export async function handleYouTubeMediaRefresh(
     || interaction.message.author.id !== ctx.client.user?.id
   ) return false;
 
+  const messageId = interaction.message.id;
+  if (refreshInFlightMessageIds.has(messageId)) {
+    await reportRefreshBusy(interaction);
+    return true;
+  }
+  refreshInFlightMessageIds.add(messageId);
+
   try {
     await interaction.deferUpdate();
     const sourceMessage = await interaction.message.fetch(true);
@@ -135,10 +162,12 @@ export async function handleYouTubeMediaRefresh(
       return true;
     }
 
+    const attachmentSizeLimitBytes = deps.attachmentSizeLimitBytes
+      ?? youtubeAttachmentSizeLimitForPremiumTier(interaction.guild?.premiumTier);
     const resolved = await (deps.resolveMedia ?? resolveYouTubeVideoMediaWithRetry)(videoUrl, {
       bypassCache: true,
       timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
-      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxBytes: attachmentSizeLimitBytes,
     });
     if (resolved.status !== "ok" || !isGoogleVideoMediaUrl(resolved.mediaUrl)) {
       await reportRefreshFailure(interaction);
@@ -151,23 +180,43 @@ export async function handleYouTubeMediaRefresh(
       await reportRefreshFailure(interaction);
       return true;
     }
+
+    const attachment = await downloadYouTubeMediaAttachment(resolved.mediaUrl, {
+      fetcher: deps.fetcher,
+      attachmentSizeLimitBytes,
+      requestTimeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
+    });
+    if (!attachment) {
+      await reportRefreshFailure(interaction);
+      return true;
+    }
     const components = replacePreviewMedia(
       latestComponents,
-      resolved.mediaUrl,
+      attachment.mediaUrl,
       { description: "YouTube video" },
     );
     await latestMessage.edit({
       components,
       flags: MessageFlags.IsComponentsV2,
       allowedMentions: { parse: [], repliedUser: false },
+      files: attachment.files,
+      attachments: [],
     });
 
     try {
       if (deps.updateReference) {
-        await deps.updateReference(interaction.message.id, "google", null);
+        await deps.updateReference(
+          interaction.message.id,
+          "google",
+          null,
+        );
       } else {
         await new PostgresYouTubeWatcherRepository(ctx.mainPgPool)
-          .updateVideoCacheReferenceMedia(interaction.message.id, "google", null);
+          .updateVideoCacheReferenceMedia(
+            interaction.message.id,
+            "google",
+            null,
+          );
       }
     } catch (error) {
       ctx.log.warn({ error, messageId: interaction.message.id }, "youtube media refresh reference update failed");
@@ -177,5 +226,7 @@ export async function handleYouTubeMediaRefresh(
     ctx.log.warn({ error, messageId: interaction.message.id }, "youtube media refresh failed");
     await reportRefreshFailure(interaction);
     return true;
+  } finally {
+    refreshInFlightMessageIds.delete(messageId);
   }
 }

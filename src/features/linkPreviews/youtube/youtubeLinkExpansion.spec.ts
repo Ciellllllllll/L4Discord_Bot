@@ -24,6 +24,10 @@ const translated: PreviewDocumentTranslations = {
     description: { shouldTranslate: true, sourceLanguage: "en", confidence: 1, translatedText: "訳文" },
   },
 };
+const attachmentFetcher = async () => new Response(Buffer.from("mp4"), {
+  status: 200,
+  headers: { "content-type": "video/mp4", "content-length": "3" },
+});
 
 let translations = 0;
 const [built] = await buildYouTubeReplyPayloads([target], {
@@ -143,11 +147,13 @@ for (const media of [
       nativeResolverCalls += 1;
       return { status: "fallback", reason: "must_not_run" };
     },
+    fetcher: attachmentFetcher,
   });
   assert.equal(nativeTranslations, 1);
   assert.equal(apiBuilds, 0);
   assert.equal(JSON.stringify(sent[0]).includes("訳題"), true);
-  assert.equal(JSON.stringify(sent[0]).includes("googlevideo.com"), media.mediaMode === "google");
+  assert.equal(JSON.stringify(sent[0]).includes("googlevideo.com"), false);
+  if (media.mediaMode === "google") assert.equal(JSON.stringify(sent[0]).includes("attachment://youtube-preview.mp4"), true);
   assert.equal(nativeResolverCalls, 0);
   assert.deepEqual(savedNotificationMedia, media);
 }
@@ -178,8 +184,8 @@ const thumbnailOnlyNative: APIEmbed = {
 const googleVideoUrl = "https://rr.example.googlevideo.com/videoplayback?id=video-1";
 const externalMediaFetcher = async (url: string | URL | Request) => {
   assert.equal(String(url), googleVideoUrl);
-  return new Response(null, {
-    headers: { "content-type": "video/mp4", "content-length": "2048" },
+  return new Response(Buffer.from("mp4"), {
+    headers: { "content-type": "video/mp4", "content-length": "3" },
   });
 };
 
@@ -228,7 +234,8 @@ for (const media of [undefined, { mediaMode: "none" as const, lastError: "resolv
   } as never);
   assert.equal(resolverCalls, 2);
   assert.equal(translationCalls, 1);
-  assert.equal(JSON.stringify(sent[0]).includes(googleVideoUrl), true);
+  assert.equal(JSON.stringify(sent[0]).includes(googleVideoUrl), false);
+  assert.equal(JSON.stringify(sent[0]).includes("attachment://youtube-preview.mp4"), true);
   assert.equal(JSON.stringify(sent[0]).includes("訳題"), true);
   if (media) {
     assert.deepEqual(savedMedia, {
@@ -372,7 +379,8 @@ for (const media of [undefined, { mediaMode: "none" as const, lastError: "cache_
   assert.equal(sendAttempts, 2);
   assert.equal(resolverCalls, 1);
   assert.equal(translationCalls, 1);
-  assert.equal(JSON.stringify(sent[0]).includes(googleVideoUrl), true);
+  assert.equal(JSON.stringify(sent[0]).includes(googleVideoUrl), false);
+  assert.equal(JSON.stringify(sent[0]).includes("attachment://youtube-preview.mp4"), true);
   assert.equal(JSON.stringify(sent[0]).includes("訳題"), true);
 }
 
@@ -426,7 +434,8 @@ for (const media of [undefined, { mediaMode: "none" as const, lastError: "cache_
   } as never);
   assert.equal(resolverCalls, 1);
   assert.equal(translationCalls, 1);
-  assert.equal(JSON.stringify(sent[0]).includes(googleVideoUrl), true);
+  assert.equal(JSON.stringify(sent[0]).includes(googleVideoUrl), false);
+  assert.equal(JSON.stringify(sent[0]).includes("attachment://youtube-preview.mp4"), true);
   assert.deepEqual(savedMedia, { mediaMode: "google", mediaUrl: googleVideoUrl, lastError: null });
 }
 

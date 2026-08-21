@@ -100,6 +100,55 @@ assert.deepEqual(sharedCacheMedia, {
   lastError: "download_error",
 });
 
+const limitedResolverMaxBytes: number[] = [];
+const limitedCacheMedia = await cacheYouTubeVideoForPost({
+  config: {
+    BOT_PROFILE: "production",
+    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
+    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
+    ADHD_VIDEO_MIN_FREE_BYTES: 1_000,
+    ADHD_VIDEO_CACHE_MAX_BYTES: 2_000,
+    ADHD_VIDEO_RETENTION_DAYS: 7,
+    YOUTUBE_REQUEST_TIMEOUT_MS: 3_000,
+  },
+  log: { warn: () => undefined },
+} as never, input, {
+  repo: { withVideoCacheLock: async <T>(run: (repo: unknown) => Promise<T>): Promise<T> => run({} as never) },
+  persistVideo: async (
+    candidate: Parameters<typeof persistYouTubeVideo>[0],
+    options: Parameters<typeof persistYouTubeVideo>[1],
+  ) => {
+    const resolved = await options.mediaResolver!(candidate.videoUrl, {
+      timeoutMs: options.timeoutMs,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+    });
+    assert.equal(resolved.status, "ok");
+    return {
+      status: "fallback",
+      reason: "download_error",
+      googleVideoUrl: resolved.mediaUrl,
+      evictedVideoIds: [],
+    };
+  },
+  mediaResolver: async (_url: string, options: { maxBytes?: number } = {}) => {
+    limitedResolverMaxBytes.push(options?.maxBytes ?? -1);
+    return {
+      status: "ok" as const,
+      mediaUrl: options?.maxBytes === 1_024
+        ? "https://rr.example.googlevideo.com/limited.mp4"
+        : "https://rr.example.googlevideo.com/oversized.mp4",
+    };
+  },
+  attachmentSizeLimitBytes: 1_024,
+  maintenance: { fallbackVideos: async () => undefined, restoreCachedVideo: async () => undefined },
+} as never);
+assert.deepEqual(limitedResolverMaxBytes, [Number.MAX_SAFE_INTEGER, 1_024]);
+assert.deepEqual(limitedCacheMedia, {
+  mediaMode: "google",
+  mediaUrl: "https://rr.example.googlevideo.com/limited.mp4",
+  lastError: "download_error",
+});
+
 let notificationResolverCalls = 0;
 const notificationCachedMedia = await cacheYouTubeVideoForPost({
   config: {

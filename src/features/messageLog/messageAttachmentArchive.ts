@@ -3,7 +3,6 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 import { AttachmentBuilder } from "discord.js";
-import type DatabaseLib from "better-sqlite3";
 import type { Message, PartialMessage } from "discord.js";
 import type { Pool } from "pg";
 import type { PgQueryable } from "../../core/db/postgres.js";
@@ -27,25 +26,6 @@ export type StoredAttachmentRow = {
   sha256_hex: string | null;
 };
 
-export function prepareMessageAttachmentStore(db: DatabaseLib.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS message_log_attachment_files (
-      guild_id TEXT NOT NULL,
-      message_id TEXT NOT NULL,
-      attachment_id TEXT NOT NULL,
-      filename TEXT NOT NULL,
-      content_type TEXT,
-      size_bytes INTEGER,
-      kind TEXT,
-      storage_relpath TEXT NOT NULL,
-      sha256_hex TEXT,
-      source_url TEXT,
-      fetched_at TEXT NOT NULL,
-      PRIMARY KEY (guild_id, message_id, attachment_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_ml_att_guild_msg ON message_log_attachment_files(guild_id, message_id);
-  `);
-}
 function normalizeId(v: unknown): string | null {
   const s = String(v ?? "").trim();
   return /^\d+$/.test(s) ? s : null;

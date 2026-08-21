@@ -22,6 +22,7 @@ import {
 } from "./youtube/youtubeLinkExpansion.js";
 import { collectYouTubeReplyTargets, parseYouTubeUrl } from "./youtube/youtubePreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
+import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
 
 const X_DOMAINS = new Set([
   "x.com", "twitter.com", "mobile.twitter.com", "vxtwitter.com", "fxtwitter.com", "fixupx.com",
@@ -35,9 +36,6 @@ const YOUTUBE_URL_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
 const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
-const DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
-const BOOST_TIER_2_ATTACHMENT_SIZE_LIMIT_BYTES = 50 * 1000 * 1000;
-const BOOST_TIER_3_ATTACHMENT_SIZE_LIMIT_BYTES = 100 * 1000 * 1000;
 
 function stripUrlTail(urlText: string): string {
   let url = String(urlText || "").trim();
@@ -89,9 +87,7 @@ export function extractYouTubeLinks(content: string): string[] {
 }
 
 function attachmentSizeLimitForMessage(message: Message): number {
-  if (message.guild?.premiumTier === 3) return BOOST_TIER_3_ATTACHMENT_SIZE_LIMIT_BYTES;
-  if (message.guild?.premiumTier === 2) return BOOST_TIER_2_ATTACHMENT_SIZE_LIMIT_BYTES;
-  return DEFAULT_ATTACHMENT_SIZE_LIMIT_BYTES;
+  return youtubeAttachmentSizeLimitForPremiumTier(message.guild?.premiumTier);
 }
 
 type LinkPreviewMessageHandlerDeps = {
@@ -137,7 +133,7 @@ export class LinkPreviewMessageHandler {
       cache: async (target) => await this.deps.cacheYouTubeVideoForPost(this.ctx, {
         videoId: target.id!,
         videoUrl: target.canonicalUrl,
-      }),
+      }, { attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message) }),
       waitForNative: async (target) => await waitForNativeYouTubeEmbed(
         message,
         target,

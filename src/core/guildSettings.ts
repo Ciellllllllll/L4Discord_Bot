@@ -1,5 +1,5 @@
 import type { Kysely } from "kysely";
-import { sqliteTimestamp } from "./db/sqliteTimestamp.js";
+import { nowIso } from "./db/nowIso.js";
 import type { Database } from "./db/types.js";
 
 export type GuildSettingsData = {
@@ -67,7 +67,7 @@ export async function upsertGuildSettingsData(
       .where("guild_id", "=", guildId)
       .executeTakeFirst();
     const next = { ...parseSettingsObject(existing?.data), ...patch };
-    const now = sqliteTimestamp() as unknown as Date;
+    const now = nowIso() as unknown as Date;
     if (!existing) {
       const inserted = await db
         .insertInto("guild_settings")

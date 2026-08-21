@@ -17,7 +17,7 @@ import {
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { isAdmin } from "../../core/permission.js";
 import {
   ROLE_LABELS,
@@ -123,8 +123,8 @@ export async function handleWerewolfCreate(
       host_id: interaction.user.id,
       phase: state.phase,
       state: JSON.stringify(state) as unknown as Record<string, unknown>,
-      created_at: sqliteTimestamp() as unknown as Date,
-      updated_at: sqliteTimestamp() as unknown as Date,
+      created_at: nowIso() as unknown as Date,
+      updated_at: nowIso() as unknown as Date,
     })
     .execute();
 
@@ -612,7 +612,7 @@ async function saveState(ctx: BotContext, sessionId: string, state: WerewolfStat
     .set({
       phase: state.phase,
       state: JSON.stringify(state) as unknown as Record<string, unknown>,
-      updated_at: sqliteTimestamp() as unknown as Date,
+      updated_at: nowIso() as unknown as Date,
     })
     .where("id", "=", sessionId)
     .execute();

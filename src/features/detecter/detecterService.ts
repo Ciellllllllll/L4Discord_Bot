@@ -16,7 +16,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { createPendingAppealStartContext } from "../appeals/appealPending.js";
 import { buildAppealStartRows } from "../appeals/appealUi.js";
@@ -548,7 +548,7 @@ export class DetecterService {
           action_type: event.punishmentType,
           reason,
           appeal_ticket_id: null,
-          created_at: sqliteTimestamp() as unknown as Date,
+          created_at: nowIso() as unknown as Date,
         })
         .returning("id")
         .executeTakeFirst();

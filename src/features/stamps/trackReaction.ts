@@ -1,7 +1,7 @@
 import type { Message, MessageReaction, PartialMessageReaction, User } from "discord.js";
 import { sql } from "kysely";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 
 type StampUsageItem = {
   id: string;
@@ -42,7 +42,7 @@ async function incrementStampUsage(
   item: StampUsageItem,
   count = 1,
 ): Promise<void> {
-  const now = sqliteTimestamp() as unknown as Date;
+  const now = nowIso() as unknown as Date;
   const amount = normalizeCount(count);
   const name = item.name.slice(0, 128);
 

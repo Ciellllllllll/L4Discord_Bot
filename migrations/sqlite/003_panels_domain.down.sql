@@ -1,6 +1,0 @@
-DROP TABLE IF EXISTS polls;
-DROP TABLE IF EXISTS ai_history;
-DROP TABLE IF EXISTS vc_panel_configs;
-DROP TABLE IF EXISTS announcements;
-DROP TABLE IF EXISTS todos;
-DROP TABLE IF EXISTS reminders;
