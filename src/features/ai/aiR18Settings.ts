@@ -1,5 +1,5 @@
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 
 export async function getAiR18Enabled(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
   const row = await ctx.db
@@ -17,7 +17,7 @@ export async function setAiR18Enabled(
   userId: string,
   enabled: boolean,
 ): Promise<void> {
-  const now = sqliteTimestamp();
+  const now = nowIso();
   await ctx.db
     .insertInto("ai_r18_user_settings")
     .values({

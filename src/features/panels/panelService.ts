@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Guild } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { getGuildSettingsData, upsertGuildSettingsData } from "../../core/guildSettings.js";
 import { reconcileReactionRoleEntriesOnly, reconcileReactionRoleAdminPanel } from "../reactionRoles/reactionRoleService.js";
 import { buildMessageLogPanelPayload, messageLogPanelMessageMatches } from "./adminPanelsPayload.js";
@@ -254,7 +254,7 @@ export async function resetPanelMessagesAndReconcile(ctx: BotContext, guildId: s
             channel_id: ch,
             message_id: "",
             data: pendingJson,
-            created_at: sqliteTimestamp() as unknown as Date,
+            created_at: nowIso() as unknown as Date,
           })
           .execute();
       }

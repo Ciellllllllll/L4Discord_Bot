@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { parsePanelState, serializePanelState, type PanelMessageState } from "./panelState.js";
 
 export type PanelMessageRow = {
@@ -41,7 +41,7 @@ export async function ensurePanelMessageRow(
       channel_id: channelId,
       message_id: "",
       data: JSON.stringify(serializePanelState(pending)) as unknown as Record<string, unknown>,
-      created_at: sqliteTimestamp() as unknown as Date,
+      created_at: nowIso() as unknown as Date,
     })
     .execute();
   return { id, message_id: "", channel_id: channelId, data: pending };

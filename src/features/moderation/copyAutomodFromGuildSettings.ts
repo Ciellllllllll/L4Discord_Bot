@@ -1,6 +1,6 @@
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 
 // 旧 guild_settings.data.automod_settings から専用 DB へ 1 回だけ移行（行が無い場合のみ）。
 
@@ -22,7 +22,7 @@ export async function copyAutomodFromGuildSettingsIfMissing(ctx: BotContext, gui
     .values({
       guild_id: guildId,
       data: JSON.stringify(raw) as unknown as Record<string, unknown>,
-      updated_at: sqliteTimestamp() as unknown as Date,
+      updated_at: nowIso() as unknown as Date,
     })
     .execute();
 }

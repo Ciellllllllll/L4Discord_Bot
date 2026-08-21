@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import type { RemindersRow } from "../../core/db/types.js";
 import { getReminderDb } from "./reminderDb.js";
 import { normalizeEventType, type ReminderEvType, type ReminderStoredData } from "./reminderHubTypes.js";
@@ -87,7 +87,7 @@ export async function createReminderHubEntry(
     title: input.title,
     recurrence: input.recurrence,
   };
-    // SQLite TEXT 列: better-sqlite3 はオブジェクトをバインドできないため JSON 文字列で保存
+    // PostgreSQLのjsonb列へ保存するJSON文字列
 
   const dataJson = JSON.stringify(data);
   await rdb(ctx)
@@ -101,7 +101,7 @@ export async function createReminderHubEntry(
       fire_at: input.fireAt.toISOString(),
       status: "pending",
       data: dataJson as unknown as Record<string, unknown>,
-      created_at: sqliteTimestamp() as unknown as Date,
+      created_at: nowIso() as unknown as Date,
     })
     .execute();
   return id;

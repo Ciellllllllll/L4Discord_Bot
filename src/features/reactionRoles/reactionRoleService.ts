@@ -12,7 +12,7 @@ import type { Kysely } from "kysely";
 import type { BotContext } from "../../bot/context.js";
 import type { AppConfig } from "../../core/config.js";
 import type { Database } from "../../core/db/types.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import { PANEL_KIND_REACTION_ROLE_ADMIN } from "../panels/constants.js";
 import { tryDeleteBotPanelMessage } from "../panels/panelDiscordOps.js";
@@ -371,7 +371,7 @@ export async function insertEntry(
       title: entry.title,
       description: entry.description,
       roles_json: JSON.stringify(entry.roles),
-      created_at: sqliteTimestamp() as unknown as Date,
+      created_at: nowIso() as unknown as Date,
     })
     .execute();
 }

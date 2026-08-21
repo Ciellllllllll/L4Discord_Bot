@@ -14,7 +14,7 @@ import {
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import { isAdmin } from "../../core/permission.js";
 import { clampTimeoutMs, discordVoteDeadlineEmbedLine } from "./executionConstants.js";
 import {
@@ -549,8 +549,8 @@ export async function startTimeoutExtendFlow(
         status: "open",
         state: JSON.stringify(baseState) as unknown as Record<string, unknown>,
         ends_at: null,
-        created_at: sqliteTimestamp() as unknown as Date,
-        updated_at: sqliteTimestamp() as unknown as Date,
+        created_at: nowIso() as unknown as Date,
+        updated_at: nowIso() as unknown as Date,
         state_revision: 0,
       })
       .execute();

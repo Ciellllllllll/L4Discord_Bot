@@ -135,7 +135,7 @@ export class VcTemporaryChannelManager {
     }
   }
 
-    // 起動時: SQLite に残った一時VCをメモリへ載せ、空室なら削除処理へ回す
+    // 起動時: 保存済みの一時VCをメモリへ載せ、空室なら削除処理へ回す
 
   async restoreFromDatabase(expectedGuildId: string): Promise<void> {
     const rows = await this.persistence.listTracked();

@@ -1,5 +1,5 @@
 import type { BotContext } from "../../bot/context.js";
-import { sqliteTimestamp } from "../../core/db/sqliteTimestamp.js";
+import { nowIso } from "../../core/db/nowIso.js";
 import type { AutoModSettings } from "./autoModerationTypes.js";
 
 function defaultModlogChannelId(ctx: BotContext): string {
@@ -82,12 +82,12 @@ export async function updateAutoModSettings(
     .values({
       guild_id: guildId,
       data: JSON.stringify(next) as unknown as Record<string, unknown>,
-      updated_at: sqliteTimestamp() as unknown as Date,
+      updated_at: nowIso() as unknown as Date,
     })
     .onConflict((oc) =>
       oc.column("guild_id").doUpdateSet({
         data: JSON.stringify(next) as unknown as Record<string, unknown>,
-        updated_at: sqliteTimestamp() as unknown as Date,
+        updated_at: nowIso() as unknown as Date,
       }),
     )
     .execute();
