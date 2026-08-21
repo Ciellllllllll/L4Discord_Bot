@@ -12,6 +12,7 @@ import { getGuildSettingsData, upsertGuildSettingsData } from "../core/guildSett
 import { PostgresPacchiRepository } from "../features/pacchi/postgresPacchiRepository.js";
 import { getOptionalPostgresTestUrl } from "../test/postgresTestEnv.js";
 import { closeDatabaseRuntime, createDatabaseRuntime, createDatabaseRuntimeWithCleanup } from "./databaseRuntime.js";
+import { startRuntimeUptime } from "./runtimeUptime.js";
 
 const silentLogger = pino({ enabled: false });
 
@@ -119,6 +120,37 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
     });
     const settingsRevision = await runtime.mainPgPool.query<{ revision: number }>("SELECT revision FROM guild_settings WHERE guild_id = $1", ["guild"]);
     assert.equal(settingsRevision.rows[0]?.revision, 2);
+
+    let now = Date.parse("2026-08-21T01:00:00.000Z");
+    const firstSession = await startRuntimeUptime({
+      pool: runtime.mainPgPool,
+      runtimeKey: "database-runtime-spec",
+      botVersion: "2.0.14",
+      now: () => now,
+      createSessionId: () => "database-runtime-session-1",
+      setInterval: () => ({}) as NodeJS.Timeout,
+    });
+    now += 6_000;
+    await firstSession.stop();
+    const firstRow = await runtime.mainPgPool.query<{ active_seconds: string; bot_version: string; end_reason: string }>(
+      "SELECT active_seconds, bot_version, end_reason FROM bot_runtime_sessions WHERE session_id = $1",
+      ["database-runtime-session-1"],
+    );
+    assert.deepEqual(firstRow.rows, [{ active_seconds: "6", bot_version: "2.0.14", end_reason: "graceful" }]);
+
+    now += 60 * 60 * 1_000;
+    const secondSession = await startRuntimeUptime({
+      pool: runtime.mainPgPool,
+      runtimeKey: "database-runtime-spec",
+      botVersion: "2.0.15",
+      now: () => now,
+      createSessionId: () => "database-runtime-session-2",
+      setInterval: () => ({}) as NodeJS.Timeout,
+    });
+    assert.equal(secondSession.getUptimeSeconds(), 6);
+    await secondSession.stop();
+    assert.equal(Number((await runtime.mainPgPool.query("SELECT COUNT(*) AS count FROM bot_runtime_sessions WHERE runtime_key = $1", ["database-runtime-spec"])).rows[0]?.count), 2);
+
     await closeDatabaseRuntime(runtime);
     await assert.rejects(runtime.mainPgPool.query("SELECT 1"));
     await assert.rejects(sql`SELECT 1`.execute(runtime.db));

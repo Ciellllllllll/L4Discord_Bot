@@ -1,6 +1,7 @@
 import { MessageFlags, type RepliableInteraction } from "discord.js";
 import type { BotContext } from "./context.js";
-import { startPresenceRotation } from "./presence.js";
+import { startPresence } from "./presence.js";
+import { startRuntimeUptime, type RuntimeUptimeController } from "./runtimeUptime.js";
 import { StartupReport } from "./startupReport.js";
 import { syncGuildApplicationCommands } from "./syncCommands.js";
 import { handleSlashCommand } from "../commands/slashHandlers.js";
@@ -41,6 +42,7 @@ import { deleteExpiredPreviewTranslationStates } from "../features/linkPreviews/
 export type RuntimeHandlerHandle = { shutdown(): Promise<void> };
 
 type RuntimeResources = {
+  uptimeController?: RuntimeUptimeController;
   presenceTimer?: NodeJS.Timeout;
   reminderTimer?: NodeJS.Timeout;
   vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
@@ -71,6 +73,7 @@ async function stopRuntimeResources(
   const clearDeferred = options.clearTimeout ?? clearTimeout;
   for (const timer of options.deferredTimers ?? []) await stop(() => clearDeferred(timer));
   if (options.presenceTimer) await stop(() => clear(options.presenceTimer!));
+  if (options.uptimeController) await stop(() => options.uptimeController!.stop());
   if (options.reminderTimer) await stop(() => clear(options.reminderTimer!));
   if (options.vxTwitterPreviewCleanupTimer) await stop(() => clear(options.vxTwitterPreviewCleanupTimer!));
   if (options.gameDealWatcher) await stop(() => options.gameDealWatcher!.stop());
@@ -143,6 +146,7 @@ export function createRuntimeResourceLifecycle(options: {
   shutdownModerationFlows?: () => void | Promise<void>;
 }): RuntimeHandlerHandle & {
   setClientReadyResources(resources: {
+    uptimeController?: RuntimeUptimeController;
     presenceTimer?: NodeJS.Timeout;
     reminderTimer?: NodeJS.Timeout;
     vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
@@ -156,6 +160,7 @@ export function createRuntimeResourceLifecycle(options: {
   isClosed(): boolean;
   scheduleTimeout(callback: () => void, delay: number): void;
 } {
+  let uptimeController: RuntimeUptimeController | undefined;
   let presenceTimer: NodeJS.Timeout | undefined;
   let reminderTimer: NodeJS.Timeout | undefined;
   let vxTwitterPreviewCleanupTimer: NodeJS.Timeout | undefined;
@@ -173,6 +178,7 @@ export function createRuntimeResourceLifecycle(options: {
         await stopRuntimeResources({ ...resources, clearInterval: options.clearInterval });
         return;
       }
+      uptimeController = resources.uptimeController ?? uptimeController;
       presenceTimer = resources.presenceTimer;
       reminderTimer = resources.reminderTimer;
       vxTwitterPreviewCleanupTimer = resources.vxTwitterPreviewCleanupTimer;
@@ -189,7 +195,8 @@ export function createRuntimeResourceLifecycle(options: {
       japaneseWorker = worker;
     },
     async stopClientReadyResources() {
-      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, clearInterval: options.clearInterval };
+      const resources = { uptimeController, presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, clearInterval: options.clearInterval };
+      uptimeController = undefined;
       presenceTimer = undefined;
       reminderTimer = undefined;
       vxTwitterPreviewCleanupTimer = undefined;
@@ -214,7 +221,7 @@ export function createRuntimeResourceLifecycle(options: {
       closed = true;
       try {
         await createRuntimeShutdown({
-          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, japaneseWorker,
+          uptimeController, presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, japaneseWorker,
           vcTemp: options.vcTemp, client: options.client, clearInterval: options.clearInterval,
           clearTimeout: options.clearTimeout, deferredTimers, shutdownModerationFlows: options.shutdownModerationFlows,
         })();
@@ -227,7 +234,8 @@ export function createRuntimeResourceLifecycle(options: {
 
 export async function startClientReadyBackgroundServices(options: {
   lifecycle: ReturnType<typeof createRuntimeResourceLifecycle>;
-  startPresence(): NodeJS.Timeout;
+  startUptime?(): Promise<RuntimeUptimeController>;
+  startPresence(getUptimeSeconds?: () => number): NodeJS.Timeout;
   startReminder(): NodeJS.Timeout;
   startVxTwitterPreviewCleanup?(): NodeJS.Timeout;
   startGameDeal(): GameDealWatcherController;
@@ -237,21 +245,27 @@ export async function startClientReadyBackgroundServices(options: {
   logError(error: unknown, message: string): void;
 }): Promise<boolean> {
   if (options.lifecycle.isClosed()) return false;
-  const presenceTimer = options.startPresence();
-  const reminderTimer = options.startReminder();
-  const vxTwitterPreviewCleanupTimer = options.startVxTwitterPreviewCleanup?.();
-  const gameDealWatcher = options.startGameDeal();
-  await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher });
-  if (options.lifecycle.isClosed()) return false;
+  let uptimeController: RuntimeUptimeController | undefined;
   try {
+    uptimeController = await options.startUptime?.();
+    if (uptimeController) {
+      await options.lifecycle.setClientReadyResources({ uptimeController });
+      if (options.lifecycle.isClosed()) return false;
+    }
+    const presenceTimer = options.startPresence(uptimeController?.getUptimeSeconds);
+    const reminderTimer = options.startReminder();
+    const vxTwitterPreviewCleanupTimer = options.startVxTwitterPreviewCleanup?.();
+    const gameDealWatcher = options.startGameDeal();
+    await options.lifecycle.setClientReadyResources({ uptimeController, presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher });
+    if (options.lifecycle.isClosed()) return false;
     const youtubeVideoCacheMaintenance = await options.startYouTubeVideoCacheMaintenance?.();
     await options.lifecycle.setClientReadyResources({
-      presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, youtubeVideoCacheMaintenance,
+      uptimeController, presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, youtubeVideoCacheMaintenance,
     });
     if (options.lifecycle.isClosed()) return false;
     const lolWatcher = await options.startLolWatcher();
     const youtubeWatcher = options.startYouTubeWatcher();
-    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher });
+    await options.lifecycle.setClientReadyResources({ uptimeController, presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher });
     if (options.lifecycle.isClosed()) return false;
     return true;
   } catch (error) {
@@ -343,7 +357,13 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
     }
     const started = await startClientReadyBackgroundServices({
       lifecycle,
-      startPresence: () => startPresenceRotation(client, log, config.BOT_VERSION),
+      startUptime: () => startRuntimeUptime({
+        pool: ctx.mainPgPool,
+        runtimeKey: config.BOT_PROFILE,
+        botVersion: config.BOT_VERSION,
+        log,
+      }),
+      startPresence: (getUptimeSeconds) => startPresence(client, log, getUptimeSeconds),
       startReminder: () => startReminderScheduler(ctx),
       startVxTwitterPreviewCleanup: () => {
         return startPreviewStateCleanup({

@@ -12,6 +12,7 @@ import { createPgPool } from "../core/db/postgres.js";
 import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
 import { applyPostgresMigrations, type PostgresMigration } from "../core/db/postgresMigrations.js";
 import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabase } from "../core/db/types.js";
+import { ensurePostgresRuntimeUptimeSchema } from "./runtimeUptime.js";
 import { ensurePostgresAiHistorySchema } from "../features/ai/aiHistorySchema.js";
 import { ensurePostgresAiProviderSchema, PostgresAiProviderBudgetRepository, PostgresAiProviderSettingsRepository } from "../features/ai/postgresAiProviderRepository.js";
 import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
@@ -125,6 +126,7 @@ async function createDatabaseRuntimeUnsafe(
     { version: 13, name: "youtube_watcher_durable_media", apply: migratePostgresYouTubeWatcherDurableMedia },
     { version: 14, name: "youtube_video_cache_references", apply: migratePostgresYouTubeVideoCacheReferences },
     { version: 15, name: "preview_translation_states", apply: migratePostgresPreviewTranslationStates },
+    { version: 16, name: "runtime_uptime_sessions", apply: ensurePostgresRuntimeUptimeSchema },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);
