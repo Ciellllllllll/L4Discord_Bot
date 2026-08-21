@@ -120,17 +120,7 @@ const profileOverridableKeys = [
   "OPENAI_FALLBACK_THRESHOLD",
   "OPENAI_USAGE_CACHE_MS",
   "OPENAI_MAX_COMPLETION_TOKENS",
-  "DATABASE_PATH",
-  "MESSAGE_LOG_DB_PATH",
-  "LOG_DB_PATH",
-  "MESSAGE_ATTACHMENT_STORE_DB_PATH",
   "MESSAGE_ATTACHMENT_FILES_DIR",
-  "TICKET_DATABASE_PATH",
-  "VC_TIME_DATABASE_PATH",
-  "AI_HISTORY_DATABASE_PATH",
-  "AUTOMODERATION_DATABASE_PATH",
-  "REMINDER_DATABASE_PATH",
-  "REMINDER_DB_PATH",
   "PROMPT_FILE_PATH",
   "USER_PROMPT_DIR",
   "COLD_LAUGH_STORE_PATH",
@@ -186,15 +176,7 @@ function profilePrefix(profile: BotProfile): "PRODUCTION" | "DEBUG" {
 function profileDataDefaults(profile: BotProfile): Record<string, string> {
   const base = `data/${profile}`;
   return {
-    DATABASE_PATH: `${base}/l4discord.sqlite`,
-    MESSAGE_LOG_DB_PATH: `${base}/message.db`,
-    MESSAGE_ATTACHMENT_STORE_DB_PATH: `${base}/message_attachment_store.db`,
     MESSAGE_ATTACHMENT_FILES_DIR: `${base}/message_log_attachments`,
-    TICKET_DATABASE_PATH: `${base}/ticket.db`,
-    VC_TIME_DATABASE_PATH: `${base}/vc_time.db`,
-    AI_HISTORY_DATABASE_PATH: `${base}/AI_History.db`,
-    AUTOMODERATION_DATABASE_PATH: `${base}/Automoderation.db`,
-    REMINDER_DATABASE_PATH: `${base}/reminder.db`,
     USER_PROMPT_DIR: `${base}/AI/prompt/user`,
     COLD_LAUGH_STORE_PATH: `${base}/server/json/cold_laugh_counts.json`,
     ADHD_VIDEO_FILES_DIR: `${base}/adhd-videos`,
@@ -240,24 +222,11 @@ const envSchema = z.object({
   // 未設定時は NODE_ENV に従い、production 以外は debug、production は info。
 
   LOG_DEBUG: z.preprocess(envOptionalLogDebug, z.boolean().optional()),
-    // メイン SQLite。相対パスはリポジトリルート（package.json と同じ階層）基準
-
-  DATABASE_PATH: z.string().min(1).default("data/l4discord.sqlite"),
-    // メッセージログ専用 DB（既定: data/message.db）。環境変数 LOG_DB_PATH でも上書き可（DiscordBOTv2 互換）
-
-  MESSAGE_LOG_DB_PATH: z.string().min(1).default("data/message.db"),
-    // 添付ファイルのローカル複製メタ用 DB（message.db のスキーマは変更しない）。既定: data/message_attachment_store.db
-
-  MESSAGE_ATTACHMENT_STORE_DB_PATH: z.string().min(1).default("data/message_attachment_store.db"),
-    // 上記の実体ファイル保存先（相対はリポジトリルート基準）。既定: data/message_log_attachments
-
+    // 添付ファイルの実体保存先（相対はリポジトリルート基準）。既定: data/message_log_attachments
   MESSAGE_ATTACHMENT_FILES_DIR: z.string().min(1).default("data/message_log_attachments"),
     // メッセージログ取り込み時に Discord CDN から添付をダウンロードして保存する（既定: オン）
 
   MESSAGE_ATTACHMENT_ARCHIVE_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
-    // Modmail / 異議申し立て / 汎用 tickets 専用 DB（既定: data/ticket.db）
-
-  TICKET_DATABASE_PATH: z.string().min(1).default("data/ticket.db"),
   ADMIN_ROLE_ID: z.string().min(1),
   /** 処刑フロー: 各投票の秒数（DiscordBOTv2 の EXEC_VOTE_SECONDS 相当、既定 20） */
   EXEC_VOTE_SECONDS: z.coerce.number().int().min(5).max(86_400).default(20),
@@ -387,24 +356,12 @@ const envSchema = z.object({
   ),
   COMMAND_SYNC_DEBOUNCE_MS: z.coerce.number().int().min(0).default(0),
   GUILD_MISMATCH_POLICY: z.enum(["warn"]).optional(),
-    // VC 滞在ログ専用 DB（相対はリポジトリルート基準。既定: data/vc_time.db）
-
-  VC_TIME_DATABASE_PATH: z.string().min(1).default("data/vc_time.db"),
     // VC ランキングの「今日／週／月」の境界に使う IANA タイムゾーン（既定: Asia/Tokyo）
 
   VC_TIME_RANKING_TIMEZONE: z.string().min(1).default("Asia/Tokyo"),
     // 一時VCを作成するカテゴリID（未設定時は既存VCから自動推定）
 
   VC_CREATE_CATEGORY_ID: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.string().optional()),
-    // /q 会話履歴専用 DB（既定: data/AI_History.db）
-
-  AI_HISTORY_DATABASE_PATH: z.string().min(1).default("data/AI_History.db"),
-    // 自動モデレーション設定専用 DB（既定: data/Automoderation.db）
-
-  AUTOMODERATION_DATABASE_PATH: z.string().min(1).default("data/Automoderation.db"),
-    // リマインダーハブ専用 DB（既定: data/reminder.db）。REMINDER_DB_PATH でも上書き可（DiscordBOTv2 互換）
-
-  REMINDER_DATABASE_PATH: z.string().min(1).default("data/reminder.db"),
     // リアクションロール管理パネル（作成/編集/削除）を置くテキストチャンネル ID。
   // REACTION_ROLE_OUTPUT_CHANNEL_ID（DiscordBOTv2 互換）でも指定可。
 
@@ -550,14 +507,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ...profiledEnv,
     OPENAI_MODEL_GPT56: profiledEnv.OPENAI_MODEL_GPT56 || profiledEnv.OPENAI_MODEL,
     JAPANESE_WORKER_ENABLED: japaneseWorkerEnabled,
-    MESSAGE_LOG_DB_PATH:
-      profiledEnv.MESSAGE_LOG_DB_PATH ||
-      profiledEnv.LOG_DB_PATH ||
-      profileDataDefaults(resolveBotProfile(profiledEnv)).MESSAGE_LOG_DB_PATH,
-    REMINDER_DATABASE_PATH:
-      profiledEnv.REMINDER_DATABASE_PATH ||
-      profiledEnv.REMINDER_DB_PATH ||
-      profileDataDefaults(resolveBotProfile(profiledEnv)).REMINDER_DATABASE_PATH,
   };
   const parsed = envSchema.safeParse(envWithLogDefaults);
   if (!parsed.success) {
@@ -590,15 +539,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     DISCORD_TOKEN: discordToken,
     GUILD_ID: guildId,
     OWNER_ID: ownerId,
-    DATABASE_PATH: R(data.DATABASE_PATH),
-    MESSAGE_LOG_DB_PATH: R(data.MESSAGE_LOG_DB_PATH),
-    MESSAGE_ATTACHMENT_STORE_DB_PATH: R(data.MESSAGE_ATTACHMENT_STORE_DB_PATH),
     MESSAGE_ATTACHMENT_FILES_DIR: R(data.MESSAGE_ATTACHMENT_FILES_DIR),
-    TICKET_DATABASE_PATH: R(data.TICKET_DATABASE_PATH),
-    VC_TIME_DATABASE_PATH: R(data.VC_TIME_DATABASE_PATH),
-    AI_HISTORY_DATABASE_PATH: R(data.AI_HISTORY_DATABASE_PATH),
-    AUTOMODERATION_DATABASE_PATH: R(data.AUTOMODERATION_DATABASE_PATH),
-    REMINDER_DATABASE_PATH: R(data.REMINDER_DATABASE_PATH),
     PROMPT_FILE_PATH: R(data.PROMPT_FILE_PATH),
     USER_PROMPT_DIR: R(data.USER_PROMPT_DIR),
     COLD_LAUGH_STORE_PATH: R(data.COLD_LAUGH_STORE_PATH),
