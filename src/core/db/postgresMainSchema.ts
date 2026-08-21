@@ -216,7 +216,7 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
       message_id text PRIMARY KEY,
       guild_id text NOT NULL,
       channel_id text NOT NULL,
-      source_kind text NOT NULL CHECK (source_kind IN ('x', 'youtube')),
+      source_kind text NOT NULL CHECK (source_kind IN ('x', 'youtube', 'steam')),
       source_url text NOT NULL,
       document jsonb NOT NULL,
       translations jsonb NOT NULL,
@@ -225,5 +225,18 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
       updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_preview_translation_states_expires ON preview_translation_states (expires_at);
+
+    CREATE TABLE IF NOT EXISTS steam_exchange_rates (
+      rate_date date NOT NULL,
+      rate numeric(12, 6),
+      status text NOT NULL CHECK (status IN ('pending', 'succeeded', 'failed')),
+      attempted_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      fetched_at timestamptz,
+      error_message text,
+      PRIMARY KEY (rate_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_steam_exchange_rates_latest
+      ON steam_exchange_rates (rate_date DESC)
+      WHERE status = 'succeeded' AND rate IS NOT NULL;
   `);
 }

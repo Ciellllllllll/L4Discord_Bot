@@ -37,6 +37,8 @@ import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDele
 import { scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { deleteExpiredVxTwitterPreviewStates } from "../features/utilities/vxtwitterPreviewState.js";
 import { deleteExpiredPreviewTranslationStates } from "../features/linkPreviews/shared/previewState.repository.js";
+import { SteamExchangeRateRepository } from "../features/steam/steamExchangeRateRepository.js";
+import { startSteamExchangeRateUpdater, type SteamExchangeRateUpdaterController } from "../features/steam/steamExchangeRateUpdater.js";
 
 export type RuntimeHandlerHandle = { shutdown(): Promise<void> };
 
@@ -45,6 +47,7 @@ type RuntimeResources = {
   reminderTimer?: NodeJS.Timeout;
   vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
   gameDealWatcher?: GameDealWatcherController;
+  steamExchangeRateUpdater?: SteamExchangeRateUpdaterController | null;
   clearInterval?: (timer: NodeJS.Timeout) => void;
   clearTimeout?: (timer: NodeJS.Timeout) => void;
   deferredTimers?: Iterable<NodeJS.Timeout>;
@@ -74,6 +77,7 @@ async function stopRuntimeResources(
   if (options.reminderTimer) await stop(() => clear(options.reminderTimer!));
   if (options.vxTwitterPreviewCleanupTimer) await stop(() => clear(options.vxTwitterPreviewCleanupTimer!));
   if (options.gameDealWatcher) await stop(() => options.gameDealWatcher!.stop());
+  if (options.steamExchangeRateUpdater) await stop(() => options.steamExchangeRateUpdater!.stop());
   if (options.youtubeVideoCacheMaintenance) await stop(() => options.youtubeVideoCacheMaintenance!.stop());
   if (options.lolWatcher) await stop(() => options.lolWatcher!.stop());
   if (options.youtubeWatcher) await stop(() => options.youtubeWatcher!.stop());
@@ -147,6 +151,7 @@ export function createRuntimeResourceLifecycle(options: {
     reminderTimer?: NodeJS.Timeout;
     vxTwitterPreviewCleanupTimer?: NodeJS.Timeout;
     gameDealWatcher?: GameDealWatcherController;
+    steamExchangeRateUpdater?: SteamExchangeRateUpdaterController | null;
     lolWatcher?: { stop(): void | Promise<void> } | null;
     youtubeVideoCacheMaintenance?: YouTubeVideoCacheMaintenanceController | null;
     youtubeWatcher?: { stop(): void | Promise<void> } | null;
@@ -160,6 +165,7 @@ export function createRuntimeResourceLifecycle(options: {
   let reminderTimer: NodeJS.Timeout | undefined;
   let vxTwitterPreviewCleanupTimer: NodeJS.Timeout | undefined;
   let gameDealWatcher: GameDealWatcherController | undefined;
+  let steamExchangeRateUpdater: SteamExchangeRateUpdaterController | null = null;
   let lolWatcher: { stop(): void | Promise<void> } | null = null;
   let youtubeVideoCacheMaintenance: YouTubeVideoCacheMaintenanceController | null = null;
   let youtubeWatcher: { stop(): void | Promise<void> } | null = null;
@@ -177,6 +183,7 @@ export function createRuntimeResourceLifecycle(options: {
       reminderTimer = resources.reminderTimer;
       vxTwitterPreviewCleanupTimer = resources.vxTwitterPreviewCleanupTimer;
       gameDealWatcher = resources.gameDealWatcher;
+      if ("steamExchangeRateUpdater" in resources) steamExchangeRateUpdater = resources.steamExchangeRateUpdater ?? null;
       lolWatcher = resources.lolWatcher ?? null;
       youtubeVideoCacheMaintenance = resources.youtubeVideoCacheMaintenance ?? null;
       youtubeWatcher = resources.youtubeWatcher ?? null;
@@ -189,11 +196,12 @@ export function createRuntimeResourceLifecycle(options: {
       japaneseWorker = worker;
     },
     async stopClientReadyResources() {
-      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, clearInterval: options.clearInterval };
+      const resources = { presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, steamExchangeRateUpdater, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, clearInterval: options.clearInterval };
       presenceTimer = undefined;
       reminderTimer = undefined;
       vxTwitterPreviewCleanupTimer = undefined;
       gameDealWatcher = undefined;
+      steamExchangeRateUpdater = null;
       lolWatcher = null;
       youtubeVideoCacheMaintenance = null;
       youtubeWatcher = null;
@@ -214,7 +222,7 @@ export function createRuntimeResourceLifecycle(options: {
       closed = true;
       try {
         await createRuntimeShutdown({
-          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, japaneseWorker,
+          presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, steamExchangeRateUpdater, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher, japaneseWorker,
           vcTemp: options.vcTemp, client: options.client, clearInterval: options.clearInterval,
           clearTimeout: options.clearTimeout, deferredTimers, shutdownModerationFlows: options.shutdownModerationFlows,
         })();
@@ -231,6 +239,7 @@ export async function startClientReadyBackgroundServices(options: {
   startReminder(): NodeJS.Timeout;
   startVxTwitterPreviewCleanup?(): NodeJS.Timeout;
   startGameDeal(): GameDealWatcherController;
+  startSteamExchangeRateUpdater?(): SteamExchangeRateUpdaterController;
   startYouTubeVideoCacheMaintenance?(): Promise<YouTubeVideoCacheMaintenanceController>;
   startLolWatcher(): Promise<{ stop(): void | Promise<void> } | null>;
   startYouTubeWatcher(): { stop(): void | Promise<void> } | null;
@@ -241,17 +250,18 @@ export async function startClientReadyBackgroundServices(options: {
   const reminderTimer = options.startReminder();
   const vxTwitterPreviewCleanupTimer = options.startVxTwitterPreviewCleanup?.();
   const gameDealWatcher = options.startGameDeal();
-  await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher });
+  const steamExchangeRateUpdater = options.startSteamExchangeRateUpdater?.();
+  await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, steamExchangeRateUpdater });
   if (options.lifecycle.isClosed()) return false;
   try {
     const youtubeVideoCacheMaintenance = await options.startYouTubeVideoCacheMaintenance?.();
     await options.lifecycle.setClientReadyResources({
-      presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, youtubeVideoCacheMaintenance,
+      presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, steamExchangeRateUpdater, youtubeVideoCacheMaintenance,
     });
     if (options.lifecycle.isClosed()) return false;
     const lolWatcher = await options.startLolWatcher();
     const youtubeWatcher = options.startYouTubeWatcher();
-    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher });
+    await options.lifecycle.setClientReadyResources({ presenceTimer, reminderTimer, vxTwitterPreviewCleanupTimer, gameDealWatcher, steamExchangeRateUpdater, lolWatcher, youtubeVideoCacheMaintenance, youtubeWatcher });
     if (options.lifecycle.isClosed()) return false;
     return true;
   } catch (error) {
@@ -353,6 +363,10 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
         });
       },
       startGameDeal: () => startGameDealWatcher(ctx),
+      startSteamExchangeRateUpdater: () => startSteamExchangeRateUpdater({
+        repository: new SteamExchangeRateRepository(ctx.mainPgPool, ctx.log),
+        log: ctx.log,
+      }),
       startYouTubeVideoCacheMaintenance: shouldStartYouTubeVideoCacheMaintenance(config)
         ? () => createYouTubeVideoCacheMaintenanceForContext(ctx).start()
         : undefined,

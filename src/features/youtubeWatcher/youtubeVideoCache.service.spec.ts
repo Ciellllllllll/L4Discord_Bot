@@ -62,7 +62,8 @@ async function run(): Promise<void> {
   await service.fallbackVideos(["video-1"]);
   assert.equal(resolverCalls, 1);
   assert.equal(edits.length, 2);
-  assert.equal(edits.every((payload) => JSON.stringify(payload).includes('"type":11') === false), true);
+  assert.equal(edits.every((payload) => JSON.stringify(payload).includes('"type":11')), true);
+  assert.equal(edits.every((payload) => JSON.stringify(payload).includes("https://yt3.ggpht.com/icon.jpg")), true);
   assert.deepEqual(updates.map(([id, mode]) => [id, mode]), [["message-1", "google"], ["message-2", "google"]]);
 
   let thumbnailFallbackEdit: unknown;
