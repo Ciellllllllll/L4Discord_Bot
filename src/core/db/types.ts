@@ -310,13 +310,22 @@ export interface PreviewTranslationStatesRow {
   message_id: string;
   guild_id: string;
   channel_id: string;
-  source_kind: "x" | "youtube";
+  source_kind: "x" | "youtube" | "steam";
   source_url: string;
   document: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
   translations: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
   expires_at: Date;
   created_at: Date;
   updated_at: Date;
+}
+
+export interface SteamExchangeRatesRow {
+  rate_date: string;
+  rate: string | null;
+  status: "pending" | "succeeded" | "failed";
+  attempted_at: Date;
+  fetched_at: Date | null;
+  error_message: string | null;
 }
 
 export interface PollsRow {
@@ -391,4 +400,5 @@ export interface Database {
   anonymous_survey_user_state: AnonymousSurveyUserStateRow;
   vx_twitter_preview_states: VxTwitterPreviewStatesRow;
   preview_translation_states: PreviewTranslationStatesRow;
+  steam_exchange_rates: SteamExchangeRatesRow;
 }

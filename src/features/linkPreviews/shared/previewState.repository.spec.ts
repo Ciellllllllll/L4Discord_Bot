@@ -264,7 +264,7 @@ test("v15 migration creates the constrained state table and idempotently wraps u
   } as never);
   const sql = queries.join("\n");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS preview_translation_states/i);
-  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube'\)\)/i);
+  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam'\)\)/i);
   assert.match(sql, /idx_preview_translation_states_expires/i);
   assert.match(sql, /jsonb_build_object\('version', 0, 'source', 'x', 'legacyTweet', tweet\)/i);
   assert.match(sql, /jsonb_build_object\('version', 0, 'source', 'x', 'legacyTranslations', translations\)/i);
@@ -281,8 +281,19 @@ test("a newly created PostgreSQL main schema includes the common preview state t
   } as never);
   const sql = queries.join("\n");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS preview_translation_states/i);
-  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube'\)\)/i);
+  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam'\)\)/i);
   assert.match(sql, /idx_preview_translation_states_expires/i);
+});
+
+test("v16 migration extends preview states to Steam", async () => {
+  const { migratePostgresSteamPreviewSupport } = await import("./previewState.repository.js");
+  const queries: string[] = [];
+  await migratePostgresSteamPreviewSupport({
+    query: async (sql: string) => { queries.push(sql); return { rows: [], rowCount: 0 }; },
+  } as never);
+  const sql = queries.join("\n");
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check/i);
+  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam'\)\)/i);
 });
 
 test("v15 backfills only active X rows, preserves expiry, and does not overwrite on rerun", async () => {

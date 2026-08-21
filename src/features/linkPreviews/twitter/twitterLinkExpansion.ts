@@ -22,6 +22,7 @@ import {
   type TweetPreview,
   type TwitterReplyTarget,
 } from "./twitterPreviewSource.js";
+import { extractSteamLinks } from "../steam/steamPreviewSource.js";
 
 type LoggerLike = {
   warn: (obj: unknown, msg?: string) => void;
@@ -33,6 +34,7 @@ export type TwitterPreviewPayload = {
   components: APIMessageTopLevelComponent[];
   allowedMentions: { parse: []; repliedUser: false };
   previewState?: PreviewPipelineState;
+  detectedSteamLinks?: string[];
 };
 
 export type TwitterReplyPayload = MessageCreateOptions & {
@@ -115,12 +117,17 @@ export async function buildTwitterReplyPayloads(
     const built = await buildTranslatedPreview(document, {
       translate: async () => await translateForTwitter(document, result.tweet, options),
     });
+    const detectedSteamLinks = extractSteamLinks([
+      result.tweet.text,
+      result.tweet.quote?.text ?? "",
+    ].join("\n"));
     return {
       embeds: [],
       flags: MessageFlags.IsComponentsV2,
       components: built.components,
       allowedMentions: { parse: [], repliedUser: false },
       ...(built.state ? { previewState: built.state } : {}),
+      ...(detectedSteamLinks.length > 0 ? { detectedSteamLinks } : {}),
     } satisfies TwitterPreviewPayload;
   }));
 }
@@ -138,7 +145,7 @@ export async function expandTwitterLinks(
   message: Message,
   targets: readonly TwitterReplyTarget[],
   deps: TwitterExpansionDeps,
-): Promise<void> {
+): Promise<string[]> {
   const build = deps.buildReplyPayloads ?? buildTwitterReplyPayloads;
   const payloads = await build(targets, {
     ...(deps.config ? { config: deps.config } : {}),
@@ -146,10 +153,12 @@ export async function expandTwitterLinks(
     aiRouter: deps.aiRouter,
     guildId: message.guildId ?? deps.config?.GUILD_ID,
   });
+  const detectedSteamLinks: string[] = [];
   for (const payload of payloads) {
     try {
       const previewState = (payload as TwitterPreviewPayload).previewState;
-      const { previewState: _previewState, ...replyPayload } = payload as TwitterPreviewPayload;
+      detectedSteamLinks.push(...((payload as TwitterPreviewPayload).detectedSteamLinks ?? []));
+      const { previewState: _previewState, detectedSteamLinks: _detectedSteamLinks, ...replyPayload } = payload as TwitterPreviewPayload;
       const reply = await message.reply(replyPayload);
       if (!previewState || !message.guildId) continue;
       try {
@@ -168,4 +177,5 @@ export async function expandTwitterLinks(
       deps.log.warn({ err: String(err) }, "twitter preview reply error");
     }
   }
+  return detectedSteamLinks;
 }
