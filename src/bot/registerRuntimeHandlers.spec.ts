@@ -73,6 +73,18 @@ test("runtime shutdown stops timers, watcher, worker, VC sweep, and Discord clie
   assert.deepEqual(calls, ["presence", "reminder", "deals", "lol", "worker", "vc", "client"]);
 });
 
+test("runtime shutdown stops the uptime controller before destroying the Discord client", async () => {
+  const calls: string[] = [];
+  const shutdown = createRuntimeShutdown({
+    uptimeController: { getUptimeSeconds: () => 0, stop: async () => { calls.push("uptime"); } },
+    vcTemp: { stopSweep: () => { calls.push("vc"); } },
+    client: { destroy: () => { calls.push("client"); } },
+  });
+
+  await shutdown();
+  assert.deepEqual(calls, ["uptime", "vc", "client"]);
+});
+
 test("runtime shutdown stops resources registered after clientReady", async () => {
   const calls: string[] = [];
   const lifecycle = createRuntimeResourceLifecycle({
@@ -175,6 +187,38 @@ test("closed lifecycle prevents clientReady background services from starting", 
 
   assert.equal(started, false);
   assert.deepEqual(calls, []);
+});
+
+test("clientReady background services start uptime before Presence and stop it with the lifecycle", async () => {
+  const calls: string[] = [];
+  const lifecycle = createRuntimeResourceLifecycle({
+    vcTemp: { stopSweep: () => undefined },
+    client: { destroy: () => undefined },
+  });
+  const uptimeController = {
+    getUptimeSeconds: () => 12,
+    stop: async () => { calls.push("uptime:stop"); },
+  };
+
+  const started = await startClientReadyBackgroundServices({
+    lifecycle,
+    startUptime: async () => { calls.push("uptime:start"); return uptimeController; },
+    startPresence: (getUptimeSeconds) => {
+      assert.equal(getUptimeSeconds?.(), 12);
+      calls.push("presence");
+      return {} as NodeJS.Timeout;
+    },
+    startReminder: () => ({} as NodeJS.Timeout),
+    startGameDeal: () => ({ stop: async () => undefined }),
+    startLolWatcher: async () => null,
+    startYouTubeWatcher: () => null,
+    logError: () => undefined,
+  });
+
+  assert.equal(started, true);
+  assert.deepEqual(calls, ["uptime:start", "presence"]);
+  await lifecycle.shutdown();
+  assert.deepEqual(calls, ["uptime:start", "presence", "uptime:stop"]);
 });
 
 test("Lol watcher startup failure stops already registered clientReady timers", async () => {
