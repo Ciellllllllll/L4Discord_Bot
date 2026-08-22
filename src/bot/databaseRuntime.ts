@@ -12,6 +12,7 @@ import { createPgPool } from "../core/db/postgres.js";
 import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
 import { applyPostgresMigrations, type PostgresMigration } from "../core/db/postgresMigrations.js";
 import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabase } from "../core/db/types.js";
+import { ensurePostgresRuntimeUptimeSchema } from "./runtimeUptime.js";
 import { ensurePostgresAiHistorySchema } from "../features/ai/aiHistorySchema.js";
 import { ensurePostgresAiProviderSchema, PostgresAiProviderBudgetRepository, PostgresAiProviderSettingsRepository } from "../features/ai/postgresAiProviderRepository.js";
 import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
@@ -132,6 +133,7 @@ async function createDatabaseRuntimeUnsafe(
       await migratePostgresSteamPreviewSupport(pool);
       await ensurePostgresSteamExchangeRateSchema(pool);
     } },
+    { version: 17, name: "runtime_uptime_sessions", apply: ensurePostgresRuntimeUptimeSchema },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);
