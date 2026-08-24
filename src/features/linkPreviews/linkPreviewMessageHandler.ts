@@ -172,6 +172,39 @@ function extractGithubLinksFromMessage(message: Pick<Message, "content" | "embed
   return values.flatMap((value) => extractGithubLinks(value));
 }
 
+function safeHttpsUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function extractGithubEmbedImageUrls(
+  message: Pick<Message, "embeds">,
+): Map<string, string> {
+  const images = new Map<string, string>();
+  for (const embed of message.embeds ?? []) {
+    const raw = typeof (embed as { toJSON?: unknown }).toJSON === "function"
+      ? (embed as { toJSON: () => unknown }).toJSON()
+      : embed;
+    if (!raw || typeof raw !== "object") continue;
+    const value = raw as {
+      url?: unknown;
+      image?: { url?: unknown };
+      thumbnail?: { url?: unknown };
+    };
+    if (typeof value.url !== "string") continue;
+    const target = parseGithubUrl(value.url);
+    if (!target) continue;
+    const imageUrl = safeHttpsUrl(value.image?.url) ?? safeHttpsUrl(value.thumbnail?.url);
+    if (imageUrl) images.set(target.canonicalUrl, imageUrl);
+  }
+  return images;
+}
+
 export class LinkPreviewMessageHandler {
   private readonly deps: Required<LinkPreviewMessageHandlerDeps>;
 
@@ -198,6 +231,7 @@ export class LinkPreviewMessageHandler {
     const content = String(message.content || "");
     const directSteamLinks = extractSteamLinksFromMessage(message);
     const githubTargets = collectGithubReplyTargets(extractGithubLinksFromMessage(message));
+    const githubImageUrls = extractGithubEmbedImageUrls(message);
     const twitterTargets = collectTwitterReplyTargets(extractXLinks(content));
     const youtubeTargets = this.ctx.config.YOUTUBE_PREVIEW_ENABLED
       ? collectYouTubeReplyTargets(extractYouTubeLinks(content))
@@ -229,6 +263,7 @@ export class LinkPreviewMessageHandler {
           log: this.ctx.log,
           aiRouter: this.ctx.aiRouter,
           guildId: message.guildId ?? this.ctx.config.GUILD_ID,
+          imageUrlByCanonicalUrl: githubImageUrls,
         });
       } catch (error) {
         this.ctx.log.warn({ error: String(error) }, "github preview build failed");
@@ -315,6 +350,31 @@ function componentUrls(components: readonly unknown[]): string[] {
   return urls;
 }
 
+function componentMediaUrls(components: readonly unknown[]): string[] {
+  const urls: string[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const component = value as {
+      items?: readonly unknown[];
+      components?: readonly unknown[];
+      toJSON?: () => unknown;
+    };
+    if (typeof component.toJSON === "function") {
+      visit(component.toJSON());
+      return;
+    }
+    for (const item of component.items ?? []) {
+      if (!item || typeof item !== "object") continue;
+      const media = (item as { media?: { url?: unknown } }).media;
+      const url = safeHttpsUrl(media?.url);
+      if (url) urls.push(url);
+    }
+    for (const child of component.components ?? []) visit(child);
+  };
+  for (const component of components) visit(component);
+  return urls;
+}
+
 export async function refreshPreviewTranslationState(
   message: Pick<Message, "id" | "components">,
   ctx: Pick<BotContext, "config" | "log" | "aiRouter"> & Partial<Pick<BotContext, "mainPgPool">>,
@@ -323,6 +383,7 @@ export async function refreshPreviewTranslationState(
   deps: RefreshDeps = {},
 ): Promise<PreviewTranslationStateV1 | null> {
   const urls = componentUrls(message.components);
+  const mediaUrl = componentMediaUrls(message.components)[0];
   for (const url of urls) {
     const steam = parseSteamUrl(url);
     if (!steam) continue;
@@ -383,6 +444,7 @@ export async function refreshPreviewTranslationState(
       log: ctx.log,
       aiRouter: ctx.aiRouter,
       guildId,
+      ...(mediaUrl ? { imageUrlByCanonicalUrl: new Map([[github.canonicalUrl, mediaUrl]]) } : {}),
     });
     if (!result || result.status !== "success" || !result.payload.previewState) return null;
     return {

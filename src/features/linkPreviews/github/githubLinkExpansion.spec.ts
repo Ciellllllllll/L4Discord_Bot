@@ -16,6 +16,7 @@ function allText(value: unknown): string {
 {
   let calls = 0;
   const result = await buildGithubReplyPayloads([target], {
+    imageUrlByCanonicalUrl: new Map([[target.canonicalUrl, "https://opengraph.githubassets.com/abc/octo/hello"]]),
     client: {
       fetchPreview: async () => {
         calls += 1;
@@ -58,6 +59,8 @@ function allText(value: unknown): string {
     assert.equal(allText(result[0].payload).includes("ウィジェットが壊れています。"), true);
     assert.equal(allText(result[0].payload).includes('translationKey":"title'), false);
     assert.equal(result[0].payload.previewState?.document.source, "github");
+    assert.equal(allText(result[0].payload).includes("https://opengraph.githubassets.com/abc/octo/hello"), true);
+    assert.equal(result[0].payload.previewState?.document.blocks.some((block) => block.type === "media"), true);
   }
 }
 

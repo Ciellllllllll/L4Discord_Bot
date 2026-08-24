@@ -44,6 +44,7 @@ export type GithubPreviewBuildResult =
 
 export type GithubPreviewBuildOptions = GithubApiClientOptions & {
   client?: Pick<GithubApiClient, "fetchPreview">;
+  imageUrlByCanonicalUrl?: ReadonlyMap<string, string>;
   config?: Pick<AppConfig, "DEEPSEEK_API_KEY"> & Partial<AppConfig>;
   log?: LoggerLike;
   aiRouter?: AiProviderRouter;
@@ -150,7 +151,9 @@ export async function buildGithubReplyPayloads(
       return { target, status: "error", reason: result.reason, payload: buildGithubFailurePayload(target, result.reason) };
     }
     try {
-      const document = githubPreviewToDocument(result.preview);
+      const document = githubPreviewToDocument(result.preview, {
+        embedImageUrl: options.imageUrlByCanonicalUrl?.get(target.canonicalUrl),
+      });
       const built = await buildTranslatedPreview(document, {
         translate: async () => await translateDocument(document, options),
       });

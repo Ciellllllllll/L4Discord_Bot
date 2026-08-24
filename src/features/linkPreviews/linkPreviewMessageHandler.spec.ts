@@ -5,6 +5,7 @@ import {
   extractXLinks,
   extractYouTubeLinks,
   extractGithubLinks,
+  extractGithubEmbedImageUrls,
   refreshPreviewTranslationState,
 } from "./linkPreviewMessageHandler.js";
 import {
@@ -588,6 +589,11 @@ async function run(): Promise<void> {
   assert.equal(debugCacheCalls, 0);
 
 const githubTarget = parseGithubUrl("https://github.com/octo/hello/issues/42")!;
+const githubEmbedImageUrl = "https://opengraph.githubassets.com/abc/octo/hello";
+assert.deepEqual(extractGithubEmbedImageUrls({ embeds: [
+  { toJSON: () => ({ url: "https://github.com/octo/hello", image: { url: githubEmbedImageUrl } }) },
+  { toJSON: () => ({ url: "https://example.com/not-github", image: { url: "https://example.com/ignored.png" } }) },
+] } as never), new Map([["https://github.com/octo/hello", githubEmbedImageUrl]]));
 const githubFailureResult = {
     target: githubTarget,
     status: "error" as const,
@@ -705,45 +711,68 @@ const githubFailureResult = {
   );
   assert.equal(refreshed?.document.source, "youtube");
   assert.equal(refreshed?.messageId, "message-1");
+  const refreshGithubMessage = {
+    id: "message-2",
+    components: [{
+      toJSON: () => ({
+        type: ComponentType.Container,
+        components: [
+          {
+            type: ComponentType.MediaGallery,
+            items: [{ media: { url: githubEmbedImageUrl } }],
+          },
+          {
+            type: ComponentType.ActionRow,
+            components: [{ type: ComponentType.Button, style: 5, label: "開く", url: githubTarget.canonicalUrl }],
+          },
+        ],
+      }),
+    }],
+  };
+  let refreshedGithubImageOptions: ReadonlyMap<string, string> | undefined;
   const refreshedGithub = await refreshPreviewTranslationState(
-    refreshMessage("https://github.com/octo/hello/issues/42") as never,
+    refreshGithubMessage as never,
     { config: { GITHUB_API_TOKEN: "test-token" }, log: { warn() {} } } as never,
     "guild-1",
     "channel-1",
     {
-      buildGithub: async () => [{
-        target: githubTarget,
-        status: "success" as const,
-        payload: {
-          embeds: [],
-          flags: MessageFlags.IsComponentsV2,
-          components: [],
-          allowedMentions: { parse: [], repliedUser: false },
-          previewState: {
-            document: {
-              version: 1,
-              source: "github",
-              url: githubTarget.canonicalUrl,
-              openLabel: "GitHubで開く",
-              blocks: [],
-            },
-            translations: {
+      buildGithub: async (_targets, options) => {
+        refreshedGithubImageOptions = options?.imageUrlByCanonicalUrl;
+        return [{
+          target: githubTarget,
+          status: "success" as const,
+          payload: {
+            embeds: [],
+            flags: MessageFlags.IsComponentsV2,
+            components: [],
+            allowedMentions: { parse: [], repliedUser: false },
+            previewState: {
+              document: {
+                version: 1,
+                source: "github",
+                url: githubTarget.canonicalUrl,
+                openLabel: "GitHubで開く",
+                blocks: [],
+              },
               translations: {
-                body: {
-                  shouldTranslate: true,
-                  sourceLanguage: "en",
-                  confidence: 1,
-                  translatedText: "本文",
+                translations: {
+                  body: {
+                    shouldTranslate: true,
+                    sourceLanguage: "en",
+                    confidence: 1,
+                    translatedText: "本文",
+                  },
                 },
               },
             },
           },
-        },
-      }],
+        }];
+      },
     },
   );
   assert.equal(refreshedGithub?.document.source, "github");
-  assert.equal(refreshedGithub?.messageId, "message-1");
+  assert.equal(refreshedGithub?.messageId, "message-2");
+  assert.equal(refreshedGithubImageOptions?.get(githubTarget.canonicalUrl), githubEmbedImageUrl);
   assert.equal(await refreshPreviewTranslationState(
     refreshMessage("https://example.com") as never,
     {} as never,

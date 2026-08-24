@@ -86,6 +86,10 @@ export type GithubPagePreview =
     sha?: string;
   });
 
+export type GithubPreviewDocumentOptions = {
+  embedImageUrl?: string;
+};
+
 function stripUrlTail(value: string): string {
   let url = String(value || "").trim();
   while (url && TRIM_TAIL_CHARS.includes(url[url.length - 1]!)) url = url.slice(0, -1);
@@ -242,6 +246,30 @@ function safeAvatarUrl(value: string | undefined): string | undefined {
   }
 }
 
+function safeEmbedImageUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function withEmbedImage(
+  blocks: PreviewDocument["blocks"],
+  embedImageUrl: string | undefined,
+): PreviewDocument["blocks"] {
+  const safeUrl = safeEmbedImageUrl(embedImageUrl);
+  return safeUrl
+    ? [...blocks, {
+      type: "media",
+      id: "embed-image",
+      items: [{ url: safeUrl, description: "GitHub Embed画像" }],
+    }]
+    : blocks;
+}
+
 function authorPart(author: GithubAuthor | undefined): PreviewTextPart[] {
   return author?.name ? [{ text: author.name, strong: true }] : [{ text: "不明" }];
 }
@@ -272,7 +300,10 @@ function textBlock(preview: GithubPagePreview, lines: PreviewTextLine, ...rest: 
   };
 }
 
-export function githubPreviewToDocument(preview: GithubPagePreview): PreviewDocument {
+export function githubPreviewToDocument(
+  preview: GithubPagePreview,
+  options: GithubPreviewDocumentOptions = {},
+): PreviewDocument {
   let block: PreviewDocument["blocks"][number];
   if (preview.kind === "repository") {
     block = textBlock(
@@ -342,11 +373,11 @@ export function githubPreviewToDocument(preview: GithubPagePreview): PreviewDocu
       source: "github",
       url: preview.canonicalUrl,
       openLabel: "GitHubで開く",
-      blocks: [block, {
+      blocks: withEmbedImage([block, {
         type: "text",
         id: "code",
         lines: [{ parts: [{ text: `\`\`\`${preview.language?.toLowerCase() ?? ""}\n${code}\n\`\`\`` }] }],
-      }],
+      }], options.embedImageUrl),
     };
   }
 
@@ -355,6 +386,6 @@ export function githubPreviewToDocument(preview: GithubPagePreview): PreviewDocu
     source: "github",
     url: preview.canonicalUrl,
     openLabel: "GitHubで開く",
-    blocks: [block],
+    blocks: withEmbedImage([block], options.embedImageUrl),
   };
 }

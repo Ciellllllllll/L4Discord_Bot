@@ -134,6 +134,16 @@ assert.deepEqual(translationParts(repositoryDocument), [["A useful project.", "d
 assert.equal(repositoryDocument.blocks.some((block) => block.type === "text" && block.thumbnailUrl === "https://avatars.githubusercontent.com/u/1"), true);
 assert.equal(JSON.stringify(repositoryDocument).includes("octo/hello"), true);
 
+const embedImageUrl = "https://opengraph.githubassets.com/abc/octo/hello";
+const repositoryWithEmbedImage = githubPreviewToDocument(repository, { embedImageUrl });
+assert.deepEqual(repositoryWithEmbedImage.blocks.at(-1), {
+  type: "media",
+  id: "embed-image",
+  items: [{ url: embedImageUrl, description: "GitHub Embed画像" }],
+});
+const unsafeEmbedImage = githubPreviewToDocument(repository, { embedImageUrl: "http://example.test/image.png" });
+assert.equal(unsafeEmbedImage.blocks.some((block) => block.type === "media"), false);
+
 const issueDocument = githubPreviewToDocument({
   kind: "issue",
   canonicalUrl: "https://github.com/octo/hello/issues/42",
