@@ -26,6 +26,12 @@ import {
   type YouTubePreviewBuildOptions,
 } from "./youtube/youtubeLinkExpansion.js";
 import { collectYouTubeReplyTargets, parseYouTubeUrl } from "./youtube/youtubePreviewSource.js";
+import { collectGithubReplyTargets, extractGithubLinks as extractGithubLinksFromContent, parseGithubUrl } from "./github/githubPreviewSource.js";
+import {
+  buildGithubReplyPayloads,
+  sendGithubLinkExpansion,
+  type GithubPreviewBuildResult,
+} from "./github/githubLinkExpansion.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
 
@@ -91,6 +97,10 @@ export function extractYouTubeLinks(content: string): string[] {
   return extractLinks(String(content || ""), YOUTUBE_URL_PATTERN, YOUTUBE_DOMAINS, false);
 }
 
+export function extractGithubLinks(content: string): string[] {
+  return extractGithubLinksFromContent(String(content || ""));
+}
+
 function attachmentSizeLimitForMessage(message: Message): number {
   return youtubeAttachmentSizeLimitForPremiumTier(message.guild?.premiumTier);
 }
@@ -104,6 +114,7 @@ type LinkPreviewMessageHandlerDeps = {
   mediaResolver?: YouTubePreviewBuildOptions["mediaResolver"];
   fetcher?: YouTubePreviewBuildOptions["fetcher"];
   buildSteamReplyPayloads?: typeof buildSteamReplyPayloads;
+  buildGithubReplyPayloads?: typeof buildGithubReplyPayloads;
 };
 
 function extractSteamLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
@@ -135,6 +146,32 @@ function extractSteamLinksFromMessage(message: Pick<Message, "content" | "embeds
   return values.flatMap((value) => extractSteamLinks(value));
 }
 
+function extractGithubLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
+  const values: string[] = [String(message.content || "")];
+  for (const embed of message.embeds ?? []) {
+    const raw = typeof (embed as { toJSON?: unknown }).toJSON === "function"
+      ? (embed as { toJSON: () => unknown }).toJSON()
+      : embed;
+    if (!raw || typeof raw !== "object") continue;
+    const value = raw as {
+      url?: unknown;
+      title?: unknown;
+      description?: unknown;
+      fields?: Array<{ name?: unknown; value?: unknown }>;
+      author?: { name?: unknown };
+      footer?: { text?: unknown };
+    };
+    for (const item of [value.url, value.title, value.description, value.author?.name, value.footer?.text]) {
+      if (typeof item === "string") values.push(item);
+    }
+    for (const field of value.fields ?? []) {
+      if (typeof field.name === "string") values.push(field.name);
+      if (typeof field.value === "string") values.push(field.value);
+    }
+  }
+  return values.flatMap((value) => extractGithubLinks(value));
+}
+
 export class LinkPreviewMessageHandler {
   private readonly deps: Required<LinkPreviewMessageHandlerDeps>;
 
@@ -148,6 +185,7 @@ export class LinkPreviewMessageHandler {
       mediaResolver: deps.mediaResolver ?? resolveYouTubeVideoMedia,
       fetcher: deps.fetcher ?? fetch,
       buildSteamReplyPayloads: deps.buildSteamReplyPayloads ?? buildSteamReplyPayloads,
+      buildGithubReplyPayloads: deps.buildGithubReplyPayloads ?? buildGithubReplyPayloads,
     };
   }
 
@@ -159,11 +197,12 @@ export class LinkPreviewMessageHandler {
 
     const content = String(message.content || "");
     const directSteamLinks = extractSteamLinksFromMessage(message);
+    const githubTargets = collectGithubReplyTargets(extractGithubLinksFromMessage(message));
     const twitterTargets = collectTwitterReplyTargets(extractXLinks(content));
     const youtubeTargets = this.ctx.config.YOUTUBE_PREVIEW_ENABLED
       ? collectYouTubeReplyTargets(extractYouTubeLinks(content))
       : [];
-    if (directSteamLinks.length === 0 && twitterTargets.length === 0 && youtubeTargets.length === 0) return;
+    if (directSteamLinks.length === 0 && twitterTargets.length === 0 && youtubeTargets.length === 0 && githubTargets.length === 0) return;
 
     const youtubePlan = youtubeTargets.length > 0
       ? await prepareYouTubeLinkExpansion(message, youtubeTargets, {
@@ -181,7 +220,24 @@ export class LinkPreviewMessageHandler {
       })
       : null;
 
-    if (directSteamLinks.length > 0 || twitterTargets.length > 0 || youtubeTargets.length > 0) {
+    let githubResults: GithubPreviewBuildResult[] = [];
+    if (githubTargets.length > 0) {
+      try {
+        githubResults = await this.deps.buildGithubReplyPayloads(githubTargets, {
+          token: this.ctx.config.GITHUB_API_TOKEN,
+          config: this.ctx.config,
+          log: this.ctx.log,
+          aiRouter: this.ctx.aiRouter,
+          guildId: message.guildId ?? this.ctx.config.GUILD_ID,
+        });
+      } catch (error) {
+        this.ctx.log.warn({ error: String(error) }, "github preview build failed");
+      }
+    }
+
+    const hasExistingPreview = directSteamLinks.length > 0 || twitterTargets.length > 0 || youtubeTargets.length > 0;
+    const hasGithubSuccess = githubResults.some((result) => result.status === "success");
+    if (hasExistingPreview || hasGithubSuccess) {
       try {
         await message.suppressEmbeds(true);
       } catch {}
@@ -225,6 +281,14 @@ export class LinkPreviewMessageHandler {
         buildReplyPayloads: this.deps.buildSteamReplyPayloads,
       });
     }
+    if (githubResults.length > 0 && (hasExistingPreview || hasGithubSuccess)) {
+      await sendGithubLinkExpansion(message, githubResults, {
+        db: this.ctx.db,
+        config: this.ctx.config,
+        log: this.ctx.log,
+        aiRouter: this.ctx.aiRouter,
+      }, { includeFailures: true });
+    }
   }
 }
 
@@ -232,6 +296,7 @@ type RefreshDeps = {
   buildTwitter?: typeof buildTwitterReplyPayloads;
   buildYouTube?: typeof buildYouTubeReplyPayloads;
   buildSteam?: typeof buildSteamReplyPayloads;
+  buildGithub?: typeof buildGithubReplyPayloads;
 };
 
 function componentUrls(components: readonly unknown[]): string[] {
@@ -307,6 +372,23 @@ export async function refreshPreviewTranslationState(
       version: 1, messageId: message.id, guildId, channelId,
       sourceUrl: payload.previewState.document.url,
       ...payload.previewState,
+    };
+  }
+  for (const url of urls) {
+    const github = parseGithubUrl(url);
+    if (!github) continue;
+    const [result] = await (deps.buildGithub ?? buildGithubReplyPayloads)([github], {
+      token: ctx.config.GITHUB_API_TOKEN,
+      config: ctx.config,
+      log: ctx.log,
+      aiRouter: ctx.aiRouter,
+      guildId,
+    });
+    if (!result || result.status !== "success" || !result.payload.previewState) return null;
+    return {
+      version: 1, messageId: message.id, guildId, channelId,
+      sourceUrl: result.payload.previewState.document.url,
+      ...result.payload.previewState,
     };
   }
   return null;

@@ -30,6 +30,7 @@ const productionConfig = loadConfig(
     PRODUCTION_GAME_DEAL_EPIC_INTERVAL_MS: "7200000",
     PRODUCTION_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "5400000",
     PRODUCTION_YOUTUBE_DATA_API_KEY: "production-youtube-key",
+    PRODUCTION_GITHUB_API_TOKEN: "production-github-token",
     DEBUG_GAME_DEAL_CHANNEL_ID: "debug-game-deal-channel",
     DEBUG_GAME_DEAL_NOTIFY_ROLE_ID: "debug-game-deal-role",
     DEBUG_GAME_DEAL_STEAM_NOW_INTERVAL_MS: "600000",
@@ -46,6 +47,7 @@ assert.equal(productionConfig.GAME_DEAL_STEAM_NOW_INTERVAL_MS, 2400000);
 assert.equal(productionConfig.GAME_DEAL_EPIC_INTERVAL_MS, 7200000);
 assert.equal(productionConfig.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS, 5400000);
 assert.equal(productionConfig.YOUTUBE_DATA_API_KEY, "production-youtube-key");
+assert.equal(productionConfig.GITHUB_API_TOKEN, "production-github-token");
 
 const debugConfig = loadConfig(
   baseEnv({
@@ -68,6 +70,7 @@ const debugConfig = loadConfig(
     DEBUG_GAME_DEAL_EPIC_INTERVAL_MS: "120000",
     DEBUG_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS: "180000",
     DEBUG_YOUTUBE_DATA_API_KEY: "debug-youtube-key",
+    DEBUG_GITHUB_API_TOKEN: "debug-github-token",
   }),
 );
 
@@ -78,6 +81,7 @@ assert.equal(debugConfig.GAME_DEAL_STEAM_NOW_INTERVAL_MS, 600000);
 assert.equal(debugConfig.GAME_DEAL_EPIC_INTERVAL_MS, 120000);
 assert.equal(debugConfig.GAME_DEAL_SUBSCRIPTION_INTERVAL_MS, 180000);
 assert.equal(debugConfig.YOUTUBE_DATA_API_KEY, "debug-youtube-key");
+assert.equal(debugConfig.GITHUB_API_TOKEN, "debug-github-token");
 
 const fallbackConfig = loadConfig(
   baseEnv({
@@ -100,6 +104,7 @@ assert.equal(fallbackConfig.LOCAL_LLM_TEMPERATURE, fallbackConfig.AI_TEMPERATURE
 assert.equal(fallbackConfig.YOUTUBE_PREVIEW_ENABLED, true);
 assert.equal(fallbackConfig.YOUTUBE_DATA_API_KEY, "");
 assert.equal(fallbackConfig.YOUTUBE_REQUEST_TIMEOUT_MS, 10000);
+assert.equal(fallbackConfig.GITHUB_API_TOKEN, undefined);
 assert.equal(fallbackConfig.ADHD_VIDEO_PUBLIC_BASE_URL, undefined);
 assert.equal(fallbackConfig.ADHD_VIDEO_MIN_FREE_BYTES, 1024 * 1024 * 1024);
 assert.equal(fallbackConfig.ADHD_VIDEO_CACHE_MAX_BYTES, 20 * 1024 * 1024 * 1024);

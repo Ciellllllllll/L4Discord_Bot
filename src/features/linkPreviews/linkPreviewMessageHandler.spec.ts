@@ -4,12 +4,15 @@ import {
   LinkPreviewMessageHandler,
   extractXLinks,
   extractYouTubeLinks,
+  extractGithubLinks,
   refreshPreviewTranslationState,
 } from "./linkPreviewMessageHandler.js";
 import {
   buildYouTubeComponentsOnlyFallbackPayload,
   buildYouTubePreviewPayload,
 } from "./youtube/youtubeLinkExpansion.js";
+import { buildGithubFailurePayload, type GithubPreviewPayload } from "./github/githubLinkExpansion.js";
+import { parseGithubUrl } from "./github/githubPreviewSource.js";
 
 function createDb(settings: Record<string, unknown> = {}): unknown {
   return {
@@ -65,6 +68,14 @@ async function run(): Promise<void> {
     "youtube.com/watch?v=abc",
     "youtu.be/def",
     "www.youtu.be/ghi",
+  ]);
+  assert.deepEqual(extractGithubLinks([
+    "github.com/octo/hello.",
+    "https://github.com/octo/hello/issues/42)",
+    "https://github.com.evil.example/octo/hello",
+  ].join(" ")), [
+    "github.com/octo/hello",
+    "https://github.com/octo/hello/issues/42",
   ]);
   assert.deepEqual(extractYouTubeLinks("notyoutube.com/watch?v=落ち着けw"), []);
   assert.deepEqual(extractYouTubeLinks("notyoutube.com?u=youtube.com/watch?v=落ち着けw"), []);
@@ -576,6 +587,92 @@ async function run(): Promise<void> {
   } as never);
   assert.equal(debugCacheCalls, 0);
 
+const githubTarget = parseGithubUrl("https://github.com/octo/hello/issues/42")!;
+const githubFailureResult = {
+    target: githubTarget,
+    status: "error" as const,
+    reason: "not_found" as const,
+    payload: buildGithubFailurePayload(githubTarget, "not_found"),
+  };
+  let githubOnlySuppressCalls = 0;
+  const githubOnlyReplies: unknown[] = [];
+  await new LinkPreviewMessageHandler(createCtx() as never, {
+    buildGithubReplyPayloads: async () => [githubFailureResult],
+  }).onMessage({
+    ...message,
+    content: githubTarget.canonicalUrl,
+    embeds: [],
+    suppressEmbeds: async () => { githubOnlySuppressCalls += 1; },
+    reply: async (payload: unknown) => { githubOnlyReplies.push(payload); },
+  } as never);
+  assert.equal(githubOnlySuppressCalls, 0);
+  assert.equal(githubOnlyReplies.length, 0);
+
+  let githubMixedSuppressCalls = 0;
+  const githubMixedReplies: unknown[] = [];
+  const githubRepositoryTarget = parseGithubUrl("https://github.com/octo/hello")!;
+  const githubSuccessResult = {
+    target: githubRepositoryTarget,
+    status: "success" as const,
+    payload: {
+      embeds: [],
+      flags: MessageFlags.IsComponentsV2,
+      components: [{
+        type: ComponentType.Container,
+        components: [{ type: ComponentType.TextDisplay, content: "GitHub成功カード" }],
+      }],
+      allowedMentions: { parse: [], repliedUser: false },
+    } satisfies GithubPreviewPayload,
+  };
+  await new LinkPreviewMessageHandler(createCtx() as never, {
+    buildGithubReplyPayloads: async () => [githubSuccessResult, githubFailureResult],
+  }).onMessage({
+    ...message,
+    content: "https://github.com/octo/hello https://github.com/octo/hello/issues/42",
+    embeds: [],
+    suppressEmbeds: async () => { githubMixedSuppressCalls += 1; },
+    reply: async (payload: unknown) => { githubMixedReplies.push(payload); },
+  } as never);
+  assert.equal(githubMixedSuppressCalls, 1);
+  assert.equal(githubMixedReplies.length, 2);
+  assert.equal(JSON.stringify(githubMixedReplies[0]).includes("GitHub成功カード"), true);
+  assert.equal(JSON.stringify(githubMixedReplies[1]).includes("GitHubリンクを取得できませんでした"), true);
+
+  let githubMaxTargets: string[] = [];
+  await new LinkPreviewMessageHandler(createCtx() as never, {
+    buildGithubReplyPayloads: async (targets) => {
+      githubMaxTargets = targets.map((item) => item.canonicalUrl);
+      return targets.map((item) => ({
+        target: item,
+        status: "error" as const,
+        reason: "not_found" as const,
+        payload: buildGithubFailurePayload(item, "not_found"),
+      }));
+    },
+  }).onMessage({
+    ...message,
+    content: Array.from({ length: 6 }, (_, index) => `https://github.com/octo/hello/issues/${index + 1}`).join(" "),
+    embeds: [],
+    suppressEmbeds: async () => { throw new Error("GitHub-only failures must not suppress"); },
+    reply: async () => { throw new Error("GitHub-only failures must not reply"); },
+  } as never);
+  assert.equal(githubMaxTargets.length, 5);
+
+  let mixedWithExistingSuppressCalls = 0;
+  const mixedWithExistingReplies: unknown[] = [];
+  await new LinkPreviewMessageHandler(createCtx() as never, {
+    expandTwitterLinks: async () => [],
+    buildGithubReplyPayloads: async () => [githubFailureResult],
+  }).onMessage({
+    ...message,
+    content: `https://x.com/user/status/123 ${githubTarget.canonicalUrl}`,
+    embeds: [],
+    suppressEmbeds: async () => { mixedWithExistingSuppressCalls += 1; },
+    reply: async (payload: unknown) => { mixedWithExistingReplies.push(payload); },
+  } as never);
+  assert.equal(mixedWithExistingSuppressCalls, 1);
+  assert.equal(mixedWithExistingReplies.length, 1);
+
   const refreshMessage = (url: string) => ({
     id: "message-1",
     components: [{
@@ -608,6 +705,45 @@ async function run(): Promise<void> {
   );
   assert.equal(refreshed?.document.source, "youtube");
   assert.equal(refreshed?.messageId, "message-1");
+  const refreshedGithub = await refreshPreviewTranslationState(
+    refreshMessage("https://github.com/octo/hello/issues/42") as never,
+    { config: { GITHUB_API_TOKEN: "test-token" }, log: { warn() {} } } as never,
+    "guild-1",
+    "channel-1",
+    {
+      buildGithub: async () => [{
+        target: githubTarget,
+        status: "success" as const,
+        payload: {
+          embeds: [],
+          flags: MessageFlags.IsComponentsV2,
+          components: [],
+          allowedMentions: { parse: [], repliedUser: false },
+          previewState: {
+            document: {
+              version: 1,
+              source: "github",
+              url: githubTarget.canonicalUrl,
+              openLabel: "GitHubで開く",
+              blocks: [],
+            },
+            translations: {
+              translations: {
+                body: {
+                  shouldTranslate: true,
+                  sourceLanguage: "en",
+                  confidence: 1,
+                  translatedText: "本文",
+                },
+              },
+            },
+          },
+        },
+      }],
+    },
+  );
+  assert.equal(refreshedGithub?.document.source, "github");
+  assert.equal(refreshedGithub?.messageId, "message-1");
   assert.equal(await refreshPreviewTranslationState(
     refreshMessage("https://example.com") as never,
     {} as never,
