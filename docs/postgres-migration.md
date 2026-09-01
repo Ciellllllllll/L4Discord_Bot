@@ -41,7 +41,7 @@ PostgreSQLはインターネットへ公開しません。既存のsystemdサー
 Botのファイル状態（添付ファイル、ADHD動画、個人プロンプト、その他のproduction状態）は、
 ホストの`data/production`を`/app/data/production`へbind mountして保持します。
 旧DBが参照する`data/message_log_attachments`も、移行完了までは
-`/app/data/message_log_attachments`へ追加bind mountして保持します。
+`/app/data/message_log_attachments`へ読み取り専用で追加bind mountして保持します。
 `.env`、`data`、DB volumeはDockerイメージへコピーしません。
 
 イメージはGitHub Actionsの`Publish Docker image`を手動実行するか、GitHub Release公開時にGHCRへ公開します。
@@ -536,6 +536,7 @@ docker compose -p "$project" logs --no-color --tail=200 bot | grep -q 'Database 
 docker compose -p "$project" exec -T bot node --input-type=module -e \
   "import pg from 'pg'; const pool = new pg.Pool({connectionString: process.env.DATABASE_URL}); const r = await pool.query('SELECT current_user, current_database()'); console.log(JSON.stringify(r.rows[0])); await pool.end();"
 docker compose -p "$project" exec -T bot test -r /app/data/production -a -w /app/data/production
+docker compose -p "$project" exec -T bot test -r /app/data/message_log_attachments
 docker compose -p "$project" exec -T bot node --input-type=module -e \
   "const r = await fetch('http://127.0.0.1:8787/health'); if (!r.ok) process.exit(1); console.log(await r.text());"
 ~~~
