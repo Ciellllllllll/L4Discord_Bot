@@ -12,10 +12,24 @@ import { SteamStoreClient, type SteamPagePreview, type SteamStoreFetchOptions } 
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
 import { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
+  collectPreviewTranslationSegments,
   translatePreviewDocument,
   type PreviewDocumentTranslations,
 } from "../shared/previewTranslationGate.js";
 import { steamPreviewToDocument, type SteamReplyTarget } from "./steamPreviewSource.js";
+
+const STEAM_RATING_JA: Record<string, string> = {
+  "overwhelmingly positive": "圧倒的に好評",
+  "very positive": "非常に好評",
+  positive: "好評",
+  "mostly positive": "やや好評",
+  mixed: "賛否両論",
+  "mostly negative": "やや不評",
+  negative: "不評",
+  "very negative": "非常に不評",
+  "overwhelmingly negative": "圧倒的に不評",
+  "no user reviews": "ユーザーレビューなし",
+};
 
 type LoggerLike = {
   warn: (obj: unknown, message?: string) => void;
@@ -68,14 +82,32 @@ async function translateDocument(
   options: SteamPreviewBuildOptions,
 ): Promise<PreviewDocumentTranslations> {
   try {
-    if (options.translate) return await options.translate(document);
-    if (!options.config) return { translations: {} };
-    return await translatePreviewDocument(document, {
-      config: options.config,
-      log: options.log,
-      router: options.aiRouter,
-      guildId: options.guildId,
-    });
+    const translated = options.translate
+      ? await options.translate(document)
+      : options.config
+        ? await translatePreviewDocument(document, {
+            config: options.config,
+            log: options.log,
+            router: options.aiRouter,
+            guildId: options.guildId,
+          })
+        : { translations: {} };
+    const aiRating = translated.translations.rating;
+    if (aiRating?.shouldTranslate && aiRating.translatedText.trim()) return translated;
+    const originalRating = collectPreviewTranslationSegments(document).rating;
+    const fallback = originalRating && STEAM_RATING_JA[originalRating.toLowerCase()];
+    return fallback ? {
+      ...translated,
+      translations: {
+        ...translated.translations,
+        rating: {
+          shouldTranslate: true,
+          sourceLanguage: "en",
+          confidence: 1,
+          translatedText: fallback,
+        },
+      },
+    } : translated;
   } catch (error) {
     options.log?.warn({ error: String(error) }, "steam preview translation skipped");
     return { translations: {} };
