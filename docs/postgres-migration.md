@@ -40,6 +40,8 @@ PostgreSQLはインターネットへ公開しません。既存のsystemdサー
 接続できるよう、Composeでは`127.0.0.1:5432`だけへバインドし、Bot自身は内部の`postgres:5432`へ接続します。
 Botのファイル状態（添付ファイル、ADHD動画、個人プロンプト、その他のproduction状態）は、
 ホストの`data/production`を`/app/data/production`へbind mountして保持します。
+旧DBが参照する`data/message_log_attachments`も、移行完了までは
+`/app/data/message_log_attachments`へ追加bind mountして保持します。
 `.env`、`data`、DB volumeはDockerイメージへコピーしません。
 
 イメージはGitHub Actionsの`Publish Docker image`を手動実行するか、GitHub Release公開時にGHCRへ公開します。
@@ -311,6 +313,7 @@ BOT_DATABASE_URL=postgres://l4bot:EXISTING_L4BOT_PASSWORD@postgres:5432/l4discor
 POSTGRES_PASSWORD=COMPOSE_POSTGRES_PASSWORD
 POSTGRES_HOST_PORT=5432
 BOT_DATA_DIR=./data/production
+BOT_LEGACY_ATTACHMENT_DATA_DIR=./data/message_log_attachments
 ```
 
 GHCRが非公開の場合は、VPSのDockerへパッケージ読み取り権限を持つデプロイトークンで
@@ -488,7 +491,7 @@ diff -u /root/data-production-before.sha256 /root/data-production-after.sha256
 
 docker compose -p "$project" exec -T postgres psql -X -A -t -F '|' -v ON_ERROR_STOP=1 -U postgres -d l4discord \
   -c "SELECT storage_relpath, sha256_hex FROM message_attachment.message_log_attachment_files WHERE sha256_hex IS NOT NULL ORDER BY storage_relpath" |
-  awk -F'|' 'NF == 2 { if ($1 !~ /^data\/production\//) exit 1; print $2 "  " $1 }' |
+  awk -F'|' 'NF == 2 { if ($1 !~ /^data\/[^\/].*/ || $1 ~ /(^|\/)\.\.?($|\/)/) exit 1; print $2 "  " $1 }' |
   (cd /opt/L4_DiscordBot && sha256sum -c -)
 ~~~
 

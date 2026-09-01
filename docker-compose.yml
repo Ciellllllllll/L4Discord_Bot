@@ -42,6 +42,7 @@ services:
         condition: service_healthy
     volumes:
       - "${BOT_DATA_DIR:-./data/production}:/app/data/production"
+      - "${BOT_LEGACY_ATTACHMENT_DATA_DIR:-./data/message_log_attachments}:/app/data/message_log_attachments"
 
 volumes:
   postgres-data:
