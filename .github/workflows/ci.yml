@@ -32,5 +32,56 @@ jobs:
       - name: Test with Docker PostgreSQL
         run: npm test
 
+      - name: Test PostgreSQL backup script
+        shell: bash
+        run: bash scripts/postgres-backup.spec.sh
+
+      - name: Validate production Compose
+        env:
+          BOT_ENV_FILE: .env.example
+          BOT_IMAGE: l4discord-bot:ci
+          POSTGRES_PASSWORD: ci-only-password
+          BOT_DATABASE_URL: postgres://l4bot:ci-only-password@postgres:5432/l4discord
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Build production Docker image
+        run: docker build --tag l4discord-bot:ci .
+
+      - name: Smoke test Docker startup and migrations
+        shell: bash
+        env:
+          BOT_ENV_FILE: .env.example
+          BOT_IMAGE: l4discord-bot:ci
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_HOST_PORT: "15432"
+          BOT_DATABASE_URL: postgres://postgres:ci-only-password@postgres:5432/postgres
+          BOT_DATA_DIR: /tmp/l4discord-ci-data
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$BOT_DATA_DIR"
+          trap 'docker compose -p l4discord-ci down -v; rm -rf -- "$BOT_DATA_DIR"' EXIT
+          docker compose -p l4discord-ci up -d postgres --wait
+          set +e
+          docker compose -p l4discord-ci run --rm \
+            -e DISCORD_TOKEN=CI_INVALID_TOKEN \
+            -e PRODUCTION_DISCORD_TOKEN=CI_INVALID_TOKEN \
+            -e DISCORD_CLIENT_ID=1 \
+            -e PRODUCTION_DISCORD_CLIENT_ID=1 \
+            -e GUILD_ID=1 \
+            -e PRODUCTION_GUILD_ID=1 \
+            -e OWNER_ID=1 \
+            -e PRODUCTION_OWNER_ID=1 \
+            -e ADMIN_ROLE_ID=1 \
+            -e PRODUCTION_ADMIN_ROLE_ID=1 \
+            -e PRODUCTION_GAME_DEAL_STEAM_NOW_INTERVAL_MS=60000 \
+            -e PRODUCTION_GAME_DEAL_EPIC_INTERVAL_MS=60000 \
+            -e PRODUCTION_GAME_DEAL_SUBSCRIPTION_INTERVAL_MS=60000 \
+            -e PRODUCTION_JAPANESE_WORKER_TIMEOUT_MS=100 \
+            bot >docker-bot-smoke.log 2>&1
+          bot_status=$?
+          set -e
+          grep -q 'Database runtime initialized successfully\.' docker-bot-smoke.log
+          test "$bot_status" -ne 0
+
       - name: Build
         run: npm run build

@@ -68,6 +68,7 @@ test("SteamStoreClient parses the Steam page title, description, USD price, rati
       <head><meta property="og:image" content="https://cdn.example.test/header.jpg"></head>
       <body>
         <div id="appHubAppName">Counter-Strike 2</div>
+        <div class="game_description_snippet">  </div>
         <div id="game_area_description"><h2>About This Game</h2><p>A tactical shooter.</p></div>
         <div class="game_purchase_price price">$9.99</div>
         <div class="user_reviews_summary_row" data-tooltip-html="76% of the 78,889 user reviews are positive.">
@@ -93,6 +94,21 @@ test("SteamStoreClient parses the Steam page title, description, USD price, rati
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Steam page parsing prefers the normalized short description over the long description", () => {
+  const preview = parseSteamPagePreviewHtml(`
+    <div class="game_description_snippet">
+      A friendly
+      pogo adventure.
+    </div>
+    <div id="game_area_description">
+      <h2>About This Game</h2>
+      <p>A much longer description of the pogo adventure.</p>
+    </div>
+  `, "https://store.steampowered.com/app/3434550/Pogo_With_Friends/");
+
+  assert.equal(preview.body, "A friendly pogo adventure.");
 });
 
 test("SteamStoreClient rejects a redirect outside official Steam domains", async () => {
