@@ -6,42 +6,183 @@ on:
       - release
   workflow_dispatch:
 
+concurrency:
+  group: deploy-release
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  publish:
     runs-on: ubuntu-latest
-    concurrency:
-      group: deploy-release
-      cancel-in-progress: true
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
 
     steps:
-      - name: Deploy over SSH
+      - name: Require release branch
+        if: github.ref != 'refs/heads/release'
+        shell: bash
+        run: |
+          echo "This workflow must run from the release branch." >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Check immutable image tag
+        id: tag
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          TAG: ${{ github.sha }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing existing immutable image tag: $IMAGE:$TAG"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish
+        if: steps.tag.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BOT_IMAGE: ${{ needs.publish.outputs.image }}:${{ github.sha }}
+      RELEASE_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Deploy Docker image over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
+          envs: BOT_IMAGE,RELEASE_SHA
           script: |
-            set -e
+            set -Eeuo pipefail
+
+            if ! printf '%s\n' "$BOT_IMAGE" | grep -Eq '^ghcr\.io/ciellllllllll/l4discord_bot:[0-9a-f]{40}$'; then
+              echo "Unexpected Docker image: $BOT_IMAGE" >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "Unexpected release SHA: $RELEASE_SHA" >&2
+              exit 1
+            fi
+            test "${BOT_IMAGE##*:}" = "$RELEASE_SHA"
+
             cd /opt/L4_DiscordBot
+            compose_env=/etc/l4discord/l4discord-compose.env
+            sudo test -r "$compose_env"
+            sudo grep -q '^BOT_IMAGE=' "$compose_env"
 
-            git fetch origin release
-            git checkout release
-            git reset --hard origin/release
-
-            npm ci
-            npm run build
-            node --env-file-if-exists=.env -e "import('./dist/core/config.js').then(({ loadConfig }) => { const config = loadConfig(); console.log(JSON.stringify({ profile: config.BOT_PROFILE, databaseUrlConfigured: Boolean(config.DATABASE_URL) })); })"
-
-            if command -v go >/dev/null 2>&1; then
-              cd workers/japanese-worker
-              go mod download
-              go build -o japanese-worker .
-              cd /opt/L4_DiscordBot
-            else
-              echo "Go is not installed on VPS. Install Go or prebuild workers/japanese-worker/japanese-worker before enabling JAPANESE_WORKER_ENABLED=1."
+            systemd_state=$(sudo /bin/systemctl is-active l4-discordbot 2>/dev/null || true)
+            if [ "$systemd_state" != inactive ]; then
+              echo "systemd Bot must be inactive before Docker deployment (state: $systemd_state)" >&2
+              exit 1
+            fi
+            systemd_enabled=$(sudo /bin/systemctl is-enabled l4-discordbot 2>/dev/null || true)
+            if [ "$systemd_enabled" != masked ]; then
+              echo "systemd Bot must be masked before Docker deployment (state: $systemd_enabled)" >&2
               exit 1
             fi
 
-            sudo /bin/systemctl restart l4-discordbot
-            sudo /bin/systemctl status l4-discordbot --no-pager
+            app_user=$(stat -c '%U' /opt/L4_DiscordBot)
+            test -n "$app_user"
+            run_git() {
+              if [ "$(id -un)" = "$app_user" ]; then
+                git -c safe.directory=/opt/L4_DiscordBot "$@"
+              else
+                sudo -u "$app_user" git -c safe.directory=/opt/L4_DiscordBot "$@"
+              fi
+            }
+
+            check_release_sha() {
+              run_git fetch origin release
+              fetched_release_sha=$(run_git rev-parse FETCH_HEAD)
+              if [ "$fetched_release_sha" != "$RELEASE_SHA" ]; then
+                echo "release moved to $fetched_release_sha; refusing stale deployment for $RELEASE_SHA" >&2
+                exit 1
+              fi
+            }
+
+            check_release_sha
+            run_git checkout release
+            run_git reset --hard "$RELEASE_SHA"
+
+            docker_cli() {
+              sudo docker "$@"
+            }
+            compose() {
+              sudo env BOT_IMAGE="$BOT_IMAGE" docker compose -p l4discord --env-file "$compose_env" "$@"
+            }
+
+            postgres_container=$(compose ps -q postgres)
+            test -n "$postgres_container"
+            test "$(docker_cli inspect -f '{{.State.Health.Status}}' "$postgres_container")" = healthy
+
+            compose config --quiet
+            compose pull bot
+            check_release_sha
+
+            compose up -d --no-deps --force-recreate bot
+            sudo sed -i "s#^BOT_IMAGE=.*#BOT_IMAGE=$BOT_IMAGE#" "$compose_env"
+            sudo grep -Fxq "BOT_IMAGE=$BOT_IMAGE" "$compose_env"
+
+            bot_container=$(compose ps -q bot)
+            test -n "$bot_container"
+            test "$(docker_cli inspect -f '{{.Config.Image}}' "$bot_container")" = "$BOT_IMAGE"
+            test "$(docker_cli inspect -f '{{.State.Status}}' "$bot_container")" = running
+
+            for attempt in $(seq 1 30); do
+              test "$(docker_cli inspect -f '{{.State.Status}}' "$bot_container")" = running
+              bot_logs=$(docker_cli logs "$bot_container" 2>&1 || true)
+              if printf '%s\n' "$bot_logs" | grep -q 'Database runtime initialized successfully\.' \
+                && printf '%s\n' "$bot_logs" | grep -q 'discord gateway ready (clientReady)'; then
+                break
+              fi
+              if [ "$attempt" -lt 30 ]; then
+                sleep 2
+              fi
+            done
+
+            sleep 5
+            bot_logs=$(docker_cli logs "$bot_container" 2>&1 || true)
+            compose ps
+            printf '%s\n' "$bot_logs" | tail -n 200
+            printf '%s\n' "$bot_logs" | grep -q 'Database runtime initialized successfully\.'
+            printf '%s\n' "$bot_logs" | grep -q 'discord gateway ready (clientReady)'
+            test "$(docker_cli inspect -f '{{.State.Status}}' "$bot_container")" = running
+            test "$(docker_cli inspect -f '{{.RestartCount}}' "$bot_container")" = 0
+            if printf '%s\n' "$bot_logs" | grep -Eiq 'uncaughtException|unhandledRejection|(^|[^[:alpha:]])fatal([^[:alpha:]]|$)|DISCORD_TOKEN was rejected by Discord'; then
+              echo 'Fatal or unhandled errors were found in the new Docker bot logs.' >&2
+              exit 1
+            fi

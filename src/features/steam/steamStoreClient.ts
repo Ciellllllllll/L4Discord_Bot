@@ -205,7 +205,8 @@ export function parseSteamPagePreviewHtml(html: string, canonicalUrl: string): S
   ).replace(/\s+on\s+Steam$/i, "");
   const description = $("#game_area_description").first().clone();
   description.find("h1, h2, h3").remove();
-  const body = normalizedText(description.text())
+  const body = normalizedText($(".game_description_snippet").first().text())
+    || normalizedText(description.text())
     || normalizedText($("meta[property='og:description']").attr("content") ?? "")
     || normalizedText($("meta[name='description']").attr("content") ?? "")
     || "";
