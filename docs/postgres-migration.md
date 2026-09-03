@@ -29,7 +29,7 @@ mise exec -- npm start
 
 ## Docker Compose構成
 
-今回の変更は切り替え準備だけです。現行のsystemd BotとPostgreSQL 14は、切り替え実施まで変更しません。
+本番BotはDocker Composeで運用します。systemd版Botは停止・無効化済みです。以下の切り替え手順は、再移行や復旧が必要になった場合の手順として残しています。
 
 本番Composeは次の2サービスだけで構成します。
 
@@ -44,17 +44,25 @@ Botのファイル状態（添付ファイル、ADHD動画、個人プロンプ�
 `/app/data/message_log_attachments`へ読み取り専用で追加bind mountして保持します。
 `.env`、`data`、DB volumeはDockerイメージへコピーしません。
 
-イメージはGitHub Actionsの`Publish Docker image`を手動実行するか、GitHub Release公開時にGHCRへ公開します。
-タグはコミットSHAだけを使います。切り替え前に、公開されたSHAを`.env`の`BOT_IMAGE`へ設定してください。
+`release`ブランチへのpushでは、GitHub Actionsの`Deploy release to VPS`がコミットSHA付きの
+DockerイメージをGHCRへ公開し、そのままVPSのCompose Botだけを更新します。タグはコミットSHAだけを使います。
+`Publish Docker image`は手動実行専用で、自動デプロイとは別にイメージを公開したい場合だけ使います。
+ActionsはVPS上の`/etc/l4discord/l4discord-compose.env`をComposeの`--env-file`として使います。
+このファイルには`BOT_IMAGE`、`BOT_DATABASE_URL`、`POSTGRES_PASSWORD`などのCompose設定を置き、
+BotのDiscordトークンなどは別の`/opt/L4_DiscordBot/.env`へ置きます。Actionsが更新するのは前者の`BOT_IMAGE`だけです。
+このCompose用ファイルはroot所有・`0600`で作成します。GitHub Actionsの`VPS_USER`は、rootで接続するか、
+パスワードなしの`sudo`経由でこのファイルの読み取りとDocker操作を行える状態にします。
 
 ## 本番環境
 
 - OS: Ubuntu 22.04 LTS
 - SSH alias: `kagoya-root`
-- 現行クラスタ: PostgreSQL 14 `14/main`、5432
-- 移行先: Docker Composeの`postgres:16`、Compose内部5432
+- 本番クラスタ: Docker Composeの`postgres:16`、Compose内部5432
+- 旧クラスタ: PostgreSQL 14 `14/main`、停止・切り戻し用
 - DB: `l4discord`（所有者`l4bot`）、`kendou_ranking`（所有者`kendou_ranking_app`）
-- アプリ: `l4-discordbot.service`、`kendou-ranking.service`
+- 本番Bot: Docker Composeプロジェクト`l4discord`の`bot`
+- 旧Bot: `l4-discordbot.service`、停止・無効化・mask済み
+- アプリ: `kendou-ranking.service`
 - 停止枠: 04:00〜04:30 JST
 - 切り戻し判断: 停止から20分
 
@@ -296,19 +304,31 @@ DockerのVPSへのインストールは今回行いません。DockerとCompose�
 ```bash
 set -Eeuo pipefail
 cd /opt/L4_DiscordBot
-test -f .env
+compose_env=/etc/l4discord/l4discord-compose.env
+sudo test -r "$compose_env"
+sudo test -f /opt/L4_DiscordBot/.env
 sudo install -d -m 0750 -o 1000 -g 1000 /opt/L4_DiscordBot/data/production
-docker compose -p l4discord config --quiet
-docker compose -p l4discord pull postgres bot
-docker compose -p l4discord run --rm --no-deps bot node --version
+sudo docker compose -p l4discord --env-file "$compose_env" config --quiet
+sudo docker compose -p l4discord --env-file "$compose_env" pull postgres bot
+sudo docker compose -p l4discord --env-file "$compose_env" run --rm --no-deps bot node --version
 ```
 
-`.env`には少なくとも次を設定します。`POSTGRES_PASSWORD`はCompose初回起動時のbootstrap用
+`/etc/l4discord/l4discord-compose.env`には少なくとも次を設定します。`POSTGRES_PASSWORD`はCompose初回起動時のbootstrap用
 `postgres`ロールのパスワード、`BOT_DATABASE_URL`は復元した既存`l4bot`ロールの接続URLです。
 論理復元で`l4bot`のパスワードも戻るため、後者は実際の既存パスワードをURLエンコードして指定します。
+初回作成時はrootで次を実行してから、rootだけが読める状態で値を入力します。
+
+```bash
+sudo install -d -m 0750 /etc/l4discord
+sudo touch /etc/l4discord/l4discord-compose.env
+sudo chown root:root /etc/l4discord/l4discord-compose.env
+sudo chmod 0600 /etc/l4discord/l4discord-compose.env
+sudoedit /etc/l4discord/l4discord-compose.env
+```
 
 ```dotenv
 BOT_IMAGE=ghcr.io/ciellllllllll/l4discord_bot:YOUR_COMMIT_SHA
+BOT_ENV_FILE=/opt/L4_DiscordBot/.env
 BOT_DATABASE_URL=postgres://l4bot:EXISTING_L4BOT_PASSWORD@postgres:5432/l4discord
 POSTGRES_PASSWORD=COMPOSE_POSTGRES_PASSWORD
 POSTGRES_HOST_PORT=5432
@@ -316,17 +336,21 @@ BOT_DATA_DIR=./data/production
 BOT_LEGACY_ATTACHMENT_DATA_DIR=./data/message_log_attachments
 ```
 
-GHCRが非公開の場合は、VPSのDockerへパッケージ読み取り権限を持つデプロイトークンで
-`docker login ghcr.io`を行います。トークンは`.env`やリポジトリへ保存しません。
+`/opt/L4_DiscordBot/.env`にはDiscordトークンなどBot実行時の秘密情報を設定します。
+Actionsはこのファイルを変更せず、Compose用ファイルの`BOT_IMAGE`だけを書き換えます。
+
+GHCRが非公開の場合は、VPSのroot Dockerへパッケージ読み取り権限を持つデプロイトークンで
+`sudo docker login ghcr.io`を行います。トークンは`.env`やリポジトリへ保存しません。
 
 `BOT_DATABASE_URL`のホスト名は`postgres`にします。Composeは既存`.env`に残った
 `PRODUCTION_DATABASE_URL`や永続パス設定を上書きし、コンテナ内の接続先と
 `/app/data/production`配下の保存先を使用します。workerのユーザー辞書を使う場合は、
 ホストのパスではなく`/app/data/production/...`を`JAPANESE_WORKER_USER_DICT_PATH`へ設定します。
 
-GitHub Release公開時または`Publish Docker image` workflowの手動実行時に、GHCRへLinux/amd64イメージが
-`${BOT_IMAGE}`のSHAタグで公開されます。`latest`のような上書きタグは使いません。
-既存の`deploy-release.yml`はDocker切り替え完了までsystemd方式のまま残します。
+`release`ブランチへのpushで`Deploy release to VPS`がGHCRへLinux/amd64イメージを公開し、同じコミットSHAの
+イメージをVPSへ反映します。`Publish Docker image` workflowは手動実行専用です。`latest`のような上書きタグは使いません。
+ActionsはsystemdのBotがinactiveかつmaskedであることも確認します。systemdへ戻す場合だけ、先にComposeのbotを停止し、
+明示的に`systemctl unmask`してsystemd版を起動します。Docker運用へ戻す前にはsystemd版を停止・disable・maskへ戻します。
 
 バックアップserviceは、切り替え前はPostgreSQL 14のUnixソケットを使います。切り替え後に
 ComposeのPostgreSQL 16へ向ける場合だけ、`/etc/l4discord/postgresql-backup.env`へ次を設定し、
@@ -560,7 +584,8 @@ if sudo systemctl is-active --quiet postgresql@14-main; then
 fi
 sudo systemctl start postgresql@14-main
 sudo -u postgres psql -X -d postgres -c 'SELECT version();'
-sudo systemctl start kendou-ranking l4-discordbot
+sudo systemctl unmask l4-discordbot
+sudo systemctl enable --now kendou-ranking l4-discordbot
 sudo systemctl enable --now l4-postgresql-backup.timer
 sudo systemctl status postgresql@14-main kendou-ranking l4-discordbot --no-pager
 ~~~
@@ -609,7 +634,8 @@ sudo -u postgres "$pg_restore_bin" --exit-on-error --create -U postgres -d postg
 if ! diff -u /root/data-production-before.sha256 /root/data-production-after-rollback.sha256; then
   echo 'data/production changed after PG16 writes; keep files and restore from a separate file backup if required' >&2
 fi
-sudo systemctl start kendou-ranking l4-discordbot
+sudo systemctl unmask l4-discordbot
+sudo systemctl enable --now kendou-ranking l4-discordbot
 sudo systemctl enable --now l4-postgresql-backup.timer
 sudo systemctl status postgresql@14-main kendou-ranking l4-discordbot --no-pager
 ~~~
@@ -624,8 +650,8 @@ docker compose -p l4discord ps
 docker compose -p l4discord logs --no-color --tail=200 bot postgres
 ~~~
 
-現行systemd向けreleaseデプロイは、Docker方式での稼働確認と切り戻し確認が終わるまで残します。
-確認後にreleaseデプロイをDocker方式へ変更する場合は、次の変更としてレビューします。
+release向けデプロイはDocker方式へ切り替え済みです。Actionsはsystemdを再起動せず、
+`/etc/l4discord/l4discord-compose.env`を使ってComposeのbotサービスだけを更新します。
 
 旧14/mainは停止状態で7日間保持します。これは比較・調査用であり、PG16稼働後の復旧先ではありません。
 7日後、最新PG16バックアップの完全復元に成功し、削除の明示承認を得た場合だけ旧クラスタを削除します。
