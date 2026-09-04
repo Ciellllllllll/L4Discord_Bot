@@ -73,9 +73,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
     env:
       BOT_IMAGE: ${{ needs.publish.outputs.image }}:${{ github.sha }}
       RELEASE_SHA: ${{ github.sha }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Deploy Docker image over SSH
@@ -85,7 +87,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          envs: BOT_IMAGE,RELEASE_SHA
+          envs: BOT_IMAGE,RELEASE_SHA,GHCR_TOKEN
           script: |
             set -Eeuo pipefail
 
@@ -150,6 +152,8 @@ jobs:
             test "$(docker_cli inspect -f '{{.State.Health.Status}}' "$postgres_container")" = healthy
 
             compose config --quiet
+            test -n "$GHCR_TOKEN"
+            printf '%s' "$GHCR_TOKEN" | sudo docker login ghcr.io --username github-actions[bot] --password-stdin >/dev/null
             compose pull bot
             check_release_sha
 
