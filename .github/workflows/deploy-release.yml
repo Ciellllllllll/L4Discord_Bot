@@ -103,28 +103,22 @@ jobs:
 
             cd /opt/L4_DiscordBot
             compose_env=/etc/l4discord/l4discord-compose.env
-            sudo test -r "$compose_env"
-            sudo grep -q '^BOT_IMAGE=' "$compose_env"
 
-            systemd_state=$(sudo /bin/systemctl is-active l4-discordbot 2>/dev/null || true)
+            systemd_state=$(/bin/systemctl is-active l4-discordbot 2>/dev/null || true)
             if [ "$systemd_state" != inactive ]; then
               echo "systemd Bot must be inactive before Docker deployment (state: $systemd_state)" >&2
               exit 1
             fi
-            systemd_enabled=$(sudo /bin/systemctl is-enabled l4-discordbot 2>/dev/null || true)
+            systemd_enabled=$(/bin/systemctl is-enabled l4-discordbot 2>/dev/null || true)
             if [ "$systemd_enabled" != masked ]; then
               echo "systemd Bot must be masked before Docker deployment (state: $systemd_enabled)" >&2
               exit 1
             fi
 
             app_user=$(stat -c '%U' /opt/L4_DiscordBot)
-            test -n "$app_user"
+            test "$app_user" = "$(id -un)"
             run_git() {
-              if [ "$(id -un)" = "$app_user" ]; then
-                git -c safe.directory=/opt/L4_DiscordBot "$@"
-              else
-                sudo -u "$app_user" git -c safe.directory=/opt/L4_DiscordBot "$@"
-              fi
+              git -c safe.directory=/opt/L4_DiscordBot "$@"
             }
 
             check_release_sha() {
@@ -140,11 +134,15 @@ jobs:
             run_git checkout release
             run_git reset --hard "$RELEASE_SHA"
 
+            image_env=/opt/L4_DiscordBot/.deploy-bot-image.env
+            printf 'BOT_IMAGE=%s\n' "$BOT_IMAGE" > "$image_env"
+            chmod 0644 "$image_env"
+
             docker_cli() {
-              sudo docker "$@"
+              sudo /usr/bin/docker "$@"
             }
             compose() {
-              sudo env BOT_IMAGE="$BOT_IMAGE" docker compose -p l4discord --env-file "$compose_env" "$@"
+              sudo /usr/bin/docker compose -p l4discord --env-file "$compose_env" --env-file "$image_env" "$@"
             }
 
             postgres_container=$(compose ps -q postgres)
@@ -153,13 +151,11 @@ jobs:
 
             compose config --quiet
             test -n "$GHCR_TOKEN"
-            printf '%s' "$GHCR_TOKEN" | sudo docker login ghcr.io --username github-actions[bot] --password-stdin >/dev/null
+            printf '%s' "$GHCR_TOKEN" | sudo /usr/bin/docker login ghcr.io --username github-actions[bot] --password-stdin >/dev/null
             compose pull bot
             check_release_sha
 
             compose up -d --no-deps --force-recreate bot
-            sudo sed -i "s#^BOT_IMAGE=.*#BOT_IMAGE=$BOT_IMAGE#" "$compose_env"
-            sudo grep -Fxq "BOT_IMAGE=$BOT_IMAGE" "$compose_env"
 
             bot_container=$(compose ps -q bot)
             test -n "$bot_container"
