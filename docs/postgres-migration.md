@@ -340,7 +340,8 @@ BOT_LEGACY_ATTACHMENT_DATA_DIR=./data/message_log_attachments
 Actionsはこのファイルを変更せず、Compose用ファイルの`BOT_IMAGE`だけを書き換えます。
 
 GHCRが非公開の場合は、VPSのroot Dockerへパッケージ読み取り権限を持つデプロイトークンで
-`sudo docker login ghcr.io`を行います。トークンは`.env`やリポジトリへ保存しません。
+`sudo docker login ghcr.io`を行います。トークンは`.env`やリポジトリへ保存しません。Deploy workflowはこの手動ログインとは別に、
+実行中の`GITHUB_TOKEN`でVPSのroot Dockerへログインしてからイメージを取得します。
 
 `BOT_DATABASE_URL`のホスト名は`postgres`にします。Composeは既存`.env`に残った
 `PRODUCTION_DATABASE_URL`や永続パス設定を上書きし、コンテナ内の接続先と
@@ -349,6 +350,7 @@ GHCRが非公開の場合は、VPSのroot Dockerへパッケージ読み取り�
 
 `release`ブランチへのpushで`Deploy release to VPS`がGHCRへLinux/amd64イメージを公開し、同じコミットSHAの
 イメージをVPSへ反映します。`Publish Docker image` workflowは手動実行専用です。`latest`のような上書きタグは使いません。
+`Deploy release to VPS`は実行ごとにActionsの`GITHUB_TOKEN`でVPSのroot DockerへGHCRログインしてから、イメージを取得します。
 ActionsはsystemdのBotがinactiveかつmaskedであることも確認します。systemdへ戻す場合だけ、先にComposeのbotを停止し、
 明示的に`systemctl unmask`してsystemd版を起動します。Docker運用へ戻す前にはsystemd版を停止・disable・maskへ戻します。
 
