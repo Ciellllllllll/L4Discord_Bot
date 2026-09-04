@@ -49,9 +49,10 @@ DockerイメージをGHCRへ公開し、そのままVPSのCompose Botだけを�
 `Publish Docker image`は手動実行専用で、自動デプロイとは別にイメージを公開したい場合だけ使います。
 ActionsはVPS上の`/etc/l4discord/l4discord-compose.env`をComposeの`--env-file`として使います。
 このファイルには`BOT_IMAGE`、`BOT_DATABASE_URL`、`POSTGRES_PASSWORD`などのCompose設定を置き、
-BotのDiscordトークンなどは別の`/opt/L4_DiscordBot/.env`へ置きます。Actionsが更新するのは前者の`BOT_IMAGE`だけです。
-このCompose用ファイルはroot所有・`0600`で作成します。GitHub Actionsの`VPS_USER`は、rootで接続するか、
-パスワードなしの`sudo`経由でこのファイルの読み取りとDocker操作を行える状態にします。
+BotのDiscordトークンなどは別の`/opt/L4_DiscordBot/.env`へ置きます。ActionsがComposeへ渡すのは`BOT_IMAGE`だけです。
+このCompose用ファイルはroot所有・`0600`で作成します。GitHub Actionsの`VPS_USER`は`/opt/L4_DiscordBot`の所有者とし、
+パスワードなしの`sudo`は`/usr/bin/docker`だけに許可します。Actionsはroot専用ファイルを直接読み書きせず、
+`/opt/L4_DiscordBot/.deploy-bot-image.env`を作成して`BOT_IMAGE`だけをComposeへ上書きで渡します。
 
 ## 本番環境
 
@@ -337,7 +338,8 @@ BOT_LEGACY_ATTACHMENT_DATA_DIR=./data/message_log_attachments
 ```
 
 `/opt/L4_DiscordBot/.env`にはDiscordトークンなどBot実行時の秘密情報を設定します。
-Actionsはこのファイルを変更せず、Compose用ファイルの`BOT_IMAGE`だけを書き換えます。
+Actionsはこのroot専用ファイルを変更せず、同じディレクトリの`.deploy-bot-image.env`へ`BOT_IMAGE`だけを書き込みます。
+このファイルには秘密情報を置きません。
 
 GHCRが非公開の場合は、VPSのroot Dockerへパッケージ読み取り権限を持つデプロイトークンで
 `sudo docker login ghcr.io`を行います。トークンは`.env`やリポジトリへ保存しません。Deploy workflowはこの手動ログインとは別に、
@@ -350,7 +352,8 @@ GHCRが非公開の場合は、VPSのroot Dockerへパッケージ読み取り�
 
 `release`ブランチへのpushで`Deploy release to VPS`がGHCRへLinux/amd64イメージを公開し、同じコミットSHAの
 イメージをVPSへ反映します。`Publish Docker image` workflowは手動実行専用です。`latest`のような上書きタグは使いません。
-`Deploy release to VPS`は実行ごとにActionsの`GITHUB_TOKEN`でVPSのroot DockerへGHCRログインしてから、イメージを取得します。
+`Deploy release to VPS`は実行ごとにActionsの`GITHUB_TOKEN`でVPSのroot DockerへGHCRログインしてから、
+`.deploy-bot-image.env`を使ってイメージを取得します。VPSへの`sudo`はDocker操作にだけ使います。
 ActionsはsystemdのBotがinactiveかつmaskedであることも確認します。systemdへ戻す場合だけ、先にComposeのbotを停止し、
 明示的に`systemctl unmask`してsystemd版を起動します。Docker運用へ戻す前にはsystemd版を停止・disable・maskへ戻します。
 
