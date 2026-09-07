@@ -92,6 +92,7 @@ const profileOverridableKeys = [
   "YOUTUBE_PREVIEW_ENABLED",
   "YOUTUBE_DATA_API_KEY",
   "YOUTUBE_REQUEST_TIMEOUT_MS",
+  "GITHUB_API_TOKEN",
   "ADHD_WATCHER_ENABLED",
   "ADHD_POLL_INTERVAL_MS",
   "ADHD_RSS_REQUEST_TIMEOUT_MS",
@@ -374,6 +375,10 @@ const envSchema = z.object({
   YOUTUBE_REQUEST_TIMEOUT_MS: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  ),
+  GITHUB_API_TOKEN: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().optional(),
   ),
   ADHD_WATCHER_ENABLED: z.preprocess(envFlagTrueByDefault, z.boolean()),
   ADHD_POLL_INTERVAL_MS: z.coerce.number().int().min(60_000).default(60_000),

@@ -216,7 +216,7 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
       message_id text PRIMARY KEY,
       guild_id text NOT NULL,
       channel_id text NOT NULL,
-      source_kind text NOT NULL CHECK (source_kind IN ('x', 'youtube', 'steam')),
+      source_kind text NOT NULL CHECK (source_kind IN ('x', 'youtube', 'steam', 'github')),
       source_url text NOT NULL,
       document jsonb NOT NULL,
       translations jsonb NOT NULL,
