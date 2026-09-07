@@ -9,6 +9,7 @@ import {
   deleteExpiredPreviewTranslationStates,
   getPreviewTranslationState,
   migratePostgresPreviewTranslationStates,
+  migratePostgresGithubPreviewSupport,
   savePreviewTranslationState,
   type PreviewTranslationStateV1,
 } from "./previewState.repository.js";
@@ -281,7 +282,7 @@ test("a newly created PostgreSQL main schema includes the common preview state t
   } as never);
   const sql = queries.join("\n");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS preview_translation_states/i);
-  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam'\)\)/i);
+  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam', 'github'\)\)/i);
   assert.match(sql, /idx_preview_translation_states_expires/i);
 });
 
@@ -294,6 +295,16 @@ test("v16 migration extends preview states to Steam", async () => {
   const sql = queries.join("\n");
   assert.match(sql, /DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check/i);
   assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam'\)\)/i);
+});
+
+test("v18 migration extends preview states to GitHub", async () => {
+  const queries: string[] = [];
+  await migratePostgresGithubPreviewSupport({
+    query: async (sql: string) => { queries.push(sql); return { rows: [], rowCount: 0 }; },
+  } as never);
+  const sql = queries.join("\n");
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check/i);
+  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam', 'github'\)\)/i);
 });
 
 test("v15 backfills only active X rows, preserves expiry, and does not overwrite on rerun", async () => {

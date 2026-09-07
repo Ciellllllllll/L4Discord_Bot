@@ -173,7 +173,15 @@ function buildActionRow(
   translated: boolean,
   mode: PreviewDisplayMode,
 ): APIActionRowComponent<APIButtonComponent> {
-  const label = document.openLabel.trim() || (document.source === "x" ? "Xで開く" : "YouTubeで開く");
+  const label = document.openLabel.trim() || (
+    document.source === "x"
+      ? "Xで開く"
+      : document.source === "steam"
+        ? "Steamで開く"
+        : document.source === "github"
+          ? "GitHubで開く"
+          : "YouTubeで開く"
+  );
   const components: APIButtonComponent[] = [{
     type: ComponentType.Button,
     style: ButtonStyle.Link,

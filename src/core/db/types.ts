@@ -310,7 +310,7 @@ export interface PreviewTranslationStatesRow {
   message_id: string;
   guild_id: string;
   channel_id: string;
-  source_kind: "x" | "youtube" | "steam";
+  source_kind: "x" | "youtube" | "steam" | "github";
   source_url: string;
   document: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
   translations: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
