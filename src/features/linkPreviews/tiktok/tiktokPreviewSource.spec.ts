@@ -336,6 +336,42 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
   assert.equal(JSON.stringify(payload.components).includes("https://cdn.example/avatar.png"), true);
 }
 
+// CDN が応答しなくても、メディア取得全体の締め切りで打ち切り、残りは元URLで表示する
+{
+  const images = Array.from({ length: 10 }, (_, i) => `https://cdn.example/${i}.png`);
+  let imageRequests = 0;
+  const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
+    if (url.startsWith("https://www.tikwm.com/")) {
+      return new Response(JSON.stringify({
+        code: 0,
+        data: { ...apiData.data, author: { ...apiData.data.author, avatar: "https://cdn.example/avatar.png" }, images },
+      }), { status: 200 });
+    }
+    imageRequests += 1;
+    // 応答せず、signal が中断されたときだけ失敗する（詰まった CDN の再現）
+    return await new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+  };
+  // AbortSignal.timeout のタイマーはイベントループを保持しないため、テスト中だけ保持用タイマーを置く
+  const keepAlive = setTimeout(() => undefined, 5_000);
+  const startedAt = Date.now();
+  const [built] = await buildTikTokReplyPayloads([{ url: "https://www.tiktok.com/@user/photo/123" }], {
+    fetcher,
+    attachmentSizeLimitBytes: 1024,
+    translate: async () => ({ translations: {} }),
+    mediaTotalTimeoutMs: 50,
+  });
+  const elapsed = Date.now() - startedAt;
+  clearTimeout(keepAlive);
+  const payload = built as TikTokPreviewPayload;
+  assert.ok(elapsed < 1_000, `締め切りで打ち切る（${elapsed}ms）`);
+  assert.equal(imageRequests, 1, "締め切り後は新たなダウンロードを始めない");
+  assert.equal(payload.files.length, 0);
+  const json = JSON.stringify(payload.components);
+  assert.ok(images.every((url) => json.includes(url)));
+}
+
 // 翻訳はメディアのダウンロードより先に行う（動画バッファを抱えたまま翻訳を待たない）
 {
   const events: string[] = [];

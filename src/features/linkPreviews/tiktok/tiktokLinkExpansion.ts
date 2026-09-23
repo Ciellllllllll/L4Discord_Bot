@@ -27,6 +27,11 @@ import {
 } from "./tiktokPreviewSource.js";
 
 const DOWNLOAD_TIMEOUT_MS = 20_000;
+/**
+ * 1投稿あたりのメディア取得（動画・画像・アイコン）全体の締め切り。
+ * 構築は共有キューで直列に走るため、CDN が詰まっても1投稿がキューを長時間占有しないようにする
+ */
+const MEDIA_TOTAL_TIMEOUT_MS = 30_000;
 /** 画像1枚あたりの上限。TikTok CDN の画像URLは約1日で失効するため、画像も添付する */
 const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 /** Discord のメッセージ本文の文字数上限 */
@@ -74,6 +79,8 @@ export type TikTokReplyBuildOptions = {
   aiRouter?: AiProviderRouter;
   guildId?: string;
   translate?: (document: PreviewDocument) => Promise<PreviewDocumentTranslations>;
+  /** テスト用。メディア取得全体の締め切り（既定 30 秒） */
+  mediaTotalTimeoutMs?: number;
 };
 
 export function buildTikTokFallbackReply(urls: string | readonly string[]): MessageCreateOptions {
@@ -116,12 +123,13 @@ async function downloadMedia(
   url: string,
   kind: "video" | "image",
   maxBytes: number,
+  deadline: AbortSignal,
   fetcher: FetchLike = fetch,
 ): Promise<DownloadedMedia | undefined> {
-  if (maxBytes <= 0) return undefined;
+  if (maxBytes <= 0 || deadline.aborted) return undefined;
   try {
     const response = await fetcher(url, {
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      signal: AbortSignal.any([AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), deadline]),
       headers: { Accept: kind === "video" ? "video/mp4,video/*;q=0.9,*/*;q=0.1" : "image/*;q=0.9,*/*;q=0.1" },
     });
     if (!response.ok) {
@@ -149,9 +157,10 @@ type AttachedMedia = { mediaUrls: string[]; avatarUrl?: string; files: Attachmen
 
 /**
  * 動画・画像・アイコンを添付ファイルにする。合計が上限を超えないよう残り容量を減らしながら取得し、
- * 取得できなかった画像は元URLのまま表示する。
+ * 取得できなかった画像や締め切り後の分は元URLのまま表示する。
  */
 async function attachTikTokMedia(video: TikTokPreview, options: TikTokReplyBuildOptions): Promise<AttachedMedia> {
+  const deadline = AbortSignal.timeout(options.mediaTotalTimeoutMs ?? MEDIA_TOTAL_TIMEOUT_MS);
   let remaining = options.attachmentSizeLimitBytes;
   const files: AttachmentBuilder[] = [];
   const attach = (media: DownloadedMedia, name: string): string => {
@@ -162,12 +171,12 @@ async function attachTikTokMedia(video: TikTokPreview, options: TikTokReplyBuild
   const attachImage = async (url: string, baseName: string): Promise<string> => {
     // 写真10枚＋アイコンなど、添付数の上限を超える分は元URLのまま表示する
     if (files.length >= MAX_ATTACHMENTS_PER_MESSAGE) return url;
-    const media = await downloadMedia(url, "image", Math.min(IMAGE_MAX_BYTES, remaining), options.fetcher);
+    const media = await downloadMedia(url, "image", Math.min(IMAGE_MAX_BYTES, remaining), deadline, options.fetcher);
     return media ? attach(media, `${baseName}.${IMAGE_EXTENSIONS[media.contentType] ?? "jpg"}`) : url;
   };
 
   const mediaUrls: string[] = [];
-  const videoMedia = video.playUrl ? await downloadMedia(video.playUrl, "video", remaining, options.fetcher) : undefined;
+  const videoMedia = video.playUrl ? await downloadMedia(video.playUrl, "video", remaining, deadline, options.fetcher) : undefined;
   if (videoMedia) {
     mediaUrls.push(attach(videoMedia, TIKTOK_MEDIA_ATTACHMENT_FILENAME));
   } else {
