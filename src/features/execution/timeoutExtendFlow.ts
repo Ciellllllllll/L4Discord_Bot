@@ -216,7 +216,10 @@ async function editTeMessagesStopped(
     if (!mid) continue;
     try {
       const m = await channel.messages.fetch(mid);
-      await m.edit({ content, embeds: [], components });
+      // Components V2 メッセージは content を持てないため、見出しカードへ差し替える
+      await m.edit(m.flags?.has(MessageFlags.IsComponentsV2)
+        ? componentCardsPayload([new ComponentCardBuilder().setDescription(content)], components)
+        : { content, embeds: [], components });
     } catch (err) {
       ctx.log.warn({ err, mid }, "timeoutExtend: edit stopped message failed");
     }
