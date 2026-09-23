@@ -180,7 +180,9 @@ function buildActionRow(
         ? "Steamで開く"
         : document.source === "github"
           ? "GitHubで開く"
-          : "YouTubeで開く"
+          : document.source === "tiktok"
+            ? "TikTokで開く"
+            : "YouTubeで開く"
   );
   const components: APIButtonComponent[] = [{
     type: ComponentType.Button,
