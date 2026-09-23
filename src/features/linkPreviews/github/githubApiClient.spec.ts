@@ -269,4 +269,49 @@ for (const status of [403, 429]) {
   if (result.status === "error") assert.equal(result.reason, "invalid_json");
 }
 
+// 64KB ずつ最大 4MB を返す応答。読まれた回数を数えて、上限で打ち切られたかを確かめる
+function hugeBody(): { stream: ReadableStream<Uint8Array>; pulled: () => number } {
+  let pulled = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += 1;
+      if (pulled > 64) controller.close();
+      else controller.enqueue(new Uint8Array(64 * 1024));
+    },
+  });
+  return { stream, pulled: () => pulled };
+}
+
+// highWaterMark: 0 で先読みを止め、実際に読まれたときだけ pull が呼ばれるようにする
+function untouchedBody(): { stream: ReadableStream<Uint8Array>; read: () => boolean } {
+  let read = false;
+  const stream = new ReadableStream<Uint8Array>({ pull() { read = true; } }, { highWaterMark: 0 });
+  return { stream, read: () => read };
+}
+
+// 巨大な応答は上限で読み込みを打ち切る
+{
+  const huge = hugeBody();
+  const client = new GithubApiClient({
+    maxResponseBytes: 1024 * 1024,
+    fetcher: async () => new Response(huge.stream, { status: 200 }),
+  });
+  const result = await client.fetchPreview(repositoryTarget);
+  assert.equal(result.status, "error");
+  if (result.status === "error") assert.equal(result.reason, "response_too_large");
+  assert.ok(huge.pulled() < 64, "上限を超えた時点で読み込みを打ち切る");
+}
+
+// エラー応答の本文は読まずに捨てる
+{
+  const errorBody = untouchedBody();
+  const client = new GithubApiClient({
+    fetcher: async () => new Response(errorBody.stream, { status: 404 }),
+  });
+  const result = await client.fetchPreview(repositoryTarget);
+  assert.equal(result.status, "error");
+  if (result.status === "error") assert.equal(result.reason, "not_found");
+  assert.equal(errorBody.read(), false);
+}
+
 console.log("githubApiClient.spec.ts: all assertions passed");

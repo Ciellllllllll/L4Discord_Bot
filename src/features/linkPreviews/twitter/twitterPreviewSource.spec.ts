@@ -107,6 +107,42 @@ test("TweetPreview文書は本文と引用だけを翻訳対象にし、固定�
   assert.equal(JSON.stringify(document).includes("https://pbs.twimg.com/media/quote.jpg"), true);
 });
 
+// 64KB ずつ最大 4MB を返す応答。読まれた回数を数えて、上限で打ち切られたかを確かめる
+function hugeBody(): { stream: ReadableStream<Uint8Array>; pulled: () => number } {
+  let pulled = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += 1;
+      if (pulled > 64) controller.close();
+      else controller.enqueue(new Uint8Array(64 * 1024));
+    },
+  });
+  return { stream, pulled: () => pulled };
+}
+
+// highWaterMark: 0 で先読みを止め、実際に読まれたときだけ pull が呼ばれるようにする
+function untouchedBody(): { stream: ReadableStream<Uint8Array>; read: () => boolean } {
+  let read = false;
+  const stream = new ReadableStream<Uint8Array>({ pull() { read = true; } }, { highWaterMark: 0 });
+  return { stream, read: () => read };
+}
+
+test("FxTwitter取得は巨大な応答やエラー応答の本文を丸ごと読み込まない", async () => {
+  const huge = hugeBody();
+  assert.equal((await fetchFixTweetPreview(
+    { id: "1", screenName: "u" },
+    async () => new Response(huge.stream, { status: 200 }),
+  )).status, "fallback");
+  assert.ok(huge.pulled() < 64, "上限を超えた時点で読み込みを打ち切る");
+
+  const errorBody = untouchedBody();
+  assert.deepEqual(await fetchFixTweetPreview(
+    { id: "1", screenName: "u" },
+    async () => new Response(errorBody.stream, { status: 503 }),
+  ), { status: "fallback", reason: "http_503" });
+  assert.equal(errorBody.read(), false);
+});
+
 test("FxTwitter取得はHTTP失敗と不正JSONをfallbackへ変換する", async () => {
   assert.equal((await fetchFixTweetPreview(
     { id: "1", screenName: "u" },
