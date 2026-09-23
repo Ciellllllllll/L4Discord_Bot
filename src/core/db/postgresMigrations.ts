@@ -48,6 +48,7 @@ export async function applyPostgresMigrations(pool: Pool, migrations: PostgresMi
         await client.query("SELECT pg_advisory_unlock(hashtext(current_schema() || ':postgres_schema_migrations'))");
       }
     } catch (unlockError) {
+      // eslint-disable-next-line no-unsafe-finally -- surface unlock failure only when the migration itself succeeded
       if (!migrationError) throw unlockError;
     } finally {
       client.release();

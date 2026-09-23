@@ -6,7 +6,7 @@ import { StartupReport } from "./startupReport.js";
 import { syncGuildApplicationCommands } from "./syncCommands.js";
 import { handleSlashCommand } from "../commands/slashHandlers.js";
 import { getGuildSettingsData } from "../core/guildSettings.js";
-import { getDetecterService } from "../features/detecter/detecterService.js";
+import { getDetecterService, shutdownDetecterService } from "../features/detecter/detecterService.js";
 import { reconcileExecutionFlows, shutdownExecutionFlowRuntime } from "../features/execution/executionFlow.js";
 import { reconcileTimeoutExtendFlows, shutdownTimeoutExtendFlowRuntime } from "../features/execution/timeoutExtendFlow.js";
 import { startGameDealWatcher, type GameDealWatcherController } from "../features/gameDeals/gameDealWatcher.js";
@@ -99,6 +99,7 @@ export function createRuntimeShutdown(options: RuntimeResources & RuntimeCoreRes
 
 /** Discord client を閉じる前に、処罰系フローが保持する期限タイマーと対象ロックを解放する。 */
 export async function shutdownModerationFlowRuntimes(): Promise<void> {
+  shutdownDetecterService();
   await Promise.all([shutdownExecutionFlowRuntime(), shutdownTimeoutExtendFlowRuntime()]);
 }
 
@@ -217,10 +218,9 @@ export function createRuntimeResourceLifecycle(options: {
     isClosed: () => closed,
     scheduleTimeout(callback, delay) {
       if (closed) return;
-      let timer: NodeJS.Timeout | undefined;
       const schedule = options.setTimeout ?? setTimeout;
-      timer = schedule(() => {
-        if (timer) deferredTimers.delete(timer);
+      const timer = schedule(() => {
+        deferredTimers.delete(timer);
         if (!closed) callback();
       }, delay);
       deferredTimers.add(timer);

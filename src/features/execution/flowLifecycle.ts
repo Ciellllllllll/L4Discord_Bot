@@ -291,8 +291,7 @@ export class FlowDeadlineTimers<Handle> {
   schedule(flowId: string, delayMs: number, callback: () => void): void {
     this.clear(flowId);
 
-    let handle: Handle;
-    handle = this.driver.setTimeout(() => {
+    const handle: Handle = this.driver.setTimeout(() => {
       if (this.handles.get(flowId) !== handle) return;
       this.handles.delete(flowId);
       callback();

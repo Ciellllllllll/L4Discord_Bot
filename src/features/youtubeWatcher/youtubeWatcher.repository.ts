@@ -328,6 +328,7 @@ export class PostgresYouTubeWatcherRepository {
         if (locked) await client.query(`SELECT pg_advisory_unlock(hashtext('${lockName}'))`);
       } catch (unlockError) {
         releaseError = unlockError instanceof Error ? unlockError : new Error(String(unlockError));
+        // eslint-disable-next-line no-unsafe-finally -- surface unlock failure only when the callback itself succeeded
         if (!callbackError) throw releaseError;
       } finally {
         client.release(releaseError);

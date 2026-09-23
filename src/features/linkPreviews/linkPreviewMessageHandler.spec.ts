@@ -374,7 +374,7 @@ async function run(): Promise<void> {
   assert.equal((thumbnailNativeReplies[0] as { flags?: number }).flags, MessageFlags.IsComponentsV2);
   assert.equal(JSON.stringify(thumbnailNativeReplies[0]).includes("rr.example.googlevideo.com/thumbnail-native.mp4"), false);
 
-  let urllessNativeFallbackTargets: string[] = [];
+  const urllessNativeFallbackTargets: string[] = [];
   const urllessReplies: unknown[] = [];
   await new LinkPreviewMessageHandler(injectedCtx as never, {
     buildYouTubeReplyPayloads: async (targets) => {

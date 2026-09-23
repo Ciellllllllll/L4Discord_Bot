@@ -98,7 +98,7 @@ export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
       allowedMentions: { parse: [] as const },
     };
     const panelId = typeof data.panel_message_id === "string" ? data.panel_message_id : null;
-    let panel = panelId ? await thread.messages.fetch(panelId).catch(() => null) : null;
+    const panel = panelId ? await thread.messages.fetch(panelId).catch(() => null) : null;
     if (!panel) {
       const sent = await thread.send(payload).catch(() => null);
       if (sent) {

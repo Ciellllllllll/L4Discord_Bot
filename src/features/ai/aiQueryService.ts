@@ -78,7 +78,9 @@ export function readAiBasePromptFiles(config: AppConfig): { template: string; re
       const r = fs.readFileSync(file, "utf8");
       if (safeStrip(r)) template = r;
     }
-  } catch {}
+  } catch (err) {
+    console.warn(`failed to read base prompt file: ${file}`, err);
+  }
   const resolved = safeStrip(template) || "You are a helpful assistant.";
   return { template, resolved };
 }
@@ -206,17 +208,23 @@ export class AiQueryService {
     if (prevPath && prevPath !== nextPath && fs.existsSync(prevPath) && !fs.existsSync(nextPath)) {
       try {
         fs.copyFileSync(prevPath, nextPath);
-      } catch {}
+      } catch (err) {
+        this.ctx.log.warn({ err, path: nextPath }, "failed to migrate user prompt file");
+      }
     } else if (legacyPath !== nextPath && fs.existsSync(legacyPath) && !fs.existsSync(nextPath)) {
       try {
         fs.copyFileSync(legacyPath, nextPath);
-      } catch {}
+      } catch (err) {
+        this.ctx.log.warn({ err, path: nextPath }, "failed to migrate legacy user prompt file");
+      }
     }
 
     if (!fs.existsSync(nextPath)) {
       try {
         fs.writeFileSync(nextPath, this.basePromptTemplate, "utf8");
-      } catch {}
+      } catch (err) {
+        this.ctx.log.warn({ err, path: nextPath }, "failed to create user prompt file");
+      }
     }
 
     this.userPromptPaths.set(uid, nextPath);
@@ -238,7 +246,9 @@ export class AiQueryService {
     const text = safeStrip(promptText) || this.basePromptResolved;
     try {
       fs.writeFileSync(p, text, "utf8");
-    } catch {}
+    } catch (err) {
+      this.ctx.log.warn({ err, path: p }, "failed to write user prompt file");
+    }
   }
 
   // `/change_prompt` のモーダル送信からのみ呼ぶ。
@@ -255,7 +265,9 @@ export class AiQueryService {
     }
     try {
       fs.writeFileSync(p, text, "utf8");
-    } catch {}
+    } catch (err) {
+      this.ctx.log.warn({ err, path: p }, "failed to write user prompt file");
+    }
     this.userPromptPaths.set(uid, p);
   }
 

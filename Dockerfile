@@ -1,4 +1,4 @@
-FROM golang:1.22-bookworm AS japanese-worker-build
+FROM golang:1.26-bookworm AS japanese-worker-build
 
 WORKDIR /worker
 COPY workers/japanese-worker/go.mod workers/japanese-worker/go.sum ./
