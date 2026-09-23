@@ -9,6 +9,7 @@ import type { BotContext } from "../../../bot/context.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
+import { LocalLlmQueue } from "../../ai/localLlmQueue.js";
 import type { PreviewDocument } from "../shared/previewDocument.js";
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
 import { savePreviewTranslationState } from "../shared/previewState.repository.js";
@@ -26,6 +27,15 @@ import {
 const DOWNLOAD_TIMEOUT_MS = 20_000;
 /** 1メッセージで展開する TikTok リンクの上限。動画は最大100MBをメモリに保持するため絞る */
 export const MAX_TIKTOK_TARGETS_PER_MESSAGE = 3;
+/** 同時に構築→返信する件数。メッセージをまたいで動画バッファが積み上がらないよう全体で共有する */
+const TIKTOK_BUILD_MAX_CONCURRENT = 1;
+/** 実行待ちの上限。超えた分は動画をダウンロードせず元URLのみ返信する */
+const TIKTOK_BUILD_MAX_QUEUE = 10;
+
+const tiktokBuildQueue = new LocalLlmQueue({
+  maxConcurrent: TIKTOK_BUILD_MAX_CONCURRENT,
+  maxQueue: TIKTOK_BUILD_MAX_QUEUE,
+});
 export const TIKTOK_MEDIA_ATTACHMENT_FILENAME = "tiktok-preview.mp4";
 
 type LoggerLike = {
@@ -162,6 +172,8 @@ type TikTokExpansionDeps = {
   aiRouter?: AiProviderRouter;
   buildReplyPayloads?: typeof buildTikTokReplyPayloads;
   saveState?: typeof savePreviewTranslationState;
+  /** テスト用。省略時はプロセス全体で共有するキューを使う */
+  queue?: LocalLlmQueue;
 };
 
 export async function expandTikTokLinks(
@@ -177,26 +189,36 @@ export async function expandTikTokLinks(
     aiRouter: deps.aiRouter,
     guildId: message.guildId ?? deps.config?.GUILD_ID,
   };
-  // 構築→返信を1件ずつ行い、返信済みの動画バッファを次の構築前に手放す
-  for (const target of targets.slice(0, MAX_TIKTOK_TARGETS_PER_MESSAGE)) {
+  const buildAndReply = async (target: TikTokReplyTarget): Promise<void> => {
+    const [payload] = await build([target], options);
+    if (!payload) return;
+    const { previewState, ...replyPayload } = payload as TikTokPreviewPayload;
+    const reply = await message.reply(replyPayload);
+    if (!previewState || !message.guildId) return;
     try {
-      const [payload] = await build([target], options);
-      if (!payload) continue;
-      const { previewState, ...replyPayload } = payload as TikTokPreviewPayload;
-      const reply = await message.reply(replyPayload);
-      if (!previewState || !message.guildId) continue;
-      try {
-        await (deps.saveState ?? savePreviewTranslationState)(deps.db, {
-          version: 1,
-          messageId: reply.id,
-          guildId: message.guildId,
-          channelId: message.channelId,
-          sourceUrl: previewState.document.url,
-          ...previewState,
-        });
-      } catch (err) {
-        deps.log.warn({ err: String(err), messageId: reply.id }, "tiktok preview state save failed");
+      await (deps.saveState ?? savePreviewTranslationState)(deps.db, {
+        version: 1,
+        messageId: reply.id,
+        guildId: message.guildId,
+        channelId: message.channelId,
+        sourceUrl: previewState.document.url,
+        ...previewState,
+      });
+    } catch (err) {
+      deps.log.warn({ err: String(err), messageId: reply.id }, "tiktok preview state save failed");
+    }
+  };
+  const queue = deps.queue ?? tiktokBuildQueue;
+  // 構築→返信を共有キューで1件ずつ行い、返信済みの動画バッファを次の構築前に手放す
+  for (const [index, target] of targets.slice(0, MAX_TIKTOK_TARGETS_PER_MESSAGE).entries()) {
+    try {
+      const ticket = queue.enqueue({ userId: `${message.id}:${index}`, run: () => buildAndReply(target) });
+      if (ticket.ok) {
+        await ticket.promise;
+        continue;
       }
+      deps.log.warn({ reason: ticket.reason, messageId: message.id }, "tiktok preview queue full; replying original url");
+      await message.reply(buildTikTokFallbackReply(target.url));
     } catch (err) {
       deps.log.warn({ err: String(err) }, "tiktok preview reply error");
     }

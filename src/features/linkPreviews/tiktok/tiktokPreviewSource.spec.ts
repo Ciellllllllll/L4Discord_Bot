@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { ComponentType, MessageFlags } from "discord.js";
+import { LocalLlmQueue } from "../../ai/localLlmQueue.js";
 import { buildTikTokReplyPayloads, expandTikTokLinks, MAX_TIKTOK_TARGETS_PER_MESSAGE } from "./tiktokLinkExpansion.js";
 import { collectTikTokReplyTargets, normalizeTikwmResponse, parseTikTokUrl } from "./tiktokPreviewSource.js";
 
@@ -165,4 +166,55 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
   );
   assert.equal(payloads.length, MAX_TIKTOK_TARGETS_PER_MESSAGE);
   assert.equal(requested.length, MAX_TIKTOK_TARGETS_PER_MESSAGE);
+}
+
+// 複数メッセージが同時に来ても、構築→返信は共有キューで1件ずつしか走らない
+{
+  let running = 0;
+  let maxRunning = 0;
+  const deps = {
+    db: {} as never,
+    log: { warn: () => undefined },
+    attachmentSizeLimitBytes: 1024,
+    buildReplyPayloads: async () => {
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return [{ content: "x" }];
+    },
+  };
+  const message = (id: string) => ({
+    id,
+    guildId: null,
+    channelId: "c",
+    reply: async () => { running -= 1; return { id: `r-${id}` }; },
+  }) as never;
+  const targets = [0, 1, 2].map((i) => ({ url: `https://www.tiktok.com/@user/video/${i}`, videoId: String(i) }));
+  await Promise.all(["m1", "m2", "m3", "m4"].map((id) => expandTikTokLinks(message(id), targets, deps)));
+  assert.equal(maxRunning, 1);
+}
+
+// キューの待ちが上限を超えたら、動画を取得せず元URLだけを返信する
+{
+  const queue = new LocalLlmQueue({ maxConcurrent: 1, maxQueue: 0 });
+  let release!: () => void;
+  const blocker = queue.enqueue({ userId: "blocker", run: () => new Promise<void>((resolve) => { release = resolve; }) });
+  assert.equal(blocker.ok, true);
+  const replies: unknown[] = [];
+  let built = 0;
+  await expandTikTokLinks({
+    id: "m",
+    guildId: null,
+    channelId: "c",
+    reply: async (payload: unknown) => { replies.push(payload); return { id: "r" }; },
+  } as never, [{ url: "https://vm.tiktok.com/ZMabc/" }], {
+    db: {} as never,
+    log: { warn: () => undefined },
+    attachmentSizeLimitBytes: 1024,
+    queue,
+    buildReplyPayloads: async () => { built += 1; return []; },
+  });
+  release();
+  assert.equal(built, 0);
+  assert.deepEqual(replies, [{ content: "https://vm.tiktok.com/ZMabc/", allowedMentions: { parse: [], repliedUser: false } }]);
 }
