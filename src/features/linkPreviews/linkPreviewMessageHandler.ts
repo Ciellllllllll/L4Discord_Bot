@@ -317,12 +317,15 @@ export class LinkPreviewMessageHandler {
       })
       : [];
     if (tiktokTargets.length > 0) {
-      await this.deps.expandTikTokLinks(message, tiktokTargets, {
+      // 共有キューの待ちで後続処理（AutoMod など）を止めないよう、完了を待たずに実行する
+      void this.deps.expandTikTokLinks(message, tiktokTargets, {
         db: this.ctx.db,
         log: this.ctx.log,
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
+      }).catch((err: unknown) => {
+        this.ctx.log.warn({ err: String(err), messageId: message.id }, "tiktok preview expansion failed");
       });
     }
     const nestedYouTubeSteamLinks = youtubePlan

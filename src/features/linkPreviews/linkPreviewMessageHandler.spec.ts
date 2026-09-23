@@ -779,6 +779,32 @@ const githubFailureResult = {
     "guild-1",
     "channel-1",
   ), null);
+
+  // TikTok の展開はキュー待ちがあるため、完了を待たずに onMessage を返す（後続の AutoMod 等を止めない）
+  {
+    let release!: () => void;
+    let started = 0;
+    let suppressed = 0;
+    const tiktokMessage = {
+      id: "tiktok-1",
+      author: { bot: false, id: "user-1" },
+      guild: { id: "guild-1", premiumTier: 0 },
+      guildId: "guild-1",
+      channelId: "channel-1",
+      content: "https://www.tiktok.com/@user/video/123",
+      suppressEmbeds: async () => { suppressed += 1; },
+      reply: async () => undefined,
+    };
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTikTokLinks: async () => {
+        started += 1;
+        await new Promise<void>((resolve) => { release = resolve; });
+      },
+    }).onMessage(tiktokMessage as never);
+    assert.equal(started, 1);
+    assert.equal(suppressed, 1);
+    release();
+  }
 }
 
 try {
