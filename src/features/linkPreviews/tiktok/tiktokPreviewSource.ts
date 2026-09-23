@@ -1,9 +1,12 @@
 import { URL } from "node:url";
+import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
 
 export const TIKTOK_DOMAINS: ReadonlySet<string> = new Set(["tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com"]);
 const TIKWM_API_URL = "https://www.tikwm.com/api/";
 const REQUEST_TIMEOUT_MS = 10_000;
+/** tikwm の応答は通常数KB。想定外に巨大な応答を丸ごとメモリへ読まないよう上限を設ける */
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 const USER_AGENT = "L4DiscordBot/0.1 TikTokPreview";
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
@@ -170,8 +173,12 @@ export async function fetchTikTokPreview(
       `${TIKWM_API_URL}?url=${encodeURIComponent(target.url)}&hd=0`,
       { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { "User-Agent": USER_AGENT, Accept: "application/json" } },
     );
-    const text = await response.text();
-    if (!response.ok) return { status: "fallback", reason: `http_${response.status}` };
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      return { status: "fallback", reason: `http_${response.status}` };
+    }
+    // 上限を超えた時点で読み込みを打ち切って例外になり、外側の catch でフォールバックする
+    const text = new TextDecoder().decode(await readResponseArrayBufferWithLimit(response, MAX_RESPONSE_BYTES));
     try {
       return normalizeTikwmResponse(JSON.parse(text) as unknown);
     } catch {

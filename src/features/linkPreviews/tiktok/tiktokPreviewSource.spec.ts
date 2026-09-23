@@ -8,7 +8,7 @@ import {
   MAX_TIKTOK_TARGETS_PER_MESSAGE,
   type TikTokPreviewPayload,
 } from "./tiktokLinkExpansion.js";
-import { collectTikTokReplyTargets, normalizeTikwmResponse, parseTikTokUrl } from "./tiktokPreviewSource.js";
+import { collectTikTokReplyTargets, fetchTikTokPreview, normalizeTikwmResponse, parseTikTokUrl } from "./tiktokPreviewSource.js";
 
 assert.deepEqual(parseTikTokUrl("https://www.tiktok.com/@user/video/123?lang=ja"), {
   url: "https://www.tiktok.com/@user/video/123",
@@ -47,6 +47,30 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
     assert.equal(result.video.url, "https://www.tiktok.com/@user/photo/123");
     assert.equal(result.video.playUrl, undefined);
   }
+}
+
+// tikwm の応答は上限付きで読み、巨大な応答やエラー応答の本文を丸ごと読み込まない
+{
+  let pulled = 0;
+  const huge = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += 1;
+      if (pulled > 64) controller.close();
+      else controller.enqueue(new Uint8Array(64 * 1024));
+    },
+  });
+  const result = await fetchTikTokPreview({ url: "https://www.tiktok.com/@user/video/1" }, async () => new Response(huge, { status: 200 }));
+  assert.equal(result.status, "fallback");
+  assert.ok(pulled < 64, "上限を超えた時点で読み込みを打ち切る");
+
+  let errorBodyRead = false;
+  // highWaterMark: 0 で先読みを止め、実際に読まれたときだけ pull が呼ばれるようにする
+  const errorBody = new ReadableStream<Uint8Array>({
+    pull() { errorBodyRead = true; },
+  }, { highWaterMark: 0 });
+  const failed = await fetchTikTokPreview({ url: "https://www.tiktok.com/@user/video/1" }, async () => new Response(errorBody, { status: 503 }));
+  assert.deepEqual(failed, { status: "fallback", reason: "http_503" });
+  assert.equal(errorBodyRead, false);
 }
 
 // 動画をダウンロードできれば添付し、メディアギャラリーから attachment:// で参照する
