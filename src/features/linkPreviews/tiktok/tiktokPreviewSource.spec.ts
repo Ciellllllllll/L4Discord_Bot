@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { ComponentType, MessageFlags } from "discord.js";
-import { buildTikTokReplyPayloads } from "./tiktokLinkExpansion.js";
+import { buildTikTokReplyPayloads, expandTikTokLinks, MAX_TIKTOK_TARGETS_PER_MESSAGE } from "./tiktokLinkExpansion.js";
 import { collectTikTokReplyTargets, normalizeTikwmResponse, parseTikTokUrl } from "./tiktokPreviewSource.js";
 
 assert.deepEqual(parseTikTokUrl("https://www.tiktok.com/@user/video/123?lang=ja"), {
@@ -125,4 +125,44 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
   assert.ok(payload && "files" in payload);
   assert.equal("previewState" in payload, false);
   assert.equal(JSON.stringify(payload.components).includes("preview:show-original"), false);
+}
+
+// 大量のリンクがあっても上限件数までしか展開せず、構築と返信を1件ずつ行う
+{
+  const targets = Array.from({ length: 10 }, (_, i) => ({ url: `https://www.tiktok.com/@user/video/${i}`, videoId: String(i) }));
+  const events: string[] = [];
+  let running = 0;
+  let maxRunning = 0;
+  await expandTikTokLinks({
+    guildId: null,
+    channelId: "c",
+    reply: async () => { events.push("reply"); return { id: "r" }; },
+  } as never, targets, {
+    db: {} as never,
+    log: { warn: () => undefined },
+    attachmentSizeLimitBytes: 1024,
+    buildReplyPayloads: async (batch) => {
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      events.push(`build:${batch.map((t) => t.videoId).join(",")}`);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      running -= 1;
+      return [{ content: "x" }];
+    },
+  });
+  assert.equal(maxRunning, 1);
+  assert.deepEqual(events, Array.from({ length: MAX_TIKTOK_TARGETS_PER_MESSAGE }, (_, i) => [`build:${i}`, "reply"]).flat());
+}
+
+{
+  const requested: string[] = [];
+  const payloads = await buildTikTokReplyPayloads(
+    Array.from({ length: 10 }, (_, i) => ({ url: `https://www.tiktok.com/@user/video/${i}` })),
+    {
+      fetcher: async (url) => { requested.push(url); return new Response("oops", { status: 500 }); },
+      attachmentSizeLimitBytes: 0,
+    },
+  );
+  assert.equal(payloads.length, MAX_TIKTOK_TARGETS_PER_MESSAGE);
+  assert.equal(requested.length, MAX_TIKTOK_TARGETS_PER_MESSAGE);
 }

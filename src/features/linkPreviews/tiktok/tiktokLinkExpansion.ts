@@ -24,6 +24,8 @@ import {
 } from "./tiktokPreviewSource.js";
 
 const DOWNLOAD_TIMEOUT_MS = 20_000;
+/** 1メッセージで展開する TikTok リンクの上限。動画は最大100MBをメモリに保持するため絞る */
+export const MAX_TIKTOK_TARGETS_PER_MESSAGE = 3;
 export const TIKTOK_MEDIA_ATTACHMENT_FILENAME = "tiktok-preview.mp4";
 
 type LoggerLike = {
@@ -112,34 +114,44 @@ async function translateForTikTok(
   }
 }
 
+async function buildTikTokReplyPayload(
+  target: TikTokReplyTarget,
+  options: TikTokReplyBuildOptions,
+): Promise<TikTokPreviewPayload | MessageCreateOptions> {
+  const result = await fetchTikTokPreview(target, options.fetcher);
+  if (result.status !== "ok") return buildTikTokFallbackReply(target.url);
+  const video = result.video.playUrl && options.attachmentSizeLimitBytes > 0
+    ? await downloadTikTokVideo(result.video.playUrl, options.attachmentSizeLimitBytes, options.fetcher)
+    : undefined;
+  const document = tiktokPreviewToDocument(
+    result.video,
+    video ? `attachment://${TIKTOK_MEDIA_ATTACHMENT_FILENAME}` : undefined,
+  );
+  const built = await buildTranslatedPreview(document, {
+    translate: async () => await translateForTikTok(document, options),
+  });
+  return {
+    embeds: [],
+    flags: MessageFlags.IsComponentsV2,
+    components: built.components,
+    files: video ? [video] : [],
+    allowedMentions: { parse: [], repliedUser: false },
+    // 保存スキーマは https URL のみ許可するため、attachment:// を含まない文書を保存する。
+    // 表示切り替えは本文テキストのみ差し替えるので、メディア部分の違いは影響しない。
+    ...(built.state ? { previewState: { ...built.state, document: tiktokPreviewToDocument(result.video) } } : {}),
+  } satisfies TikTokPreviewPayload;
+}
+
+/** 上限件数までを1件ずつ順番に構築する（ダウンロードを同時に走らせない）。 */
 export async function buildTikTokReplyPayloads(
   targets: readonly TikTokReplyTarget[],
   options: TikTokReplyBuildOptions,
 ): Promise<Array<TikTokPreviewPayload | MessageCreateOptions>> {
-  return await Promise.all(targets.map(async (target) => {
-    const result = await fetchTikTokPreview(target, options.fetcher);
-    if (result.status !== "ok") return buildTikTokFallbackReply(target.url);
-    const video = result.video.playUrl && options.attachmentSizeLimitBytes > 0
-      ? await downloadTikTokVideo(result.video.playUrl, options.attachmentSizeLimitBytes, options.fetcher)
-      : undefined;
-    const document = tiktokPreviewToDocument(
-      result.video,
-      video ? `attachment://${TIKTOK_MEDIA_ATTACHMENT_FILENAME}` : undefined,
-    );
-    const built = await buildTranslatedPreview(document, {
-      translate: async () => await translateForTikTok(document, options),
-    });
-    return {
-      embeds: [],
-      flags: MessageFlags.IsComponentsV2,
-      components: built.components,
-      files: video ? [video] : [],
-      allowedMentions: { parse: [], repliedUser: false },
-      // 保存スキーマは https URL のみ許可するため、attachment:// を含まない文書を保存する。
-      // 表示切り替えは本文テキストのみ差し替えるので、メディア部分の違いは影響しない。
-      ...(built.state ? { previewState: { ...built.state, document: tiktokPreviewToDocument(result.video) } } : {}),
-    } satisfies TikTokPreviewPayload;
-  }));
+  const payloads: Array<TikTokPreviewPayload | MessageCreateOptions> = [];
+  for (const target of targets.slice(0, MAX_TIKTOK_TARGETS_PER_MESSAGE)) {
+    payloads.push(await buildTikTokReplyPayload(target, options));
+  }
+  return payloads;
 }
 
 type TikTokExpansionDeps = {
@@ -158,15 +170,18 @@ export async function expandTikTokLinks(
   deps: TikTokExpansionDeps,
 ): Promise<void> {
   const build = deps.buildReplyPayloads ?? buildTikTokReplyPayloads;
-  const payloads = await build(targets, {
+  const options: TikTokReplyBuildOptions = {
     attachmentSizeLimitBytes: deps.attachmentSizeLimitBytes,
     ...(deps.config ? { config: deps.config } : {}),
     log: deps.log,
     aiRouter: deps.aiRouter,
     guildId: message.guildId ?? deps.config?.GUILD_ID,
-  });
-  for (const payload of payloads) {
+  };
+  // 構築→返信を1件ずつ行い、返信済みの動画バッファを次の構築前に手放す
+  for (const target of targets.slice(0, MAX_TIKTOK_TARGETS_PER_MESSAGE)) {
     try {
+      const [payload] = await build([target], options);
+      if (!payload) continue;
       const { previewState, ...replyPayload } = payload as TikTokPreviewPayload;
       const reply = await message.reply(replyPayload);
       if (!previewState || !message.guildId) continue;
