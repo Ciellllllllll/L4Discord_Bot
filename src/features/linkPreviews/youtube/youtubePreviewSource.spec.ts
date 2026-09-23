@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EmbedType, type APIEmbed } from "discord.js";
 import {
+  fetchYouTubePreview,
   nativeYouTubeEmbedToDocument,
   normalizeYouTubeChannelResponse,
   normalizeYouTubeOEmbedResponse,
@@ -99,5 +100,43 @@ assert.deepEqual(keyedParts(nativeDocument), [
 assert.equal(JSON.stringify(nativeDocument).includes("Native author"), true);
 assert.equal(JSON.stringify(nativeDocument).includes("https://i.ytimg.com/native.jpg"), true);
 assert.equal(JSON.stringify(nativeDocument).includes("media.discordapp.net"), false);
+
+// 64KB ずつ最大 4MB を返す応答。読まれた回数を数えて、上限で打ち切られたかを確かめる
+function hugeBody(): { stream: ReadableStream<Uint8Array>; pulled: () => number } {
+  let pulled = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += 1;
+      if (pulled > 64) controller.close();
+      else controller.enqueue(new Uint8Array(64 * 1024));
+    },
+  });
+  return { stream, pulled: () => pulled };
+}
+
+// highWaterMark: 0 で先読みを止め、実際に読まれたときだけ pull が呼ばれるようにする
+function untouchedBody(): { stream: ReadableStream<Uint8Array>; read: () => boolean } {
+  let read = false;
+  const stream = new ReadableStream<Uint8Array>({ pull() { read = true; } }, { highWaterMark: 0 });
+  return { stream, read: () => read };
+}
+
+// YouTube の応答は上限付きで読み、巨大な応答やエラー応答の本文を丸ごと読み込まない
+{
+  const target = parseYouTubeUrl("https://youtu.be/huge-response");
+  assert.ok(target);
+  const huge = hugeBody();
+  const result = await fetchYouTubePreview(target, { fetcher: async () => new Response(huge.stream, { status: 200 }) });
+  assert.equal(result.status, "fallback");
+  assert.ok(huge.pulled() < 64, "上限を超えた時点で読み込みを打ち切る");
+}
+{
+  const target = parseYouTubeUrl("https://youtu.be/error-response");
+  assert.ok(target);
+  const errorBody = untouchedBody();
+  const result = await fetchYouTubePreview(target, { fetcher: async () => new Response(errorBody.stream, { status: 503 }) });
+  assert.deepEqual(result, { status: "fallback", reason: "http_503" });
+  assert.equal(errorBody.read(), false);
+}
 
 console.log("youtubePreviewSource.spec.ts: all assertions passed");

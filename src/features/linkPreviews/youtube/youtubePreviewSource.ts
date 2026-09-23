@@ -1,9 +1,12 @@
 import { URL } from "node:url";
 import type { APIEmbed } from "discord.js";
+import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
 
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const REQUEST_TIMEOUT_MS = 10_000;
+// Data API（プレイリスト項目は最大 3 件）や oEmbed の応答は数十 KB 程度なので、1MB あれば十分
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 const CACHE_TTL_MS = 30 * 60 * 1_000;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"]);
 const YOUTU_BE_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
@@ -220,8 +223,12 @@ function oembedUrl(urlValue: string): string {
 async function fetchJson(url: string, fetcher: NonNullable<YouTubeSourceFetchOptions["fetcher"]>, timeout: number): Promise<{ ok: true; value: unknown } | { ok: false; reason: string }> {
   try {
     const response = await fetcher(url, { signal: AbortSignal.timeout(timeout), headers: { Accept: "application/json" } });
-    const text = await response.text();
-    if (!response.ok) return { ok: false, reason: `http_${response.status}` };
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      return { ok: false, reason: `http_${response.status}` };
+    }
+    // 上限を超えた時点で読み込みを打ち切って例外になり、外側の catch でフォールバックする
+    const text = new TextDecoder().decode(await readResponseArrayBufferWithLimit(response, MAX_RESPONSE_BYTES));
     try { return { ok: true, value: JSON.parse(text) as unknown }; } catch { return { ok: false, reason: "invalid_json" }; }
   } catch (error) { return { ok: false, reason: error instanceof Error ? (error.name === "TimeoutError" ? "AbortError" : error.name) : "fetch_error" }; }
 }

@@ -87,12 +87,8 @@ function mapStatus(status: number, headers?: Headers): GithubApiErrorReason {
 }
 
 async function readResponseBody(response: Response, maxBytes: number): Promise<ResponseBodyResult> {
-  if (!response.body) {
-    const text = await response.text();
-    return Buffer.byteLength(text, "utf8") > maxBytes
-      ? { status: "error", reason: "response_too_large" }
-      : { status: "ok", text };
-  }
+  // body が無い応答は本文が空
+  if (!response.body) return { status: "ok", text: "" };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -298,12 +294,19 @@ export class GithubApiClient {
         signal: controller.signal,
         redirect: "error",
       });
+      if (!response.ok) {
+        // エラー応答の本文は使わないので読まずに捨てる
+        await response.body?.cancel().catch(() => undefined);
+        return { status: "error", reason: mapStatus(response.status, response.headers), statusCode: response.status };
+      }
       const length = response.headers.get("content-length");
-      if (length && Number(length) > this.maxResponseBytes) return { status: "error", reason: "response_too_large" };
+      if (length && Number(length) > this.maxResponseBytes) {
+        await response.body?.cancel().catch(() => undefined);
+        return { status: "error", reason: "response_too_large" };
+      }
       const bodyResult = await readResponseBody(response, this.maxResponseBytes);
       if (bodyResult.status === "error") return bodyResult;
       const body = bodyResult.text;
-      if (!response.ok) return { status: "error", reason: mapStatus(response.status, response.headers), statusCode: response.status };
       let parsed: unknown;
       try {
         parsed = JSON.parse(body);

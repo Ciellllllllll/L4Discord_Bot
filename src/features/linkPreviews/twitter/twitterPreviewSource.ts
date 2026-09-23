@@ -1,4 +1,5 @@
 import { URL } from "node:url";
+import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
 
 const VX_DOMAIN = "vxtwitter.com";
@@ -11,6 +12,8 @@ const X_DOMAINS = new Set([
   "fixupx.com",
 ]);
 const REQUEST_TIMEOUT_MS = 10_000;
+// FxTwitter の 1 ツイート分の応答は数十 KB 程度なので、1MB あれば十分
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 const USER_AGENT = "L4DiscordBot/0.1 VxTwitterPreview (+https://api.fxtwitter.com/)";
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
@@ -294,8 +297,12 @@ export async function fetchFixTweetPreview(
       `https://api.fxtwitter.com/${encodeURIComponent(input.screenName)}/status/${encodeURIComponent(input.id)}`,
       { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { "User-Agent": USER_AGENT, Accept: "application/json" } },
     );
-    const text = await response.text();
-    if (!response.ok) return { status: "fallback", reason: `http_${response.status}` };
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      return { status: "fallback", reason: `http_${response.status}` };
+    }
+    // 上限を超えた時点で読み込みを打ち切って例外になり、外側の catch でフォールバックする
+    const text = new TextDecoder().decode(await readResponseArrayBufferWithLimit(response, MAX_RESPONSE_BYTES));
     try {
       return normalizeFixTweetResponse(JSON.parse(text) as unknown);
     } catch {
