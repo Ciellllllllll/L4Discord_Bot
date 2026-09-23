@@ -62,7 +62,6 @@ export async function startRuntimeUptime(options: RuntimeUptimeOptions): Promise
   let queue = Promise.resolve();
   const setTimer = options.setInterval ?? ((callback, delay) => setInterval(callback, delay));
   const clearTimer = options.clearInterval ?? clearInterval;
-  let timer: NodeJS.Timeout | undefined;
 
   const enqueue = (operation: () => Promise<void>): Promise<void> => {
     const next = queue.then(operation, operation);
@@ -107,12 +106,12 @@ export async function startRuntimeUptime(options: RuntimeUptimeOptions): Promise
       options.log?.warn({ err }, "runtime uptime checkpoint failed");
     });
   };
-  timer = setTimer(tick, CHECKPOINT_INTERVAL_MS);
+  const timer = setTimer(tick, CHECKPOINT_INTERVAL_MS);
 
   return {
     getUptimeSeconds: () => committedSeconds + Math.floor(Math.max(0, now() - lastCheckpointAtMs) / 1_000),
     stop: () => stopPromise ??= (async () => {
-      if (timer) clearTimer(timer);
+      clearTimer(timer);
       await enqueue(() => checkpoint(true));
     })(),
   };

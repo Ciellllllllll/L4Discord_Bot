@@ -33,6 +33,13 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
   const log = createLogger(config);
+  process.on("unhandledRejection", (reason) => {
+    log.error({ err: reason }, "unhandled promise rejection");
+  });
+  process.on("uncaughtException", (err) => {
+    log.fatal({ err }, "uncaught exception; exiting");
+    process.exit(1);
+  });
   log.debug(
     {
       botProfile: config.BOT_PROFILE,

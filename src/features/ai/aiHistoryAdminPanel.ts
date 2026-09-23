@@ -228,7 +228,7 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
     return false;
   }
 
-  let channel = guild.channels.cache.get(channelId) ?? (await guild.channels.fetch(channelId).catch(() => null));
+  const channel = guild.channels.cache.get(channelId) ?? (await guild.channels.fetch(channelId).catch(() => null));
   if (!channel?.isTextBased()) {
     ctx.log.warn({ channelId, guildId, panelKind: PANEL_KIND_AI_QUERY_HISTORY }, "AI history panel channel missing or not text");
     return false;

@@ -374,7 +374,7 @@ export async function createStaffThread(
   const parentId = resolveModmailParentChannelId(ctx.config);
   if (!parentId) return null;
 
-  let parent =
+  const parent =
     guild.channels.cache.get(parentId) ?? (await guild.channels.fetch(parentId).catch(() => null));
   if (!parent) return null;
 

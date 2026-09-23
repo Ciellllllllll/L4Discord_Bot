@@ -114,13 +114,25 @@ export function getDetecterService(ctx: BotContext): DetecterService {
   return serviceInstance;
 }
 
+export function shutdownDetecterService(): void {
+  serviceInstance?.dispose();
+  serviceInstance = undefined;
+}
+
 export class DetecterService {
   private readonly pendingEvents = new Map<string, PunishmentEvent>();
   private readonly processedAuditIds = new Map<string, number>();
   private readonly recentKeys = new Map<string, number>();
 
+  private readonly cleanupTimer: NodeJS.Timeout;
+
   constructor(private readonly ctx: BotContext) {
-    setInterval(() => this.cleanupMemory(), 30 * 1000);
+    this.cleanupTimer = setInterval(() => this.cleanupMemory(), 30 * 1000);
+    this.cleanupTimer.unref?.();
+  }
+
+  dispose(): void {
+    clearInterval(this.cleanupTimer);
   }
 
   getPendingEvent(eventId: string): PunishmentEvent | undefined {
