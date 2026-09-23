@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { MessageFlags, MessageFlagsBitField } from "discord.js";
 import { abortFlow } from "./executionFlow.js";
 
 const state = {
@@ -63,6 +64,45 @@ for (const fail of [true, false]) {
     assert.equal(button.custom_id, "exec_vote:flow-false:1");
     assert.equal(button.disabled, true);
   }
+}
+
+// Components V2 の投票カードは content を持てないため、見出しカードへ差し替える
+{
+  const editPayloads: Array<{ content?: string; flags?: number; components?: Array<{ toJSON?: unknown; type?: number }> }> = [];
+  const row = {
+    id: "flow-v2", guild_id: "guild", kind: "execution_flow", status: "open", message_id: null,
+    state: JSON.stringify(state), state_revision: 0, updated_at: new Date(),
+  };
+  const ctx = {
+    db: {
+      selectFrom: () => {
+        const query = { select: () => query, where: () => query, executeTakeFirst: async () => ({ ...row }) };
+        return query;
+      },
+      updateTable: () => {
+        let values: Record<string, unknown> = {};
+        const query = {
+          set: (next: Record<string, unknown>) => { values = next; return query; },
+          where: () => query,
+          executeTakeFirst: async () => { Object.assign(row, values); return { numUpdatedRows: 1n }; },
+        };
+        return query;
+      },
+    },
+    client: { channels: { fetch: async () => ({ isTextBased: () => true, messages: { fetch: async () => ({
+      flags: new MessageFlagsBitField(MessageFlags.IsComponentsV2),
+      edit: async (payload: (typeof editPayloads)[number]) => { editPayloads.push(payload); },
+    }) } }) } },
+    log: { error: () => undefined, warn: () => undefined },
+  };
+  assert.equal(await abortFlow(ctx as never, "flow-v2", state, "stopped", "guild"), true);
+  assert.equal(editPayloads.length, 1);
+  assert.equal(editPayloads[0]?.content, undefined, "V2 メッセージには content を送らない");
+  assert.equal(editPayloads[0]?.flags, MessageFlags.IsComponentsV2);
+  const json = JSON.stringify(editPayloads[0]?.components);
+  assert.equal(json.includes("# **stopped**"), true);
+  assert.equal(json.includes("exec_vote:flow-v2:1"), true);
+  assert.equal(json.includes('"disabled":true'), true);
 }
 
 console.log("executionFlow.abort.spec.ts: all assertions passed");
