@@ -20,11 +20,17 @@ import {
 import {
   fetchTikTokPreview,
   tiktokPreviewToDocument,
+  tiktokStillMediaUrls,
   type FetchLike,
+  type TikTokPreview,
   type TikTokReplyTarget,
 } from "./tiktokPreviewSource.js";
 
 const DOWNLOAD_TIMEOUT_MS = 20_000;
+/** 画像1枚あたりの上限。TikTok CDN の画像URLは約1日で失効するため、画像も添付する */
+const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+/** Discord の1メッセージあたりの添付ファイル数の上限 */
+const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 /** 1メッセージで展開する TikTok リンクの上限。動画は最大100MBをメモリに保持するため絞る */
 export const MAX_TIKTOK_TARGETS_PER_MESSAGE = 3;
 /** 同時に構築→返信する件数。メッセージをまたいで動画バッファが積み上がらないよう全体で共有する */
@@ -37,6 +43,12 @@ const tiktokBuildQueue = new LocalLlmQueue({
   maxQueue: TIKTOK_BUILD_MAX_QUEUE,
 });
 export const TIKTOK_MEDIA_ATTACHMENT_FILENAME = "tiktok-preview.mp4";
+const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
 
 type LoggerLike = {
   warn: (obj: unknown, msg?: string) => void;
@@ -62,9 +74,9 @@ export type TikTokReplyBuildOptions = {
   translate?: (document: PreviewDocument) => Promise<PreviewDocumentTranslations>;
 };
 
-export function buildTikTokFallbackReply(url: string): MessageCreateOptions {
+export function buildTikTokFallbackReply(urls: string | readonly string[]): MessageCreateOptions {
   return {
-    content: url,
+    content: typeof urls === "string" ? urls : urls.join("\n"),
     allowedMentions: { parse: [], repliedUser: false },
   };
 }
@@ -73,23 +85,27 @@ async function cancelBody(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
 }
 
-/** 動画をダウンロードして添付ファイル化する。サイズ超過や失敗時は undefined。 */
-export async function downloadTikTokVideo(
-  playUrl: string,
+type DownloadedMedia = { buffer: Buffer; contentType: string };
+
+/** メディアを上限サイズ以内でダウンロードする。種類違い・サイズ超過・失敗時は undefined。 */
+async function downloadMedia(
+  url: string,
+  kind: "video" | "image",
   maxBytes: number,
   fetcher: FetchLike = fetch,
-): Promise<AttachmentBuilder | undefined> {
+): Promise<DownloadedMedia | undefined> {
+  if (maxBytes <= 0) return undefined;
   try {
-    const response = await fetcher(playUrl, {
+    const response = await fetcher(url, {
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-      headers: { Accept: "video/mp4,video/*;q=0.9,*/*;q=0.1" },
+      headers: { Accept: kind === "video" ? "video/mp4,video/*;q=0.9,*/*;q=0.1" : "image/*;q=0.9,*/*;q=0.1" },
     });
     if (!response.ok) {
       await cancelBody(response);
       return undefined;
     }
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    if (contentType && !contentType.startsWith("video/")) {
+    const contentType = response.headers.get("content-type")?.toLowerCase().split(";")[0]?.trim() ?? "";
+    if (contentType && !contentType.startsWith(`${kind}/`)) {
       await cancelBody(response);
       return undefined;
     }
@@ -99,10 +115,44 @@ export async function downloadTikTokVideo(
       return undefined;
     }
     const buffer = Buffer.from(await readResponseArrayBufferWithLimit(response, maxBytes));
-    return buffer.byteLength > 0 ? new AttachmentBuilder(buffer, { name: TIKTOK_MEDIA_ATTACHMENT_FILENAME }) : undefined;
+    return buffer.byteLength > 0 ? { buffer, contentType } : undefined;
   } catch {
     return undefined;
   }
+}
+
+type AttachedMedia = { mediaUrls: string[]; avatarUrl?: string; files: AttachmentBuilder[] };
+
+/**
+ * 動画・画像・アイコンを添付ファイルにする。合計が上限を超えないよう残り容量を減らしながら取得し、
+ * 取得できなかった画像は元URLのまま表示する。
+ */
+async function attachTikTokMedia(video: TikTokPreview, options: TikTokReplyBuildOptions): Promise<AttachedMedia> {
+  let remaining = options.attachmentSizeLimitBytes;
+  const files: AttachmentBuilder[] = [];
+  const attach = (media: DownloadedMedia, name: string): string => {
+    remaining -= media.buffer.byteLength;
+    files.push(new AttachmentBuilder(media.buffer, { name }));
+    return `attachment://${name}`;
+  };
+  const attachImage = async (url: string, baseName: string): Promise<string> => {
+    // 写真10枚＋アイコンなど、添付数の上限を超える分は元URLのまま表示する
+    if (files.length >= MAX_ATTACHMENTS_PER_MESSAGE) return url;
+    const media = await downloadMedia(url, "image", Math.min(IMAGE_MAX_BYTES, remaining), options.fetcher);
+    return media ? attach(media, `${baseName}.${IMAGE_EXTENSIONS[media.contentType] ?? "jpg"}`) : url;
+  };
+
+  const mediaUrls: string[] = [];
+  const videoMedia = video.playUrl ? await downloadMedia(video.playUrl, "video", remaining, options.fetcher) : undefined;
+  if (videoMedia) {
+    mediaUrls.push(attach(videoMedia, TIKTOK_MEDIA_ATTACHMENT_FILENAME));
+  } else {
+    for (const [index, url] of tiktokStillMediaUrls(video).entries()) {
+      mediaUrls.push(await attachImage(url, `tiktok-image-${index + 1}`));
+    }
+  }
+  const avatarUrl = video.author.avatarUrl ? await attachImage(video.author.avatarUrl, "tiktok-avatar") : undefined;
+  return { mediaUrls, ...(avatarUrl ? { avatarUrl } : {}), files };
 }
 
 async function translateForTikTok(
@@ -130,35 +180,32 @@ async function buildTikTokReplyPayload(
 ): Promise<TikTokPreviewPayload | MessageCreateOptions> {
   const result = await fetchTikTokPreview(target, options.fetcher);
   if (result.status !== "ok") return buildTikTokFallbackReply(target.url);
-  const video = result.video.playUrl && options.attachmentSizeLimitBytes > 0
-    ? await downloadTikTokVideo(result.video.playUrl, options.attachmentSizeLimitBytes, options.fetcher)
-    : undefined;
-  const document = tiktokPreviewToDocument(
-    result.video,
-    video ? `attachment://${TIKTOK_MEDIA_ATTACHMENT_FILENAME}` : undefined,
-  );
-  const built = await buildTranslatedPreview(document, {
-    translate: async () => await translateForTikTok(document, options),
+  // 翻訳はメディアに依存しないため先に行い、ダウンロードしたバッファを保持する時間を短くする。
+  // 保存スキーマは https URL のみ許可するため、状態には attachment:// を含まないこの文書を保存する
+  // （表示切り替えは本文テキストのみ差し替えるので、メディア部分の違いは影響しない）。
+  const sourceDocument = tiktokPreviewToDocument(result.video);
+  const translations = await translateForTikTok(sourceDocument, options);
+  const media = await attachTikTokMedia(result.video, options);
+  const built = await buildTranslatedPreview(tiktokPreviewToDocument(result.video, media), {
+    translate: async () => translations,
   });
   return {
     embeds: [],
     flags: MessageFlags.IsComponentsV2,
     components: built.components,
-    files: video ? [video] : [],
+    files: media.files,
     allowedMentions: { parse: [], repliedUser: false },
-    // 保存スキーマは https URL のみ許可するため、attachment:// を含まない文書を保存する。
-    // 表示切り替えは本文テキストのみ差し替えるので、メディア部分の違いは影響しない。
-    ...(built.state ? { previewState: { ...built.state, document: tiktokPreviewToDocument(result.video) } } : {}),
+    ...(built.state ? { previewState: { ...built.state, document: sourceDocument } } : {}),
   } satisfies TikTokPreviewPayload;
 }
 
-/** 上限件数までを1件ずつ順番に構築する（ダウンロードを同時に走らせない）。 */
+/** 渡された対象を1件ずつ順番に構築する（ダウンロードを同時に走らせない）。 */
 export async function buildTikTokReplyPayloads(
   targets: readonly TikTokReplyTarget[],
   options: TikTokReplyBuildOptions,
 ): Promise<Array<TikTokPreviewPayload | MessageCreateOptions>> {
   const payloads: Array<TikTokPreviewPayload | MessageCreateOptions> = [];
-  for (const target of targets.slice(0, MAX_TIKTOK_TARGETS_PER_MESSAGE)) {
+  for (const target of targets) {
     payloads.push(await buildTikTokReplyPayload(target, options));
   }
   return payloads;
@@ -221,6 +268,15 @@ export async function expandTikTokLinks(
       await message.reply(buildTikTokFallbackReply(target.url));
     } catch (err) {
       deps.log.warn({ err: String(err) }, "tiktok preview reply error");
+    }
+  }
+  // 上限を超えた分も元メッセージの埋め込みは非表示になっているため、元URLをまとめて返信する
+  const overflow = targets.slice(MAX_TIKTOK_TARGETS_PER_MESSAGE);
+  if (overflow.length > 0) {
+    try {
+      await message.reply(buildTikTokFallbackReply(overflow.map((target) => target.url)));
+    } catch (err) {
+      deps.log.warn({ err: String(err) }, "tiktok preview overflow reply error");
     }
   }
 }

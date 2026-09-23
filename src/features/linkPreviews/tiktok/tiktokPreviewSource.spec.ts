@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { ComponentType, MessageFlags } from "discord.js";
 import { LocalLlmQueue } from "../../ai/localLlmQueue.js";
-import { buildTikTokReplyPayloads, expandTikTokLinks, MAX_TIKTOK_TARGETS_PER_MESSAGE } from "./tiktokLinkExpansion.js";
+import {
+  buildTikTokReplyPayloads,
+  expandTikTokLinks,
+  MAX_TIKTOK_TARGETS_PER_MESSAGE,
+  type TikTokPreviewPayload,
+} from "./tiktokLinkExpansion.js";
 import { collectTikTokReplyTargets, normalizeTikwmResponse, parseTikTokUrl } from "./tiktokPreviewSource.js";
 
 assert.deepEqual(parseTikTokUrl("https://www.tiktok.com/@user/video/123?lang=ja"), {
@@ -128,16 +133,18 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
   assert.equal(JSON.stringify(payload.components).includes("preview:show-original"), false);
 }
 
-// 大量のリンクがあっても上限件数までしか展開せず、構築と返信を1件ずつ行う
+// 大量のリンクがあっても上限件数までしか展開せず、構築と返信を1件ずつ行う。
+// 上限を超えた分は元URLをまとめて1通で返信する（元メッセージの埋め込みは非表示になるため）
 {
   const targets = Array.from({ length: 10 }, (_, i) => ({ url: `https://www.tiktok.com/@user/video/${i}`, videoId: String(i) }));
   const events: string[] = [];
+  const replies: unknown[] = [];
   let running = 0;
   let maxRunning = 0;
   await expandTikTokLinks({
     guildId: null,
     channelId: "c",
-    reply: async () => { events.push("reply"); return { id: "r" }; },
+    reply: async (payload: unknown) => { events.push("reply"); replies.push(payload); return { id: "r" }; },
   } as never, targets, {
     db: {} as never,
     log: { warn: () => undefined },
@@ -152,20 +159,14 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
     },
   });
   assert.equal(maxRunning, 1);
-  assert.deepEqual(events, Array.from({ length: MAX_TIKTOK_TARGETS_PER_MESSAGE }, (_, i) => [`build:${i}`, "reply"]).flat());
-}
-
-{
-  const requested: string[] = [];
-  const payloads = await buildTikTokReplyPayloads(
-    Array.from({ length: 10 }, (_, i) => ({ url: `https://www.tiktok.com/@user/video/${i}` })),
-    {
-      fetcher: async (url) => { requested.push(url); return new Response("oops", { status: 500 }); },
-      attachmentSizeLimitBytes: 0,
-    },
+  assert.deepEqual(events, [
+    ...Array.from({ length: MAX_TIKTOK_TARGETS_PER_MESSAGE }, (_, i) => [`build:${i}`, "reply"]).flat(),
+    "reply",
+  ]);
+  assert.equal(
+    (replies.at(-1) as { content?: string }).content,
+    targets.slice(MAX_TIKTOK_TARGETS_PER_MESSAGE).map((target) => target.url).join("\n"),
   );
-  assert.equal(payloads.length, MAX_TIKTOK_TARGETS_PER_MESSAGE);
-  assert.equal(requested.length, MAX_TIKTOK_TARGETS_PER_MESSAGE);
 }
 
 // 複数メッセージが同時に来ても、構築→返信は共有キューで1件ずつしか走らない
@@ -217,4 +218,79 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
   release();
   assert.equal(built, 0);
   assert.deepEqual(replies, [{ content: "https://vm.tiktok.com/ZMabc/", allowedMentions: { parse: [], repliedUser: false } }]);
+}
+
+// 写真投稿の画像とアイコンは失効する CDN URL ではなく添付ファイルで表示する。
+// 取得できなかった画像だけ元URLのまま残し、保存用の状態には attachment:// を含めない
+{
+  const requested: string[] = [];
+  const fetcher = async (url: string): Promise<Response> => {
+    requested.push(url);
+    if (url.startsWith("https://www.tikwm.com/")) {
+      return new Response(JSON.stringify({
+        code: 0,
+        data: {
+          ...apiData.data,
+          author: { ...apiData.data.author, avatar: "https://cdn.example/avatar.webp" },
+          images: ["https://cdn.example/1.png", "https://cdn.example/2.jpg"],
+        },
+      }), { status: 200 });
+    }
+    if (url.endsWith("2.jpg")) return new Response("missing", { status: 404 });
+    const contentType = url.endsWith(".png") ? "image/png" : "image/webp";
+    return new Response(new Uint8Array([1, 2]), { status: 200, headers: { "content-type": contentType } });
+  };
+  const [built] = await buildTikTokReplyPayloads([{ url: "https://www.tiktok.com/@user/photo/123" }], {
+    fetcher,
+    attachmentSizeLimitBytes: 1024,
+    translate: async () => ({
+      model: "test-model",
+      translations: { main: { shouldTranslate: true, sourceLanguage: "en", confidence: 1, translatedText: "やあ" } },
+    }),
+  });
+  assert.ok(built && "previewState" in built);
+  const payload = built as TikTokPreviewPayload;
+  assert.ok(payload.previewState);
+  assert.deepEqual(payload.files.map((file) => file.name), ["tiktok-image-1.png", "tiktok-avatar.webp"]);
+  assert.equal(requested.includes("https://cdn.example/video.mp4"), false, "写真投稿では動画を取得しない");
+  const json = JSON.stringify(payload.components);
+  assert.equal(json.includes("attachment://tiktok-image-1.png"), true);
+  assert.equal(json.includes("https://cdn.example/2.jpg"), true);
+  assert.equal(json.includes("attachment://tiktok-avatar.webp"), true);
+  assert.equal(JSON.stringify(payload.previewState.document).includes("attachment://"), false);
+}
+
+// 写真10枚＋アイコンでも添付は Discord の上限10件に収め、溢れたアイコンは元URLで表示する
+{
+  const images = Array.from({ length: 10 }, (_, i) => `https://cdn.example/${i}.png`);
+  const fetcher = async (url: string): Promise<Response> => url.startsWith("https://www.tikwm.com/")
+    ? new Response(JSON.stringify({
+      code: 0,
+      data: { ...apiData.data, author: { ...apiData.data.author, avatar: "https://cdn.example/avatar.png" }, images },
+    }), { status: 200 })
+    : new Response(new Uint8Array([1]), { status: 200, headers: { "content-type": "image/png" } });
+  const [built] = await buildTikTokReplyPayloads([{ url: "https://www.tiktok.com/@user/photo/123" }], {
+    fetcher,
+    attachmentSizeLimitBytes: 1024,
+    translate: async () => ({ translations: {} }),
+  });
+  const payload = built as TikTokPreviewPayload;
+  assert.equal(payload.files.length, 10);
+  assert.equal(JSON.stringify(payload.components).includes("https://cdn.example/avatar.png"), true);
+}
+
+// 翻訳はメディアのダウンロードより先に行う（動画バッファを抱えたまま翻訳を待たない）
+{
+  const events: string[] = [];
+  const fetcher = async (url: string): Promise<Response> => {
+    if (url.startsWith("https://www.tikwm.com/")) return new Response(JSON.stringify(apiData), { status: 200 });
+    events.push(`download:${url}`);
+    return new Response(new Uint8Array([1]), { status: 200, headers: { "content-type": "video/mp4" } });
+  };
+  await buildTikTokReplyPayloads([{ url: "https://www.tiktok.com/@user/video/123" }], {
+    fetcher,
+    attachmentSizeLimitBytes: 1024,
+    translate: async () => { events.push("translate"); return { translations: {} }; },
+  });
+  assert.deepEqual(events, ["translate", "download:https://cdn.example/video.mp4"]);
 }

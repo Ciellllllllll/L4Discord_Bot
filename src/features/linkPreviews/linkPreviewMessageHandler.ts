@@ -33,7 +33,7 @@ import {
   type GithubPreviewBuildResult,
 } from "./github/githubLinkExpansion.js";
 import { buildTikTokReplyPayloads, expandTikTokLinks } from "./tiktok/tiktokLinkExpansion.js";
-import { collectTikTokReplyTargets, isTikTokHost, parseTikTokUrl } from "./tiktok/tiktokPreviewSource.js";
+import { collectTikTokReplyTargets, parseTikTokUrl, TIKTOK_DOMAINS } from "./tiktok/tiktokPreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
 
@@ -102,16 +102,7 @@ export function extractYouTubeLinks(content: string): string[] {
 }
 
 export function extractTikTokLinks(content: string): string[] {
-  const found: string[] = [];
-  for (const match of String(content || "").matchAll(TIKTOK_URL_PATTERN)) {
-    const raw = match.groups?.url ?? "";
-    if (!hasUrlCandidateBoundary(content, match.index ?? 0, raw)) continue;
-    const trimmed = stripUrlTail(raw);
-    try {
-      if (trimmed && isTikTokHost(new URL(ensureScheme(trimmed)).host)) found.push(trimmed);
-    } catch {}
-  }
-  return found;
+  return extractLinks(String(content || ""), TIKTOK_URL_PATTERN, TIKTOK_DOMAINS, true);
 }
 
 export function extractGithubLinks(content: string): string[] {

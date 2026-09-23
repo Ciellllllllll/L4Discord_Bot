@@ -1,7 +1,7 @@
 import { URL } from "node:url";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
 
-const TIKTOK_DOMAINS = new Set(["tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com"]);
+export const TIKTOK_DOMAINS: ReadonlySet<string> = new Set(["tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com"]);
 const TIKWM_API_URL = "https://www.tikwm.com/api/";
 const REQUEST_TIMEOUT_MS = 10_000;
 const USER_AGENT = "L4DiscordBot/0.1 TikTokPreview";
@@ -52,10 +52,6 @@ function stripUrlTail(urlText: string): string {
 function hostWithoutWww(host: string): string {
   const normalized = host.trim().toLowerCase();
   return normalized.startsWith("www.") ? normalized.slice(4) : normalized;
-}
-
-export function isTikTokHost(host: string): boolean {
-  return TIKTOK_DOMAINS.has(hostWithoutWww(host));
 }
 
 /** TikTok の動画・写真投稿・短縮URLを解析する。プロフィール等の非投稿URLは null。 */
@@ -196,19 +192,27 @@ function formatCount(icon: string, value: number | undefined): string | null {
   return typeof value === "number" ? `${icon} ${value.toLocaleString("ja-JP")}` : null;
 }
 
-/**
- * `videoMediaUrl` には添付した動画（attachment://）を渡す。
- * 未指定時は写真投稿なら画像、動画ならカバー画像を表示する。
- */
-export function tiktokPreviewToDocument(video: TikTokPreview, videoMediaUrl?: string): PreviewDocument {
+/** 添付ファイル（attachment://）に差し替えるメディアURL。未指定の項目は TikTok CDN のURLを使う */
+export type TikTokDocumentMedia = {
+  /** メディアギャラリーに並べるURL。未指定時は写真投稿なら画像、動画ならカバー画像 */
+  mediaUrls?: readonly string[];
+  avatarUrl?: string;
+};
+
+/** カードに載せるメディアの元URL（写真投稿なら画像、動画ならカバー画像）。 */
+export function tiktokStillMediaUrls(video: TikTokPreview): string[] {
+  return video.images.length > 0 ? [...video.images] : video.coverUrl ? [video.coverUrl] : [];
+}
+
+export function tiktokPreviewToDocument(video: TikTokPreview, media: TikTokDocumentMedia = {}): PreviewDocument {
   const authorName = video.author.nickname
     ? `${video.author.nickname} (@${video.author.uniqueId})`
     : `@${video.author.uniqueId}`;
   const body: PreviewTextBlock = {
     type: "text",
     id: "body",
-    ...(video.author.avatarUrl ? {
-      thumbnailUrl: video.author.avatarUrl,
+    ...(media.avatarUrl ?? video.author.avatarUrl ? {
+      thumbnailUrl: media.avatarUrl ?? video.author.avatarUrl,
       thumbnailDescription: `${authorName} icon`,
     } : {}),
     lines: [
@@ -216,11 +220,7 @@ export function tiktokPreviewToDocument(video: TikTokPreview, videoMediaUrl?: st
       ...(video.title ? [{ parts: [] }, { parts: [{ text: video.title.slice(0, 3_000), translationKey: "main" }] }] : []),
     ],
   };
-  const mediaUrls = videoMediaUrl
-    ? [videoMediaUrl]
-    : video.images.length > 0
-      ? video.images
-      : video.coverUrl ? [video.coverUrl] : [];
+  const mediaUrls = media.mediaUrls ?? tiktokStillMediaUrls(video);
   const stats = [
     formatCount("▶️", video.plays),
     formatCount("❤️", video.likes),
