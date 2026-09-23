@@ -29,6 +29,8 @@ import {
 const DOWNLOAD_TIMEOUT_MS = 20_000;
 /** 画像1枚あたりの上限。TikTok CDN の画像URLは約1日で失効するため、画像も添付する */
 const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+/** Discord のメッセージ本文の文字数上限 */
+const MAX_MESSAGE_CONTENT_LENGTH = 2_000;
 /** Discord の1メッセージあたりの添付ファイル数の上限 */
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 /** 1メッセージで展開する TikTok リンクの上限。動画は最大100MBをメモリに保持するため絞る */
@@ -79,6 +81,28 @@ export function buildTikTokFallbackReply(urls: string | readonly string[]): Mess
     content: typeof urls === "string" ? urls : urls.join("\n"),
     allowedMentions: { parse: [], repliedUser: false },
   };
+}
+
+/** URLを改行区切りで、1通あたり Discord の文字数上限に収まるよう分割する。 */
+export function chunkUrlsForMessages(urls: readonly string[], maxLength = MAX_MESSAGE_CONTENT_LENGTH): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let length = 0;
+  for (const url of urls) {
+    // URLは正規化済みで短いが、万一1件で上限を超える場合は送れないため除外する
+    if (url.length > maxLength) continue;
+    const added = current.length === 0 ? url.length : length + 1 + url.length;
+    if (added > maxLength) {
+      chunks.push(current);
+      current = [url];
+      length = url.length;
+      continue;
+    }
+    current.push(url);
+    length = added;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
 }
 
 async function cancelBody(response: Response): Promise<void> {
@@ -270,11 +294,12 @@ export async function expandTikTokLinks(
       deps.log.warn({ err: String(err) }, "tiktok preview reply error");
     }
   }
-  // 上限を超えた分も元メッセージの埋め込みは非表示になっているため、元URLをまとめて返信する
-  const overflow = targets.slice(MAX_TIKTOK_TARGETS_PER_MESSAGE);
-  if (overflow.length > 0) {
+  // 上限を超えた分も元メッセージの埋め込みは非表示になっているため、元URLをまとめて返信する。
+  // 正規化でURLが元より長くなりうるので、文字数上限に収まるよう複数通に分ける
+  const overflowUrls = targets.slice(MAX_TIKTOK_TARGETS_PER_MESSAGE).map((target) => target.url);
+  for (const urls of chunkUrlsForMessages(overflowUrls)) {
     try {
-      await message.reply(buildTikTokFallbackReply(overflow.map((target) => target.url)));
+      await message.reply(buildTikTokFallbackReply(urls));
     } catch (err) {
       deps.log.warn({ err: String(err) }, "tiktok preview overflow reply error");
     }

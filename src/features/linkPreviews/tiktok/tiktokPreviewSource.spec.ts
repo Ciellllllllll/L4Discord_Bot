@@ -3,6 +3,7 @@ import { ComponentType, MessageFlags } from "discord.js";
 import { LocalLlmQueue } from "../../ai/localLlmQueue.js";
 import {
   buildTikTokReplyPayloads,
+  chunkUrlsForMessages,
   expandTikTokLinks,
   MAX_TIKTOK_TARGETS_PER_MESSAGE,
   type TikTokPreviewPayload,
@@ -134,7 +135,7 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
 }
 
 // 大量のリンクがあっても上限件数までしか展開せず、構築と返信を1件ずつ行う。
-// 上限を超えた分は元URLをまとめて1通で返信する（元メッセージの埋め込みは非表示になるため）
+// 上限を超えた分は元URLをまとめて返信する（元メッセージの埋め込みは非表示になるため）
 {
   const targets = Array.from({ length: 10 }, (_, i) => ({ url: `https://www.tiktok.com/@user/video/${i}`, videoId: String(i) }));
   const events: string[] = [];
@@ -166,6 +167,38 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
   assert.equal(
     (replies.at(-1) as { content?: string }).content,
     targets.slice(MAX_TIKTOK_TARGETS_PER_MESSAGE).map((target) => target.url).join("\n"),
+  );
+}
+
+// URLの分割：各チャンクは上限以内、順序と件数を保つ
+{
+  assert.deepEqual(chunkUrlsForMessages([], 10), []);
+  assert.deepEqual(chunkUrlsForMessages(["aaaa", "bbbb", "cccc"], 9), [["aaaa", "bbbb"], ["cccc"]]);
+  assert.deepEqual(chunkUrlsForMessages(["aaaa", "x".repeat(11), "bbbb"], 10), [["aaaa", "bbbb"]]);
+}
+
+// 上限超過分が大量でも、1通あたり2,000文字以内に分けて全URLを返信する
+{
+  const targets = Array.from({ length: 200 }, (_, i) => ({ url: `https://vm.tiktok.com/ZM${String(i).padStart(6, "0")}/` }));
+  const replies: string[] = [];
+  await expandTikTokLinks({
+    id: "overflow",
+    guildId: null,
+    channelId: "c",
+    reply: async (payload: { content?: string }) => { replies.push(payload.content ?? ""); return { id: "r" }; },
+  } as never, targets, {
+    db: {} as never,
+    log: { warn: () => undefined },
+    attachmentSizeLimitBytes: 1024,
+    queue: new LocalLlmQueue({ maxConcurrent: 1, maxQueue: 10 }),
+    buildReplyPayloads: async () => [{ content: "preview" }],
+  });
+  const overflowReplies = replies.slice(MAX_TIKTOK_TARGETS_PER_MESSAGE);
+  assert.ok(overflowReplies.length > 1);
+  assert.ok(overflowReplies.every((content) => content.length <= 2_000));
+  assert.deepEqual(
+    overflowReplies.flatMap((content) => content.split("\n")),
+    targets.slice(MAX_TIKTOK_TARGETS_PER_MESSAGE).map((target) => target.url),
   );
 }
 
