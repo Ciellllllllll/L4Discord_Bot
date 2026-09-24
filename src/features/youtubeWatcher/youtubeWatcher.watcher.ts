@@ -15,9 +15,10 @@ import {
   resolveYouTubeVideoMediaWithRetry,
 } from "../utilities/youtubeVideoMedia.js";
 import { fetchYouTubeChannelFeed, type YouTubeFeedEntry } from "./youtubeRss.js";
+import { fetchYouTubeChannelVideos, resolveYouTubeWatcherEntries } from "./youtubeWatcherFallback.js";
 import { cacheYouTubeVideoForPost, createYouTubeVideoCacheMaintenanceForContext, saveYouTubeVideoCacheReferenceForPost, YouTubeVideoCacheReferenceRecoveryError } from "./youtubeVideoCache.service.js";
 import { persistYouTubeVideo, youtubeVideoPublicUrl } from "./youtubeWatcher.videoStore.js";
-import { PostgresYouTubeWatcherRepository, toUnnotifiedEntries, youtubeGoogleVideoPendingError, type YouTubeVideoCacheReferenceRecoveryCandidate, type YouTubeWatchSubscription } from "./youtubeWatcher.repository.js";
+import { PostgresYouTubeWatcherRepository, youtubeGoogleVideoPendingError, type YouTubeVideoCacheReferenceRecoveryCandidate, type YouTubeWatchSubscription } from "./youtubeWatcher.repository.js";
 
 export type YouTubeWatcherController = { scanNow(): Promise<void>; stop(): void };
 export const YOUTUBE_VIDEO_CACHE_REFERENCE_RECOVERY_PENDING = "youtube_video_cache_reference_recovery_pending";
@@ -238,11 +239,19 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
      }
    }
   for (const subscription of await repo.list(ctx.config.GUILD_ID, true)) {
-    const feed = await fetchYouTubeChannelFeed(subscription.youtubeChannelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS });
+    const sent = await repo.sentVideoIds(subscription.id);
+    // RSS を優先し、RSS が取れないときだけ代替手段（youtubei.js の動画一覧）で補う
+    const feed = await resolveYouTubeWatcherEntries(subscription.youtubeChannelId, sent, {
+      fetchFeed: (channelId) => fetchYouTubeChannelFeed(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
+      fetchFallback: (channelId) => fetchYouTubeChannelVideos(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
+    });
     if (!feed.ok) {
       await repo.setError(subscription.id, feed.error);
       ctx.log.warn({ subscriptionId: subscription.id, error: feed.error }, "youtube watcher RSS scan failed");
       continue;
+    }
+    if (feed.notice) {
+      ctx.log.warn({ subscriptionId: subscription.id, notice: feed.notice, entries: feed.entries.length }, "youtube watcher RSS failed; used fallback");
     }
     const target = await fetchTarget(ctx.client, subscription.discordChannelId);
     if (!target) {
@@ -251,9 +260,8 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
       ctx.log.warn({ subscriptionId: subscription.id }, "youtube watcher target is unavailable");
       continue;
     }
-    const sent = await repo.sentVideoIds(subscription.id);
     let lastPostError: string | null = null;
-    for (const entry of toUnnotifiedEntries(feed.entries, sent)) {
+    for (const entry of feed.entries) {
       let sentToDiscord = false;
       let notification: YouTubeWatcherNotificationResult | undefined;
       try {
@@ -282,7 +290,8 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
         ctx.log.warn({ err: error, subscriptionId: subscription.id, videoId: entry.videoId }, "youtube watcher post failed");
       }
     }
-    await repo.setError(subscription.id, lastPostError);
+    // 代替手段を使ったときは、投稿に失敗していなくても RSS の失敗を「最終エラー」に残す
+    await repo.setError(subscription.id, lastPostError ?? feed.notice ?? null);
   }
   } finally {
     if (locked) {
