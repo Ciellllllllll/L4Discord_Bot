@@ -971,6 +971,40 @@ const githubFailureResult = {
     }).onMessage(message as never);
     assert.deepEqual(events, ["suppress", "x-cards"]);
   }
+  // 抑制の前に messageUpdate の監視を始め（抑制との間に付いた Embed も取りこぼさない）、抑制に失敗したら監視をやめる
+  {
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 0 });
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTwitterLinks: async () => { events.push("x-cards"); return []; },
+      lateEmbedWatcher: {
+        watch: (watched) => { events.push(`watch:${watched.id}`); },
+        unwatch: (id) => { events.push(`unwatch:${id}`); },
+      },
+    }).onMessage(message as never);
+    assert.deepEqual(events, ["watch:late-1", "suppress", "x-cards", "fetch"]);
+  }
+  {
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 0 });
+    message.suppressEmbeds = async () => { events.push("suppress"); throw new Error("Missing Permissions"); };
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTwitterLinks: async () => { events.push("x-cards"); return []; },
+      lateEmbedWatcher: {
+        watch: (watched) => { events.push(`watch:${watched.id}`); },
+        unwatch: (id) => { events.push(`unwatch:${id}`); },
+      },
+    }).onMessage(message as never);
+    assert.deepEqual(events, ["watch:late-1", "suppress", "unwatch:late-1", "x-cards"]);
+  }
+  {
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 1, content: "ただの雑談です" });
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      lateEmbedWatcher: {
+        watch: (watched) => { events.push(`watch:${watched.id}`); },
+        unwatch: (id) => { events.push(`unwatch:${id}`); },
+      },
+    }).onMessage(message as never);
+    assert.deepEqual(events, [], "プレビュー対象が無ければ監視しない");
+  }
   {
     // プレビュー対象が無いメッセージは最初から抑制していないので、取り直しもしない
     const { message, events } = lateEmbedMessage({ lateEmbeds: 1, content: "ただの雑談です" });

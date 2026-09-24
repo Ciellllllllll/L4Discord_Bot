@@ -37,6 +37,7 @@ import { collectTikTokReplyTargets, parseTikTokUrl, TIKTOK_DOMAINS } from "./tik
 import { buildInstagramReplyPayloads, expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
 import { collectInstagramReplyTargets, INSTAGRAM_DOMAINS, parseInstagramUrl } from "./instagram/instagramPreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
+import { LateEmbedWatcher } from "./shared/lateEmbedWatcher.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
 
 const X_DOMAINS = new Set([
@@ -150,6 +151,8 @@ type LinkPreviewMessageHandlerDeps = {
   expandTikTokLinks?: typeof expandTikTokLinks;
   expandInstagramLinks?: typeof expandInstagramLinks;
   suppressLateEmbeds?: (message: Message) => Promise<void>;
+  /** 抑制した後に遅れて付く公式 Embed を messageUpdate で監視する。null なら監視しない */
+  lateEmbedWatcher?: Pick<LateEmbedWatcher, "watch" | "unwatch"> | null;
 };
 
 function extractSteamLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
@@ -240,6 +243,13 @@ export function extractGithubEmbedImageUrls(
   return images;
 }
 
+type MessageUpdateSource = ConstructorParameters<typeof LateEmbedWatcher>[0];
+
+function hasMessageUpdateEvents(client: unknown): client is MessageUpdateSource {
+  const candidate = client as { on?: unknown; off?: unknown } | null | undefined;
+  return typeof candidate?.on === "function" && typeof candidate.off === "function";
+}
+
 export class LinkPreviewMessageHandler {
   private readonly deps: Required<LinkPreviewMessageHandlerDeps>;
 
@@ -257,6 +267,9 @@ export class LinkPreviewMessageHandler {
       expandTikTokLinks: deps.expandTikTokLinks ?? expandTikTokLinks,
       expandInstagramLinks: deps.expandInstagramLinks ?? expandInstagramLinks,
       suppressLateEmbeds: deps.suppressLateEmbeds ?? ((message) => suppressLateEmbeds(message, this.ctx.log)),
+      lateEmbedWatcher: deps.lateEmbedWatcher !== undefined
+        ? deps.lateEmbedWatcher
+        : hasMessageUpdateEvents(ctx.client) ? new LateEmbedWatcher(ctx.client, ctx.log) : null,
     };
   }
 
@@ -327,10 +340,14 @@ export class LinkPreviewMessageHandler {
     // （権限不足などで失敗したチャンネルでは、確認しても抑制できない）
     let suppressed = false;
     if (hasExistingPreview || hasGithubSuccess) {
+      // 抑制との間に付いた Embed も取りこぼさないよう、抑制の前に messageUpdate の監視を始める
+      this.deps.lateEmbedWatcher?.watch(message);
       try {
         await message.suppressEmbeds(true);
         suppressed = true;
-      } catch {}
+      } catch {
+        this.deps.lateEmbedWatcher?.unwatch(message.id);
+      }
     }
     const recheckLateEmbeds = () => suppressed ? this.deps.suppressLateEmbeds(message) : Promise.resolve();
 
