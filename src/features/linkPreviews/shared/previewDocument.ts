@@ -22,6 +22,8 @@ export type PreviewTextBlock = {
   lines: PreviewTextLine[];
   thumbnailUrl?: string;
   thumbnailDescription?: string;
+  /** センシティブな投稿の画像などで、サムネイルをスポイラーにする */
+  thumbnailSpoiler?: boolean;
 };
 
 export type PreviewMediaItem = {

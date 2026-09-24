@@ -335,3 +335,29 @@ function textDisplays(value: unknown): Array<Record<string, unknown>> {
 }
 
 console.log("previewRenderer.spec.ts: all assertions passed");
+
+// テキストブロックのサムネイルもスポイラーにできる（センシティブな投稿の記事画像など）
+{
+  const spoilered: PreviewDocument = {
+    ...document,
+    blocks: [{ ...document.blocks[0]!, thumbnailSpoiler: true } as PreviewDocument["blocks"][number]],
+  };
+  const json = JSON.stringify(buildPreviewComponents(spoilered, { translations: {} }));
+  assert.equal(json.includes(`"type":${ComponentType.Thumbnail}`), true);
+  assert.equal(json.includes("\"spoiler\":true"), true);
+  assert.equal(JSON.stringify(buildPreviewComponents(document, { translations: {} })).includes("\"spoiler\":true,\"media\""), false);
+}
+
+// Discord のリンクボタンの URL は512文字まで。超える2つ目のボタン（記事を開く など）は省き、カード全体が送れなくなるのを防ぐ
+{
+  const longUrl = `https://example.com/${"a".repeat(600)}`;
+  const withLongAction: PreviewDocument = { ...document, secondaryAction: { label: "記事を開く", url: longUrl } };
+  const json = JSON.stringify(buildPreviewComponents(withLongAction, { translations: {} }));
+  assert.equal(json.includes("記事を開く"), false);
+  assert.equal(json.includes(longUrl), false);
+  assert.equal(json.includes("YouTubeで開く"), true);
+
+  const shortUrl = `https://example.com/${"a".repeat(400)}`;
+  const withShortAction: PreviewDocument = { ...document, secondaryAction: { label: "記事を開く", url: shortUrl } };
+  assert.equal(JSON.stringify(buildPreviewComponents(withShortAction, { translations: {} })).includes("記事を開く"), true);
+}

@@ -104,3 +104,48 @@ const okFetch = async (): Promise<Response> => new Response(JSON.stringify({
 }
 
 console.log("twitterLinkExpansion.spec.ts: all assertions passed");
+
+// 記事カード付きの投稿：記事画像・カードの文・「記事を開く」ボタンを出し、カードのタイトルと説明も翻訳する
+{
+  const cardFetch = async (): Promise<Response> => new Response(JSON.stringify({
+    code: 200,
+    tweet: {
+      id: "1",
+      url: tweet.url,
+      text: "Read this https://example.com/news/1",
+      author: { name: "Example", screen_name: "example" },
+      card: {
+        url: "https://example.com/news/1",
+        title: "Breaking news",
+        description: "Something happened",
+        domain: "example.com",
+        image: { url: "https://pbs.twimg.com/card_img/1/abc?format=jpg&name=800x419" },
+      },
+    },
+  }), { status: 200 });
+  let translatedKeys: string[] = [];
+  const payloads = await buildTwitterReplyPayloads([target], {
+    fetcher: cardFetch,
+    translate: async (document) => {
+      translatedKeys = document.blocks.flatMap((block) => block.type === "text"
+        ? block.lines.flatMap((line) => line.parts.flatMap((part) => part.translationKey ? [part.translationKey] : []))
+        : []);
+      return {
+        model: "test-model",
+        translations: {
+          "card-title": { shouldTranslate: true, sourceLanguage: "en", confidence: 1, translatedText: "速報" },
+          "card-description": { shouldTranslate: true, sourceLanguage: "en", confidence: 1, translatedText: "何かが起きた" },
+        },
+      };
+    },
+  });
+  assert.deepEqual(translatedKeys, ["main", "card-title", "card-description"]);
+  const json = JSON.stringify(payloads[0]?.components);
+  assert.equal(json.includes("速報"), true);
+  assert.equal(json.includes("何かが起きた"), true);
+  assert.equal(json.includes("https://pbs.twimg.com/card_img/1/abc?format=jpg&name=800x419"), true);
+  assert.equal(json.includes(`"type":${ComponentType.MediaGallery}`), true);
+  assert.equal(json.includes("記事を開く"), true);
+  assert.equal(json.includes("\"url\":\"https://example.com/news/1\""), true);
+  assert.equal(payloads[0]?.previewState?.document.secondaryAction?.url, "https://example.com/news/1");
+}

@@ -37,6 +37,7 @@ import { collectTikTokReplyTargets, parseTikTokUrl, TIKTOK_DOMAINS } from "./tik
 import { buildInstagramReplyPayloads, expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
 import { collectInstagramReplyTargets, INSTAGRAM_DOMAINS, parseInstagramUrl } from "./instagram/instagramPreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
+import { LateEmbedWatcher } from "./shared/lateEmbedWatcher.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
 
 const X_DOMAINS = new Set([
@@ -121,6 +122,22 @@ function attachmentSizeLimitForMessage(message: Message): number {
   return youtubeAttachmentSizeLimitForPremiumTier(message.guild?.premiumTier);
 }
 
+/**
+ * Discord の公式 Embed はメッセージ作成後に遅れて生成されることがあり、最初の抑制の後から付くと残ってしまう。
+ * プレビューのカードを送った後にメッセージを API から取り直し、Embed が残っていればもう一度抑制する。
+ */
+export async function suppressLateEmbeds(
+  message: Pick<Message, "id" | "fetch">,
+  log: Pick<BotContext["log"], "warn">,
+): Promise<void> {
+  try {
+    const latest = await message.fetch(true);
+    if (latest.embeds.length > 0) await latest.suppressEmbeds(true);
+  } catch (err) {
+    log.warn({ err: String(err), messageId: message.id }, "late embed suppression failed");
+  }
+}
+
 type LinkPreviewMessageHandlerDeps = {
   buildVxTwitterReplyPayloads?: typeof buildTwitterReplyPayloads;
   expandTwitterLinks?: typeof expandTwitterLinks;
@@ -133,6 +150,9 @@ type LinkPreviewMessageHandlerDeps = {
   buildGithubReplyPayloads?: typeof buildGithubReplyPayloads;
   expandTikTokLinks?: typeof expandTikTokLinks;
   expandInstagramLinks?: typeof expandInstagramLinks;
+  suppressLateEmbeds?: (message: Message) => Promise<void>;
+  /** 抑制した後に遅れて付く公式 Embed を messageUpdate で監視する。null なら監視しない */
+  lateEmbedWatcher?: Pick<LateEmbedWatcher, "watch" | "unwatch"> | null;
 };
 
 function extractSteamLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
@@ -223,6 +243,13 @@ export function extractGithubEmbedImageUrls(
   return images;
 }
 
+type MessageUpdateSource = ConstructorParameters<typeof LateEmbedWatcher>[0];
+
+function hasMessageUpdateEvents(client: unknown): client is MessageUpdateSource {
+  const candidate = client as { on?: unknown; off?: unknown } | null | undefined;
+  return typeof candidate?.on === "function" && typeof candidate.off === "function";
+}
+
 export class LinkPreviewMessageHandler {
   private readonly deps: Required<LinkPreviewMessageHandlerDeps>;
 
@@ -239,6 +266,10 @@ export class LinkPreviewMessageHandler {
       buildGithubReplyPayloads: deps.buildGithubReplyPayloads ?? buildGithubReplyPayloads,
       expandTikTokLinks: deps.expandTikTokLinks ?? expandTikTokLinks,
       expandInstagramLinks: deps.expandInstagramLinks ?? expandInstagramLinks,
+      suppressLateEmbeds: deps.suppressLateEmbeds ?? ((message) => suppressLateEmbeds(message, this.ctx.log)),
+      lateEmbedWatcher: deps.lateEmbedWatcher !== undefined
+        ? deps.lateEmbedWatcher
+        : hasMessageUpdateEvents(ctx.client) ? new LateEmbedWatcher(ctx.client, ctx.log) : null,
     };
   }
 
@@ -305,11 +336,20 @@ export class LinkPreviewMessageHandler {
       || tiktokTargets.length > 0
       || instagramTargets.length > 0;
     const hasGithubSuccess = githubResults.some((result) => result.status === "success");
+    // 最初の抑制に成功したときだけ、カードを送った後に遅れて付いた公式 Embed を確認する
+    // （権限不足などで失敗したチャンネルでは、確認しても抑制できない）
+    let suppressed = false;
     if (hasExistingPreview || hasGithubSuccess) {
+      // 抑制との間に付いた Embed も取りこぼさないよう、抑制の前に messageUpdate の監視を始める
+      this.deps.lateEmbedWatcher?.watch(message);
       try {
         await message.suppressEmbeds(true);
-      } catch {}
+        suppressed = true;
+      } catch {
+        this.deps.lateEmbedWatcher?.unwatch(message.id);
+      }
     }
+    const recheckLateEmbeds = () => suppressed ? this.deps.suppressLateEmbeds(message) : Promise.resolve();
 
     const nestedTwitterSteamLinks = twitterTargets.length > 0
       ? await this.deps.expandTwitterLinks(message, twitterTargets, {
@@ -328,7 +368,7 @@ export class LinkPreviewMessageHandler {
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
-      }).catch((err: unknown) => {
+      }).then(recheckLateEmbeds).catch((err: unknown) => {
         this.ctx.log.warn({ err: String(err), messageId: message.id }, "tiktok preview expansion failed");
       });
     }
@@ -340,7 +380,7 @@ export class LinkPreviewMessageHandler {
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
-      }).catch((err: unknown) => {
+      }).then(recheckLateEmbeds).catch((err: unknown) => {
         this.ctx.log.warn({ err: String(err), messageId: message.id }, "instagram preview expansion failed");
       });
     }
@@ -381,6 +421,10 @@ export class LinkPreviewMessageHandler {
         aiRouter: this.ctx.aiRouter,
       }, { includeFailures: true });
     }
+    // カードを送り終えた後に、遅れて付いた公式 Embed が残っていないか確認する。
+    // TikTok・Instagram だけのときはまだカードを送っていないので、それぞれの展開完了後に確認する
+    const sentCardsHere = twitterTargets.length > 0 || youtubeTargets.length > 0 || steamTargets.length > 0 || githubResults.length > 0;
+    if (sentCardsHere) await recheckLateEmbeds();
   }
 }
 
@@ -441,7 +485,9 @@ export async function refreshPreviewTranslationState(
   channelId: string,
   deps: RefreshDeps = {},
 ): Promise<PreviewTranslationStateV1 | null> {
-  const urls = componentUrls(message.components);
+  // 種類の判定には先頭のリンクボタン（「Xで開く」などの開くボタン）の URL だけを使う。
+  // X の記事カードの「記事を開く」など2つ目のボタンが Steam などを指していても、別のプレビューとして作り直さない
+  const urls = componentUrls(message.components).slice(0, 1);
   const mediaUrl = componentMediaUrls(message.components)[0];
   for (const url of urls) {
     const steam = parseSteamUrl(url);
