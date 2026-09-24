@@ -58,6 +58,8 @@ export type TweetPreview = {
   views?: number;
   sensitive: boolean;
   media: TweetMedia[];
+  /** 記事リンクのカード（X で「news.yahoo.co.jp から」のように表示されるもの） */
+  card?: TweetCard;
   quote?: {
     id?: string;
     url?: string;
@@ -68,6 +70,14 @@ export type TweetPreview = {
       screenName: string;
     };
   };
+};
+
+export type TweetCard = {
+  url: string;
+  title: string;
+  description?: string;
+  domain: string;
+  imageUrl?: string;
 };
 
 export type FixTweetPreviewResult =
@@ -226,6 +236,23 @@ function normalizeMedia(rawTweet: Record<string, unknown>, tweetSensitive: boole
   return result.slice(0, 10);
 }
 
+/** 記事リンクのカード。記事の URL とタイトルが無いもの（投票など別種のカード）は扱わない。 */
+function normalizeCard(raw: unknown): TweetCard | undefined {
+  const card = asRecord(raw);
+  const url = safeHttpsUrl(card?.url);
+  const title = stringValue(card?.title)?.trim();
+  if (!url || !title) return undefined;
+  const description = stringValue(card?.description)?.trim();
+  const imageUrl = safeHttpsUrl(asRecord(card?.image)?.url);
+  return {
+    url,
+    title,
+    ...(description ? { description } : {}),
+    domain: stringValue(card?.domain)?.trim() ?? new URL(url).hostname,
+    ...(imageUrl ? { imageUrl } : {}),
+  };
+}
+
 function normalizeQuote(raw: unknown): TweetPreview["quote"] | undefined {
   const quote = asRecord(raw);
   if (!quote) return undefined;
@@ -283,6 +310,7 @@ export function normalizeFixTweetResponse(raw: unknown): FixTweetPreviewResult {
       ...(numberValue(tweet.views) !== undefined ? { views: numberValue(tweet.views) } : {}),
       sensitive,
       media: normalizeMedia(tweet, sensitive),
+      ...(normalizeCard(tweet.card) ? { card: normalizeCard(tweet.card) } : {}),
       ...(normalizeQuote(tweet.quote) ? { quote: normalizeQuote(tweet.quote) } : {}),
     },
   };
@@ -343,10 +371,49 @@ function mediaBlock(id: string, items: readonly TweetMedia[]): PreviewDocument["
   };
 }
 
+/** 本文の末尾がカードの記事 URL だけのとき（X 上では表示されない）は、重複しないよう取り除く。 */
+function withoutTrailingCardUrl(text: string, card: TweetCard | undefined): string {
+  if (!card) return text;
+  const trimmed = text.trimEnd();
+  return trimmed.endsWith(card.url) ? trimmed.slice(0, -card.url.length).trimEnd() : text;
+}
+
+/**
+ * 記事カードのブロック。投稿自体に画像・動画が無ければ記事画像を大きく（メディアギャラリー）、
+ * あれば右側の小さなサムネイルにする。タイトルと説明は翻訳の対象にする。
+ */
+function cardBlocks(tweet: TweetPreview): PreviewDocument["blocks"] {
+  const card = tweet.card;
+  if (!card) return [];
+  const largeImage = card.imageUrl && tweet.media.length === 0 ? card.imageUrl : undefined;
+  const thumbnailUrl = card.imageUrl && !largeImage ? card.imageUrl : undefined;
+  const text: PreviewTextBlock = {
+    type: "text",
+    id: "card",
+    ...(thumbnailUrl ? { thumbnailUrl, thumbnailDescription: "記事の画像" } : {}),
+    lines: [
+      { prefix: "> 🔗 ", parts: [{ text: compactText(card.title, 200), translationKey: "card-title", strong: true }] },
+      ...(card.description ? [{ prefix: "> ", parts: [{ text: compactText(card.description, 200), translationKey: "card-description" }] }] : []),
+      { prefix: "-# ", parts: [{ text: card.domain }] },
+    ],
+  };
+  return [
+    ...(largeImage
+      ? [{
+        type: "media" as const,
+        id: "card-media",
+        items: [{ url: largeImage, description: "記事の画像", ...(tweet.sensitive ? { spoiler: true } : {}) }],
+      }]
+      : []),
+    text,
+  ];
+}
+
 export function tweetPreviewToDocument(tweet: TweetPreview): PreviewDocument {
   const authorName = tweet.author.name
     ? `${tweet.author.name} (@${tweet.author.screenName})`
     : `@${tweet.author.screenName}`;
+  const bodyText = withoutTrailingCardUrl(tweet.text, tweet.card);
   const body: PreviewTextBlock = {
     type: "text",
     id: "body",
@@ -356,9 +423,9 @@ export function tweetPreviewToDocument(tweet: TweetPreview): PreviewDocument {
     } : {}),
     lines: [
       { parts: [{ text: authorName, strong: true }] },
-      ...(tweet.text ? [
+      ...(bodyText ? [
         { parts: [] },
-        { parts: [{ text: tweet.text.slice(0, 3_000), translationKey: "main" }] },
+        { parts: [{ text: bodyText.slice(0, 3_000), translationKey: "main" }] },
       ] : []),
     ],
   };
@@ -389,9 +456,11 @@ export function tweetPreviewToDocument(tweet: TweetPreview): PreviewDocument {
     source: "x",
     url: tweet.url,
     openLabel: "Xで開く",
+    ...(tweet.card ? { secondaryAction: { label: "記事を開く", url: tweet.card.url } } : {}),
     blocks: [
       body,
       ...(mainMedia ? [mainMedia] : []),
+      ...cardBlocks(tweet),
       ...(quote ? [quote] : []),
       ...(quoteMedia ? [quoteMedia] : []),
       ...(meta ? [{ type: "text" as const, id: "meta", lines: [{ prefix: "-# ", parts: [{ text: meta }] }] }] : []),

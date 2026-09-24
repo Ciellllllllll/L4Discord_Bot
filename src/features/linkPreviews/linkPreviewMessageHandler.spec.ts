@@ -878,6 +878,112 @@ const githubFailureResult = {
     assert.equal(refreshedInstagram?.sourceUrl, instagramUrl);
     assert.equal(refreshedInstagram?.messageId, "message-1");
   }
+
+  // 記事カードの「記事を開く」が Steam のページを指していても、X のプレビューは X として再構築する
+  {
+    const calls: string[] = [];
+    const xMessage = {
+      id: "message-3",
+      components: [{
+        toJSON: () => ({
+          type: ComponentType.Container,
+          components: [{
+            type: ComponentType.ActionRow,
+            components: [
+              { type: ComponentType.Button, style: 5, label: "Xで開く", url: "https://x.com/user/status/123" },
+              { type: ComponentType.Button, style: 5, label: "記事を開く", url: "https://store.steampowered.com/app/620/Portal_2/" },
+            ],
+          }],
+        }),
+      }],
+    };
+    const refreshedX = await refreshPreviewTranslationState(
+      xMessage as never,
+      { config: {}, log: { warn() {} } } as never,
+      "guild-1",
+      "channel-1",
+      {
+        buildSteam: async () => { calls.push("steam"); return []; },
+        buildTwitter: async () => {
+          calls.push("x");
+          return [{ previewState: {
+            document: { version: 1, source: "x", url: "https://x.com/user/status/123", openLabel: "Xで開く", blocks: [] },
+            translations: { translations: {} },
+          } }] as never;
+        },
+      },
+    );
+    assert.deepEqual(calls, ["x"]);
+    assert.equal(refreshedX?.document.source, "x");
+  }
+
+  // Discord の公式 Embed が抑制の後から生成された場合は、カードを送った後に取り直して、残っていればもう一度抑制する
+  const lateEmbedMessage = (options: { lateEmbeds: number; failFetch?: boolean; content?: string }) => {
+    const events: string[] = [];
+    const message = {
+      id: "late-1",
+      author: { bot: false, id: "user-1" },
+      guild: { id: "guild-1", premiumTier: 0 },
+      guildId: "guild-1",
+      channelId: "channel-1",
+      content: options.content ?? "https://x.com/user/status/123",
+      embeds: [],
+      suppressEmbeds: async () => { events.push("suppress"); },
+      reply: async () => { events.push("reply"); return { id: "reply-1" }; },
+      fetch: async () => {
+        events.push("fetch");
+        if (options.failFetch) throw new Error("Unknown Message");
+        return {
+          embeds: Array.from({ length: options.lateEmbeds }, () => ({})),
+          suppressEmbeds: async () => { events.push("suppress-late"); },
+        };
+      },
+    };
+    return { message, events };
+  };
+  {
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 1 });
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTwitterLinks: async () => { events.push("x-cards"); return []; },
+    }).onMessage(message as never);
+    assert.deepEqual(events, ["suppress", "x-cards", "fetch", "suppress-late"]);
+  }
+  {
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 0 });
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTwitterLinks: async () => { events.push("x-cards"); return []; },
+    }).onMessage(message as never);
+    assert.deepEqual(events, ["suppress", "x-cards", "fetch"], "Embed が無ければ抑制し直さない");
+  }
+  {
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 1, failFetch: true });
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTwitterLinks: async () => { events.push("x-cards"); return []; },
+    }).onMessage(message as never);
+    assert.deepEqual(events, ["suppress", "x-cards", "fetch"], "取り直しに失敗しても例外にしない");
+  }
+  {
+    // プレビュー対象が無いメッセージは最初から抑制していないので、取り直しもしない
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 1, content: "ただの雑談です" });
+    await new LinkPreviewMessageHandler(createCtx() as never).onMessage(message as never);
+    assert.deepEqual(events, []);
+  }
+  {
+    // TikTok は完了を待たずに展開するので、展開が終わった後にも取り直して確認する
+    let release!: () => void;
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 1, content: "https://www.tiktok.com/@user/video/123" });
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTikTokLinks: async () => {
+        await new Promise<void>((resolve) => { release = resolve; });
+        events.push("tiktok-cards");
+      },
+    }).onMessage(message as never);
+    const beforeTikTok = events.length;
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(events.slice(beforeTikTok), ["tiktok-cards", "fetch", "suppress-late"]);
+  }
 }
 
 try {
