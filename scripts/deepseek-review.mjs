@@ -30,6 +30,9 @@ const {
   // 思考モードでは推論トークンもこの上限に含まれる。小さいと推論だけで使い切り本文が空になるため、
   // reasoning_effort=max 時の公式既定値（128K）に合わせる
   MAX_DEEPSEEK_TOKENS = "131072",
+  // ワークフローのステップ上限（60分）に達すると外部から強制終了され失敗通知が送れないため、
+  // それより前にスクリプト自身で打ち切って通知できるようにする
+  DEEPSEEK_TIMEOUT_MINUTES = "55",
   SKIP_PUSH_REVIEW_IF_OPEN_PR = "true",
 } = process.env;
 
@@ -37,6 +40,10 @@ const maxDiffChars = Number(MAX_DIFF_CHARS);
 const maxRepositoryChars = Number(MAX_REPOSITORY_CHARS);
 const maxReviewComments = Number(MAX_REVIEW_COMMENTS);
 const maxDeepSeekTokens = Number(MAX_DEEPSEEK_TOKENS);
+// 不正な値だと読み込み時点で例外になり失敗通知まで届かないため、既定値にフォールバックする
+const deepSeekTimeoutMinutes = Number(DEEPSEEK_TIMEOUT_MINUTES) > 0 ? Number(DEEPSEEK_TIMEOUT_MINUTES) : 55;
+// スクリプト開始時点からの締め切り。準備（GitHub API など）にかかった時間も含めて上限内に収める
+const scriptDeadline = AbortSignal.timeout(deepSeekTimeoutMinutes * 60_000);
 
 function requireEnv(name, value) {
   if (!value) {
@@ -468,8 +475,21 @@ function extractJson(text) {
 async function requestDeepSeekReview(diffText, options = {}) {
   const reviewAll = Boolean(options.reviewAll);
   const repositoryText = options.repositoryText ?? "";
+  try {
+    return await requestDeepSeekReviewUntilDeadline(diffText, reviewAll, repositoryText);
+  } catch (error) {
+    if (scriptDeadline.aborted) {
+      throw new Error(`DeepSeek review timed out after ${deepSeekTimeoutMinutes} minutes (DEEPSEEK_TIMEOUT_MINUTES).`, { cause: error });
+    }
+    throw error;
+  }
+}
+
+async function requestDeepSeekReviewUntilDeadline(diffText, reviewAll, repositoryText) {
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
+    // 応答ヘッダー待ちとストリーミング受信の両方を締め切りで中断する
+    signal: scriptDeadline,
     headers: {
       Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
       "Content-Type": "application/json",
