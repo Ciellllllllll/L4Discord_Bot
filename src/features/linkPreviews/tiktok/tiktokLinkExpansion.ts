@@ -8,9 +8,19 @@ import {
 import type { BotContext } from "../../../bot/context.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
-import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
-import { LocalLlmQueue } from "../../ai/localLlmQueue.js";
+import type { LocalLlmQueue } from "../../ai/localLlmQueue.js";
 import type { PreviewDocument } from "../shared/previewDocument.js";
+import {
+  buildOriginalUrlReply,
+  chunkUrlsForMessages,
+  downloadMedia,
+  IMAGE_EXTENSIONS,
+  IMAGE_MAX_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MEDIA_TOTAL_TIMEOUT_MS,
+  mediaPreviewBuildQueue,
+  type DownloadedMedia,
+} from "../shared/previewMediaDownload.js";
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
 import { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
@@ -26,36 +36,11 @@ import {
   type TikTokReplyTarget,
 } from "./tiktokPreviewSource.js";
 
-const DOWNLOAD_TIMEOUT_MS = 20_000;
-/**
- * 1投稿あたりのメディア取得（動画・画像・アイコン）全体の締め切り。
- * 構築は共有キューで直列に走るため、CDN が詰まっても1投稿がキューを長時間占有しないようにする
- */
-const MEDIA_TOTAL_TIMEOUT_MS = 30_000;
-/** 画像1枚あたりの上限。TikTok CDN の画像URLは約1日で失効するため、画像も添付する */
-const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
-/** Discord のメッセージ本文の文字数上限 */
-const MAX_MESSAGE_CONTENT_LENGTH = 2_000;
-/** Discord の1メッセージあたりの添付ファイル数の上限 */
-const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+export { chunkUrlsForMessages };
+
 /** 1メッセージで展開する TikTok リンクの上限。動画は最大100MBをメモリに保持するため絞る */
 export const MAX_TIKTOK_TARGETS_PER_MESSAGE = 3;
-/** 同時に構築→返信する件数。メッセージをまたいで動画バッファが積み上がらないよう全体で共有する */
-const TIKTOK_BUILD_MAX_CONCURRENT = 1;
-/** 実行待ちの上限。超えた分は動画をダウンロードせず元URLのみ返信する */
-const TIKTOK_BUILD_MAX_QUEUE = 10;
-
-const tiktokBuildQueue = new LocalLlmQueue({
-  maxConcurrent: TIKTOK_BUILD_MAX_CONCURRENT,
-  maxQueue: TIKTOK_BUILD_MAX_QUEUE,
-});
 export const TIKTOK_MEDIA_ATTACHMENT_FILENAME = "tiktok-preview.mp4";
-const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
 
 type LoggerLike = {
   warn: (obj: unknown, msg?: string) => void;
@@ -84,73 +69,7 @@ export type TikTokReplyBuildOptions = {
 };
 
 export function buildTikTokFallbackReply(urls: string | readonly string[]): MessageCreateOptions {
-  return {
-    content: typeof urls === "string" ? urls : urls.join("\n"),
-    allowedMentions: { parse: [], repliedUser: false },
-  };
-}
-
-/** URLを改行区切りで、1通あたり Discord の文字数上限に収まるよう分割する。 */
-export function chunkUrlsForMessages(urls: readonly string[], maxLength = MAX_MESSAGE_CONTENT_LENGTH): string[][] {
-  const chunks: string[][] = [];
-  let current: string[] = [];
-  let length = 0;
-  for (const url of urls) {
-    // URLは正規化済みで短いが、万一1件で上限を超える場合は送れないため除外する
-    if (url.length > maxLength) continue;
-    const added = current.length === 0 ? url.length : length + 1 + url.length;
-    if (added > maxLength) {
-      chunks.push(current);
-      current = [url];
-      length = url.length;
-      continue;
-    }
-    current.push(url);
-    length = added;
-  }
-  if (current.length > 0) chunks.push(current);
-  return chunks;
-}
-
-async function cancelBody(response: Response): Promise<void> {
-  await response.body?.cancel().catch(() => undefined);
-}
-
-type DownloadedMedia = { buffer: Buffer; contentType: string };
-
-/** メディアを上限サイズ以内でダウンロードする。種類違い・サイズ超過・失敗時は undefined。 */
-async function downloadMedia(
-  url: string,
-  kind: "video" | "image",
-  maxBytes: number,
-  deadline: AbortSignal,
-  fetcher: FetchLike = fetch,
-): Promise<DownloadedMedia | undefined> {
-  if (maxBytes <= 0 || deadline.aborted) return undefined;
-  try {
-    const response = await fetcher(url, {
-      signal: AbortSignal.any([AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), deadline]),
-      headers: { Accept: kind === "video" ? "video/mp4,video/*;q=0.9,*/*;q=0.1" : "image/*;q=0.9,*/*;q=0.1" },
-    });
-    if (!response.ok) {
-      await cancelBody(response);
-      return undefined;
-    }
-    const contentType = response.headers.get("content-type")?.toLowerCase().split(";")[0]?.trim() ?? "";
-    if (contentType && !contentType.startsWith(`${kind}/`)) {
-      await cancelBody(response);
-      return undefined;
-    }
-    const contentLength = Number(response.headers.get("content-length") ?? "");
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-      await cancelBody(response);
-      return undefined;
-    }
-    const buffer = Buffer.from(await readResponseArrayBufferWithLimit(response, maxBytes));
-    return buffer.byteLength > 0 ? { buffer, contentType } : undefined;
-  } catch {
-    return undefined;
-  }
+  return buildOriginalUrlReply(urls);
 }
 
 type AttachedMedia = { mediaUrls: string[]; avatarUrl?: string; files: AttachmentBuilder[] };
@@ -171,12 +90,12 @@ async function attachTikTokMedia(video: TikTokPreview, options: TikTokReplyBuild
   const attachImage = async (url: string, baseName: string): Promise<string> => {
     // 写真10枚＋アイコンなど、添付数の上限を超える分は元URLのまま表示する
     if (files.length >= MAX_ATTACHMENTS_PER_MESSAGE) return url;
-    const media = await downloadMedia(url, "image", Math.min(IMAGE_MAX_BYTES, remaining), deadline, options.fetcher);
+    const media = await downloadMedia(url, { image: Math.min(IMAGE_MAX_BYTES, remaining) }, deadline, options.fetcher);
     return media ? attach(media, `${baseName}.${IMAGE_EXTENSIONS[media.contentType] ?? "jpg"}`) : url;
   };
 
   const mediaUrls: string[] = [];
-  const videoMedia = video.playUrl ? await downloadMedia(video.playUrl, "video", remaining, deadline, options.fetcher) : undefined;
+  const videoMedia = video.playUrl ? await downloadMedia(video.playUrl, { video: remaining }, deadline, options.fetcher) : undefined;
   if (videoMedia) {
     mediaUrls.push(attach(videoMedia, TIKTOK_MEDIA_ATTACHMENT_FILENAME));
   } else {
@@ -288,11 +207,11 @@ export async function expandTikTokLinks(
       deps.log.warn({ err: String(err), messageId: reply.id }, "tiktok preview state save failed");
     }
   };
-  const queue = deps.queue ?? tiktokBuildQueue;
+  const queue = deps.queue ?? mediaPreviewBuildQueue;
   // 構築→返信を共有キューで1件ずつ行い、返信済みの動画バッファを次の構築前に手放す
   for (const [index, target] of targets.slice(0, MAX_TIKTOK_TARGETS_PER_MESSAGE).entries()) {
     try {
-      const ticket = queue.enqueue({ userId: `${message.id}:${index}`, run: () => buildAndReply(target) });
+      const ticket = queue.enqueue({ userId: `tiktok:${message.id}:${index}`, run: () => buildAndReply(target) });
       if (ticket.ok) {
         await ticket.promise;
         continue;
