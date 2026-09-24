@@ -24,6 +24,7 @@ try {
     "--test-concurrency=1",
     "--test-timeout=120000",
     "src/**/*.spec.ts",
+    "scripts/**/*.spec.mjs",
   ], {
     ...process.env,
     DATABASE_URL: databaseUrl,

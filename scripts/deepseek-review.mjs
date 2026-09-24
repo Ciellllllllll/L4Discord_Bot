@@ -1,11 +1,12 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { readDeepSeekStream } from "./deepseekStream.mjs";
 
 const {
   DEEPSEEK_API_KEY,
   DEEPSEEK_MODEL = "deepseek-v4-pro",
-  DEEPSEEK_REASONING_EFFORT = "high",
+  DEEPSEEK_REASONING_EFFORT = "max",
 
   GITHUB_TOKEN,
   GITHUB_REPOSITORY,
@@ -26,7 +27,9 @@ const {
   MAX_DIFF_CHARS = "180000",
   MAX_REPOSITORY_CHARS = "350000",
   MAX_REVIEW_COMMENTS = "80",
-  MAX_DEEPSEEK_TOKENS = "12000",
+  // 思考モードでは推論トークンもこの上限に含まれる。小さいと推論だけで使い切り本文が空になるため、
+  // reasoning_effort=max 時の公式既定値（128K）に合わせる
+  MAX_DEEPSEEK_TOKENS = "131072",
   SKIP_PUSH_REVIEW_IF_OPEN_PR = "true",
 } = process.env;
 
@@ -481,6 +484,12 @@ async function requestDeepSeekReview(diffText, options = {}) {
         type: "json_object",
       },
       max_tokens: maxDeepSeekTokens,
+      // 推論が長いと非ストリーミングでは応答ヘッダーが返るまで数分かかり、
+      // fetch のヘッダー待ちタイムアウト（既定5分）で失敗するため、ストリーミングで受け取る
+      stream: true,
+      stream_options: {
+        include_usage: true,
+      },
       messages: [
         {
           role: "system",
@@ -542,17 +551,19 @@ async function requestDeepSeekReview(diffText, options = {}) {
     }),
   });
 
-  const text = await response.text();
-
   if (!response.ok) {
+    const text = await response.text();
     throw new Error(`DeepSeek API failed: ${response.status}\n${text}`);
   }
 
-  const json = JSON.parse(text);
-  const content = json.choices?.[0]?.message?.content;
+  const { content, finishReason, usage } = await readDeepSeekStream(response);
+  console.log(`DeepSeek finish_reason=${finishReason ?? "unknown"} usage=${JSON.stringify(usage ?? {})}`);
 
   if (!content) {
-    throw new Error("DeepSeek returned empty content.");
+    throw new Error(`DeepSeek returned empty content. finish_reason=${finishReason ?? "unknown"} usage=${JSON.stringify(usage ?? {})}`);
+  }
+  if (finishReason === "length") {
+    throw new Error(`DeepSeek response was truncated by max_tokens (${maxDeepSeekTokens}). usage=${JSON.stringify(usage ?? {})}`);
   }
 
   return extractJson(content);

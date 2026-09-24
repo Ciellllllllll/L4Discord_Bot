@@ -17,6 +17,8 @@ concurrency:
 jobs:
   deepseek-review:
     runs-on: ubuntu-latest
+    # reasoning_effort=max は推論に時間がかかるため、無制限に待たないよう上限を設ける
+    timeout-minutes: 60
 
     steps:
       - name: Resolve review target
@@ -54,7 +56,7 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_MODEL: deepseek-v4-pro
-          DEEPSEEK_REASONING_EFFORT: high
+          DEEPSEEK_REASONING_EFFORT: max
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -74,5 +76,7 @@ jobs:
           MAX_DIFF_CHARS: 180000
           MAX_REPOSITORY_CHARS: 350000
           MAX_REVIEW_COMMENTS: 80
-          MAX_DEEPSEEK_TOKENS: 12000
+          # 推論トークンも含む上限。12000 では推論だけで使い切り本文が空になったため、
+          # reasoning_effort=max 時の公式既定値（128K）に合わせる
+          MAX_DEEPSEEK_TOKENS: 131072
           SKIP_PUSH_REVIEW_IF_OPEN_PR: true
