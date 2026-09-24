@@ -269,7 +269,11 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
       { url: `${cdn}/720.mp4`, bandwidth: 2080574, bytes: 13537273 },
       { url: `${cdn}/360.mp4?a=1&b=2`, bandwidth: 455535, bytes: 2963937 },
     ],
-    audio: { url: `${cdn}/audio.mp4`, bandwidth: 70591, bytes: 460489 },
+    // 音声トラックは高音質の順にすべて残す（取れない・大きすぎるときに次を試す）
+    audios: [
+      { url: `${cdn}/audio.mp4`, bandwidth: 70591, bytes: 460489 },
+      { url: `${cdn}/audio-low.mp4`, bandwidth: 32000 },
+    ],
   });
   // 映像トラックが無いマニフェストは使わない
   assert.equal(parseInstagramDashManifest(`<MPD><Period><AdaptationSet contentType="audio"></AdaptationSet></Period></MPD>`), undefined);
@@ -284,5 +288,5 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
   const [item] = extractInstagramPageMedia(html, "BsOGulcndj-") ?? [];
   assert.deepEqual(item?.urls, [`${cdn}/progressive.mp4`]);
   assert.equal(item?.dash?.videos.length, 2);
-  assert.equal(item?.dash?.audio?.url, `${cdn}/audio.mp4`);
+  assert.equal(item?.dash?.audios[0]?.url, `${cdn}/audio.mp4`);
 }

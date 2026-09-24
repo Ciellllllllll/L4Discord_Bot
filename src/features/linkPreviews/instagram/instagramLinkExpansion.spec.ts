@@ -20,7 +20,9 @@ const pageHtml = `<html><head>
 
 type CdnItem = { contentType: string; bytes: number; status?: number; contentLength?: boolean };
 
-type DashTracks = { videos: Array<{ url: string; bytes: number }>; audio?: { url: string; bytes: number } };
+type DashTrack = { url: string; bytes: number };
+/** `lowAudio` は `audio` より低音質の音声トラック */
+type DashTracks = { videos: DashTrack[]; audio?: DashTrack; lowAudio?: DashTrack };
 
 /** 画質違いの映像トラックと音声トラックを持つ DASH マニフェスト（XML） */
 function dashManifest(tracks: DashTracks): string {
@@ -28,7 +30,11 @@ function dashManifest(tracks: DashTracks): string {
     `<Representation bandwidth="${bandwidth}" mimeType="${mimeType}" FBContentLength="${track.bytes}">`
     + `<BaseURL>${track.url.replace(/&/g, "&amp;")}</BaseURL></Representation>`;
   const videos = tracks.videos.map((track, i) => representation(track, 1_000 - i, "video/mp4")).join("");
-  const audio = tracks.audio ? `<AdaptationSet contentType="audio">${representation(tracks.audio, 50, "audio/mp4")}</AdaptationSet>` : "";
+  const audios = [
+    ...(tracks.lowAudio ? [representation(tracks.lowAudio, 20, "audio/mp4")] : []),
+    ...(tracks.audio ? [representation(tracks.audio, 50, "audio/mp4")] : []),
+  ];
+  const audio = audios.length > 0 ? `<AdaptationSet contentType="audio">${audios.join("")}</AdaptationSet>` : "";
   return `<?xml version="1.0"?><MPD><Period><AdaptationSet contentType="video">${videos}</AdaptationSet>${audio}</Period></MPD>`;
 }
 
@@ -94,8 +100,11 @@ function fakeFetcher(
       }
       return options.page ?? new Response(pageHtml, { status: 200 });
     }
-    const dashTrack = [...(options.dash?.videos ?? []), ...(options.dash?.audio ? [options.dash.audio] : [])]
-      .find((track) => track.url === url);
+    const dashTrack = [
+      ...(options.dash?.videos ?? []),
+      ...(options.dash?.audio ? [options.dash.audio] : []),
+      ...(options.dash?.lowAudio ? [options.dash.lowAudio] : []),
+    ].find((track) => track.url === url);
     if (dashTrack) {
       if (options.dash?.failAudio && dashTrack === options.dash.audio) return new Response("gone", { status: 404 });
       // 実際の CDN は音声だけのトラックも video/mp4 で返す
@@ -258,6 +267,47 @@ const dashCdn = "https://scontent-nrt6-1.cdninstagram.com/dash";
   const payload = built as InstagramPreviewPayload;
   assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
   assert.equal((payload.files[0]?.attachment as Buffer).byteLength, 13);
+}
+
+// 高音質の音声トラックが取れなければ、低音質の音声トラックで作る
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+    lowAudio: { url: `${dashCdn}/audio-low.mp4`, bytes: 3 },
+    failAudio: true,
+  };
+  const { fetcher } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const muxed: number[] = [];
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async (video, audio) => {
+      muxed.push(audio?.byteLength ?? 0);
+      return { ok: true, buffer: Buffer.concat([video, audio ?? Buffer.alloc(0)]) };
+    },
+  });
+  assert.deepEqual(muxed, [3]);
+  assert.deepEqual((built as InstagramPreviewPayload).files.map((file) => file.name), ["instagram-video-1.mp4"]);
+}
+
+// 高音質の音声トラックでは映像が収まらないときは、取得せずに低音質の音声トラックで作る
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 20 },
+    lowAudio: { url: `${dashCdn}/audio-low.mp4`, bytes: 3 },
+  };
+  const { fetcher, requested } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async (video, audio) => ({ ok: true, buffer: Buffer.concat([video, audio ?? Buffer.alloc(0)]) }),
+  });
+  assert.equal(requested.includes(`${dashCdn}/audio.mp4`), false);
+  assert.equal(((built as InstagramPreviewPayload).files[0]?.attachment as Buffer).byteLength, 15);
 }
 
 // ffmpeg が無いときは画質を変えても作れないので、次の画質を取得しない

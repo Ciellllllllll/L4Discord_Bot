@@ -76,33 +76,40 @@ async function buildLowQualityVideo(
   post: InstagramPost,
   options: InstagramReplyBuildOptions,
 ): Promise<Buffer | undefined> {
-  const audioBytes = dash.audio?.bytes ?? 0;
-  // マニフェストのサイズで収まらないと分かっている画質は取得しない
-  const candidates = dash.videos.filter((track) => track.bytes === undefined || track.bytes + audioBytes <= maxBytes);
-  if (candidates.length === 0) return undefined;
   // 各トラックは映像だけ・音声だけでも content-type が video/mp4 のことがあるため、どちらも受け付ける
   const trackLimits = (limit: number) => ({ video: limit, audio: limit });
-  const audio = dash.audio ? await downloadMedia(dash.audio.url, trackLimits(maxBytes), deadline, options.fetcher) : undefined;
-  // 音声がある投稿で音声だけ取れなかったときは、無音の動画を送らずサムネイルにする
-  if (dash.audio && !audio) return undefined;
-  const videoLimit = maxBytes - (audio?.buffer.byteLength ?? 0);
   let lastFailure: MuxVideoFailureReason | undefined;
-  for (const track of candidates) {
-    const video = await downloadMedia(track.url, trackLimits(videoLimit), deadline, options.fetcher);
-    if (!video) continue;
-    const result = await (options.muxVideo ?? muxVideoWithFfmpeg)(video.buffer, audio?.buffer, {
-      maxOutputBytes: maxBytes,
-      signal: deadline,
-    });
-    if (result.ok) return result.buffer;
-    lastFailure = result.reason;
-    // 結合後にコンテナの分だけ上限を超えた・その画質の結合に失敗した場合は、次の低い画質で作り直す。
-    // ffmpeg が無い・締め切りを過ぎた場合は画質を変えても作れないので打ち切る
-    if (result.reason !== "too_large" && result.reason !== "ffmpeg_failed") break;
+  const warn = () => {
+    if (lastFailure) options.log?.warn({ reason: lastFailure, shortcode: post.shortcode }, "instagram low-quality video unavailable");
+  };
+  // 音声は高音質から順に試す。音声のある投稿で音声が1つも取れなければ、無音の動画は送らずサムネイルにする
+  const audioTracks = dash.audios.length > 0 ? dash.audios : [undefined];
+  for (const audioTrack of audioTracks) {
+    // マニフェストのサイズで、この音声と合わせて収まらないと分かっている画質は取得しない
+    const audioBytes = audioTrack?.bytes ?? 0;
+    const videoTracks = dash.videos.filter((track) => track.bytes === undefined || track.bytes + audioBytes <= maxBytes);
+    if (videoTracks.length === 0) continue;
+    const audio = audioTrack ? await downloadMedia(audioTrack.url, trackLimits(maxBytes), deadline, options.fetcher) : undefined;
+    if (audioTrack && !audio) continue;
+    const videoLimit = maxBytes - (audio?.buffer.byteLength ?? 0);
+    for (const track of videoTracks) {
+      const video = await downloadMedia(track.url, trackLimits(videoLimit), deadline, options.fetcher);
+      if (!video) continue;
+      const result = await (options.muxVideo ?? muxVideoWithFfmpeg)(video.buffer, audio?.buffer, {
+        maxOutputBytes: maxBytes,
+        signal: deadline,
+      });
+      if (result.ok) return result.buffer;
+      lastFailure = result.reason;
+      // 結合後にコンテナの分だけ上限を超えた・その画質の結合に失敗した場合は、次の低い画質で作り直す。
+      // ffmpeg が無い・締め切りを過ぎた場合は、画質や音声を変えても作れないので打ち切る
+      if (result.reason !== "too_large" && result.reason !== "ffmpeg_failed") {
+        warn();
+        return undefined;
+      }
+    }
   }
-  if (lastFailure) {
-    options.log?.warn({ reason: lastFailure, shortcode: post.shortcode }, "instagram low-quality video unavailable");
-  }
+  warn();
   return undefined;
 }
 

@@ -291,7 +291,8 @@ export type InstagramPageMediaItem = {
   dash?: {
     /** ビットレートの高い順 */
     videos: InstagramDashTrack[];
-    audio?: InstagramDashTrack;
+    /** 高音質の順。音声の無い動画では空 */
+    audios: InstagramDashTrack[];
   };
 };
 
@@ -300,7 +301,7 @@ function positiveNumber(value: string | undefined): number | undefined {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
-/** DASH マニフェスト（XML）から、映像トラック（高ビットレート順）と最も高音質な音声トラックを取り出す。 */
+/** DASH マニフェスト（XML）から、映像トラックと音声トラックをそれぞれビットレートの高い順に取り出す。 */
 export function parseInstagramDashManifest(manifest: string): InstagramPageMediaItem["dash"] {
   const $ = load(manifest, { xml: true });
   const videos: InstagramDashTrack[] = [];
@@ -323,8 +324,8 @@ export function parseInstagramDashManifest(manifest: string): InstagramPageMedia
   });
   if (videos.length === 0) return undefined;
   videos.sort((a, b) => b.bandwidth - a.bandwidth);
-  const [audio] = audios.sort((a, b) => b.bandwidth - a.bandwidth);
-  return { videos, ...(audio ? { audio } : {}) };
+  audios.sort((a, b) => b.bandwidth - a.bandwidth);
+  return { videos, audios };
 }
 
 /**
