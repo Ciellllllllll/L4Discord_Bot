@@ -335,3 +335,15 @@ function textDisplays(value: unknown): Array<Record<string, unknown>> {
 }
 
 console.log("previewRenderer.spec.ts: all assertions passed");
+
+// テキストブロックのサムネイルもスポイラーにできる（センシティブな投稿の記事画像など）
+{
+  const spoilered: PreviewDocument = {
+    ...document,
+    blocks: [{ ...document.blocks[0]!, thumbnailSpoiler: true } as PreviewDocument["blocks"][number]],
+  };
+  const json = JSON.stringify(buildPreviewComponents(spoilered, { translations: {} }));
+  assert.equal(json.includes(`"type":${ComponentType.Thumbnail}`), true);
+  assert.equal(json.includes("\"spoiler\":true"), true);
+  assert.equal(JSON.stringify(buildPreviewComponents(document, { translations: {} })).includes("\"spoiler\":true,\"media\""), false);
+}

@@ -963,6 +963,15 @@ const githubFailureResult = {
     assert.deepEqual(events, ["suppress", "x-cards", "fetch"], "取り直しに失敗しても例外にしない");
   }
   {
+    // 権限不足などで最初の抑制に失敗したときは、再確認しても抑制できないので取り直さない
+    const { message, events } = lateEmbedMessage({ lateEmbeds: 1 });
+    message.suppressEmbeds = async () => { events.push("suppress"); throw new Error("Missing Permissions"); };
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandTwitterLinks: async () => { events.push("x-cards"); return []; },
+    }).onMessage(message as never);
+    assert.deepEqual(events, ["suppress", "x-cards"]);
+  }
+  {
     // プレビュー対象が無いメッセージは最初から抑制していないので、取り直しもしない
     const { message, events } = lateEmbedMessage({ lateEmbeds: 1, content: "ただの雑談です" });
     await new LinkPreviewMessageHandler(createCtx() as never).onMessage(message as never);
@@ -979,6 +988,8 @@ const githubFailureResult = {
       },
     }).onMessage(message as never);
     const beforeTikTok = events.length;
+    // カードをまだ送っていない onMessage の終わりには取り直さない（展開が終わってから確認する）
+    assert.deepEqual(events, ["suppress"]);
     release();
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));

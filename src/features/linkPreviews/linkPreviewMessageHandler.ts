@@ -323,12 +323,16 @@ export class LinkPreviewMessageHandler {
       || tiktokTargets.length > 0
       || instagramTargets.length > 0;
     const hasGithubSuccess = githubResults.some((result) => result.status === "success");
-    const suppressed = hasExistingPreview || hasGithubSuccess;
-    if (suppressed) {
+    // 最初の抑制に成功したときだけ、カードを送った後に遅れて付いた公式 Embed を確認する
+    // （権限不足などで失敗したチャンネルでは、確認しても抑制できない）
+    let suppressed = false;
+    if (hasExistingPreview || hasGithubSuccess) {
       try {
         await message.suppressEmbeds(true);
+        suppressed = true;
       } catch {}
     }
+    const recheckLateEmbeds = () => suppressed ? this.deps.suppressLateEmbeds(message) : Promise.resolve();
 
     const nestedTwitterSteamLinks = twitterTargets.length > 0
       ? await this.deps.expandTwitterLinks(message, twitterTargets, {
@@ -347,7 +351,7 @@ export class LinkPreviewMessageHandler {
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
-      }).then(() => this.deps.suppressLateEmbeds(message)).catch((err: unknown) => {
+      }).then(recheckLateEmbeds).catch((err: unknown) => {
         this.ctx.log.warn({ err: String(err), messageId: message.id }, "tiktok preview expansion failed");
       });
     }
@@ -359,7 +363,7 @@ export class LinkPreviewMessageHandler {
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
-      }).then(() => this.deps.suppressLateEmbeds(message)).catch((err: unknown) => {
+      }).then(recheckLateEmbeds).catch((err: unknown) => {
         this.ctx.log.warn({ err: String(err), messageId: message.id }, "instagram preview expansion failed");
       });
     }
@@ -400,8 +404,10 @@ export class LinkPreviewMessageHandler {
         aiRouter: this.ctx.aiRouter,
       }, { includeFailures: true });
     }
-    // カードを送り終えた後に、遅れて付いた公式 Embed が残っていないか確認する（TikTok・Instagram は展開完了後に別途確認する）
-    if (suppressed) await this.deps.suppressLateEmbeds(message);
+    // カードを送り終えた後に、遅れて付いた公式 Embed が残っていないか確認する。
+    // TikTok・Instagram だけのときはまだカードを送っていないので、それぞれの展開完了後に確認する
+    const sentCardsHere = twitterTargets.length > 0 || youtubeTargets.length > 0 || steamTargets.length > 0 || githubResults.length > 0;
+    if (sentCardsHere) await recheckLateEmbeds();
   }
 }
 

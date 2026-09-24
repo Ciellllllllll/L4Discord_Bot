@@ -67,6 +67,7 @@ const textBlockSchema = z.object({
   lines: z.array(textLineSchema).max(50),
   thumbnailUrl: httpsUrl.optional(),
   thumbnailDescription: z.string().max(1_024).optional(),
+  thumbnailSpoiler: z.boolean().optional(),
 }).passthrough();
 
 const mediaBlockSchema = z.object({

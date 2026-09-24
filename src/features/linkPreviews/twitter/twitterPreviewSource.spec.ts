@@ -231,6 +231,8 @@ test("投稿に画像があるときは記事画像を小さなサムネイル�
   assert.deepEqual(document.blocks.map((block) => block.id), ["body", "main-media", "card"]);
   const card = document.blocks.find((block) => block.id === "card");
   assert.equal(card?.type === "text" ? card.thumbnailUrl : null, articleCard.image.url);
+  // センシティブな投稿では、投稿の画像と同じく記事のサムネイルもスポイラーにする
+  assert.equal(card?.type === "text" ? card.thumbnailSpoiler : null, true);
 });
 
 test("センシティブな投稿の記事画像はスポイラーにし、長いタイトルと説明は短くする", () => {

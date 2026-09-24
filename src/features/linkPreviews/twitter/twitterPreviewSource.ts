@@ -390,7 +390,7 @@ function cardBlocks(tweet: TweetPreview): PreviewDocument["blocks"] {
   const text: PreviewTextBlock = {
     type: "text",
     id: "card",
-    ...(thumbnailUrl ? { thumbnailUrl, thumbnailDescription: "記事の画像" } : {}),
+    ...(thumbnailUrl ? { thumbnailUrl, thumbnailDescription: "記事の画像", ...(tweet.sensitive ? { thumbnailSpoiler: true } : {}) } : {}),
     lines: [
       { prefix: "> 🔗 ", parts: [{ text: compactText(card.title, 200), translationKey: "card-title", strong: true }] },
       ...(card.description ? [{ prefix: "> ", parts: [{ text: compactText(card.description, 200), translationKey: "card-description" }] }] : []),

@@ -143,6 +143,7 @@ function buildTextComponent(
       ...(block.thumbnailDescription
         ? { description: block.thumbnailDescription.slice(0, 1_024) }
         : {}),
+      ...(block.thumbnailSpoiler ? { spoiler: true } : {}),
     },
   };
 }
