@@ -6,6 +6,7 @@ import {
   extractYouTubeLinks,
   extractGithubLinks,
   extractGithubEmbedImageUrls,
+  extractInstagramLinks,
   refreshPreviewTranslationState,
 } from "./linkPreviewMessageHandler.js";
 import {
@@ -804,6 +805,78 @@ const githubFailureResult = {
     assert.equal(started, 1);
     assert.equal(suppressed, 1);
     release();
+  }
+
+  assert.deepEqual(extractInstagramLinks([
+    "https://www.instagram.com/reel/DHVrPLrIyQ_/?igsh=abc",
+    "instagram.com/p/BsOGulcndj-/。",
+    "m.instagram.com/p/CabcdEFG",
+    "instagr.am/p/CxyzABCD",
+    "https://instagram.com.evil.example/p/BsOGulcndj-/",
+    "notinstagram.com/p/BsOGulcndj-/",
+  ].join(" ")), [
+    "https://www.instagram.com/reel/DHVrPLrIyQ_/?igsh=abc",
+    "instagram.com/p/BsOGulcndj-/",
+    "m.instagram.com/p/CabcdEFG",
+    "instagr.am/p/CxyzABCD",
+  ]);
+
+  // Instagram も TikTok と共有キューを使うため、完了を待たずに onMessage を返し、元の埋め込みは非表示にする
+  {
+    let release!: () => void;
+    const expanded: Array<{ shortcode: string; attachmentSizeLimitBytes: number }> = [];
+    let suppressed = 0;
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      expandInstagramLinks: async (_message, targets, deps) => {
+        expanded.push(...targets.map((t) => ({ shortcode: t.shortcode, attachmentSizeLimitBytes: deps.attachmentSizeLimitBytes })));
+        await new Promise<void>((resolve) => { release = resolve; });
+      },
+    }).onMessage({
+      id: "instagram-1",
+      author: { bot: false, id: "user-1" },
+      guild: { id: "guild-1", premiumTier: 0 },
+      guildId: "guild-1",
+      channelId: "channel-1",
+      content: "見て https://www.instagram.com/reel/DHVrPLrIyQ_/?igsh=abc と instagram.com/natgeo/reel/DHVrPLrIyQ_/",
+      suppressEmbeds: async () => { suppressed += 1; },
+      reply: async () => undefined,
+    } as never);
+    assert.deepEqual(expanded.map((e) => e.shortcode), ["DHVrPLrIyQ_"], "同じ投稿は1回だけ展開する");
+    assert.ok((expanded[0]?.attachmentSizeLimitBytes ?? 0) > 0);
+    assert.equal(suppressed, 1);
+    release();
+  }
+
+  // 表示切り替え時の再構築では、メディアを取得しないよう添付サイズ上限0で構築する
+  {
+    let refreshOptions: { attachmentSizeLimitBytes: number } | undefined;
+    const instagramUrl = "https://www.instagram.com/reel/DHVrPLrIyQ_/";
+    const refreshedInstagram = await refreshPreviewTranslationState(
+      refreshMessage(instagramUrl) as never,
+      { config: {}, log: { warn() {} } } as never,
+      "guild-1",
+      "channel-1",
+      {
+        buildInstagram: async (_targets, options) => {
+          refreshOptions = options;
+          return [{
+            embeds: [],
+            flags: MessageFlags.IsComponentsV2,
+            components: [],
+            files: [],
+            allowedMentions: { parse: [], repliedUser: false },
+            previewState: {
+              document: { version: 1, source: "instagram", url: instagramUrl, openLabel: "Instagramで開く", blocks: [] },
+              translations: { translations: {} },
+            },
+          }];
+        },
+      },
+    );
+    assert.equal(refreshOptions?.attachmentSizeLimitBytes, 0);
+    assert.equal(refreshedInstagram?.document.source, "instagram");
+    assert.equal(refreshedInstagram?.sourceUrl, instagramUrl);
+    assert.equal(refreshedInstagram?.messageId, "message-1");
   }
 }
 

@@ -34,6 +34,8 @@ import {
 } from "./github/githubLinkExpansion.js";
 import { buildTikTokReplyPayloads, expandTikTokLinks } from "./tiktok/tiktokLinkExpansion.js";
 import { collectTikTokReplyTargets, parseTikTokUrl, TIKTOK_DOMAINS } from "./tiktok/tiktokPreviewSource.js";
+import { buildInstagramReplyPayloads, expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
+import { collectInstagramReplyTargets, INSTAGRAM_DOMAINS, parseInstagramUrl } from "./instagram/instagramPreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
 
@@ -49,6 +51,8 @@ const YOUTUBE_URL_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
 const TIKTOK_URL_PATTERN =
   /(?<url>(?:https?:\/\/)?(?:www\.|m\.|vm\.|vt\.)?tiktok\.com\/[^\s<>\u3000]+)/gi;
+const INSTAGRAM_URL_PATTERN =
+  /(?<url>(?:https?:\/\/)?(?:(?:www\.|m\.)?instagram\.com|(?:www\.)?instagr\.am)\/[^\s<>\u3000]+)/gi;
 const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
@@ -105,6 +109,10 @@ export function extractTikTokLinks(content: string): string[] {
   return extractLinks(String(content || ""), TIKTOK_URL_PATTERN, TIKTOK_DOMAINS, true);
 }
 
+export function extractInstagramLinks(content: string): string[] {
+  return extractLinks(String(content || ""), INSTAGRAM_URL_PATTERN, INSTAGRAM_DOMAINS, true);
+}
+
 export function extractGithubLinks(content: string): string[] {
   return extractGithubLinksFromContent(String(content || ""));
 }
@@ -124,6 +132,7 @@ type LinkPreviewMessageHandlerDeps = {
   buildSteamReplyPayloads?: typeof buildSteamReplyPayloads;
   buildGithubReplyPayloads?: typeof buildGithubReplyPayloads;
   expandTikTokLinks?: typeof expandTikTokLinks;
+  expandInstagramLinks?: typeof expandInstagramLinks;
 };
 
 function extractSteamLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
@@ -229,6 +238,7 @@ export class LinkPreviewMessageHandler {
       buildSteamReplyPayloads: deps.buildSteamReplyPayloads ?? buildSteamReplyPayloads,
       buildGithubReplyPayloads: deps.buildGithubReplyPayloads ?? buildGithubReplyPayloads,
       expandTikTokLinks: deps.expandTikTokLinks ?? expandTikTokLinks,
+      expandInstagramLinks: deps.expandInstagramLinks ?? expandInstagramLinks,
     };
   }
 
@@ -247,12 +257,14 @@ export class LinkPreviewMessageHandler {
       ? collectYouTubeReplyTargets(extractYouTubeLinks(content))
       : [];
     const tiktokTargets = collectTikTokReplyTargets(extractTikTokLinks(content));
+    const instagramTargets = collectInstagramReplyTargets(extractInstagramLinks(content));
     if (
       directSteamLinks.length === 0
       && twitterTargets.length === 0
       && youtubeTargets.length === 0
       && githubTargets.length === 0
       && tiktokTargets.length === 0
+      && instagramTargets.length === 0
     ) return;
 
     const youtubePlan = youtubeTargets.length > 0
@@ -290,7 +302,8 @@ export class LinkPreviewMessageHandler {
     const hasExistingPreview = directSteamLinks.length > 0
       || twitterTargets.length > 0
       || youtubeTargets.length > 0
-      || tiktokTargets.length > 0;
+      || tiktokTargets.length > 0
+      || instagramTargets.length > 0;
     const hasGithubSuccess = githubResults.some((result) => result.status === "success");
     if (hasExistingPreview || hasGithubSuccess) {
       try {
@@ -317,6 +330,18 @@ export class LinkPreviewMessageHandler {
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
       }).catch((err: unknown) => {
         this.ctx.log.warn({ err: String(err), messageId: message.id }, "tiktok preview expansion failed");
+      });
+    }
+    if (instagramTargets.length > 0) {
+      // TikTok と同じ共有キューを使うため、待ちで後続処理を止めないよう完了を待たずに実行する
+      void this.deps.expandInstagramLinks(message, instagramTargets, {
+        db: this.ctx.db,
+        log: this.ctx.log,
+        config: this.ctx.config,
+        aiRouter: this.ctx.aiRouter,
+        attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
+      }).catch((err: unknown) => {
+        this.ctx.log.warn({ err: String(err), messageId: message.id }, "instagram preview expansion failed");
       });
     }
     const nestedYouTubeSteamLinks = youtubePlan
@@ -365,6 +390,7 @@ type RefreshDeps = {
   buildSteam?: typeof buildSteamReplyPayloads;
   buildGithub?: typeof buildGithubReplyPayloads;
   buildTikTok?: typeof buildTikTokReplyPayloads;
+  buildInstagram?: typeof buildInstagramReplyPayloads;
 };
 
 function componentUrls(components: readonly unknown[]): string[] {
@@ -473,6 +499,25 @@ export async function refreshPreviewTranslationState(
     if (!tiktok) continue;
     // 表示切り替えはテキストのみ差し替えるため、動画は再ダウンロードしない
     const [payload] = await (deps.buildTikTok ?? buildTikTokReplyPayloads)([tiktok], {
+      attachmentSizeLimitBytes: 0,
+      config: ctx.config,
+      log: ctx.log,
+      aiRouter: ctx.aiRouter,
+      guildId,
+    });
+    const previewState = payload && "previewState" in payload ? payload.previewState : undefined;
+    if (!previewState) return null;
+    return {
+      version: 1, messageId: message.id, guildId, channelId,
+      sourceUrl: previewState.document.url,
+      ...previewState,
+    };
+  }
+  for (const url of urls) {
+    const instagram = parseInstagramUrl(url);
+    if (!instagram) continue;
+    // 表示切り替えはテキストのみ差し替えるため、メディアは再取得しない
+    const [payload] = await (deps.buildInstagram ?? buildInstagramReplyPayloads)([instagram], {
       attachmentSizeLimitBytes: 0,
       config: ctx.config,
       log: ctx.log,

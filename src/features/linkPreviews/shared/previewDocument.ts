@@ -1,4 +1,4 @@
-export type PreviewSource = "x" | "youtube" | "steam" | "github" | "tiktok";
+export type PreviewSource = "x" | "youtube" | "steam" | "github" | "tiktok" | "instagram";
 
 export type PreviewAction = {
   label: string;

@@ -307,6 +307,17 @@ test("v18 migration extends preview states to GitHub", async () => {
   assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam', 'github'\)\)/i);
 });
 
+test("v21 migration extends preview states to Instagram", async () => {
+  const { migratePostgresInstagramPreviewSupport } = await import("./previewState.repository.js");
+  const queries: string[] = [];
+  await migratePostgresInstagramPreviewSupport({
+    query: async (sql: string) => { queries.push(sql); return { rows: [], rowCount: 0 }; },
+  } as never);
+  const sql = queries.join("\n");
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check/i);
+  assert.match(sql, /CHECK \(source_kind IN \('x', 'youtube', 'steam', 'github', 'tiktok', 'instagram'\)\)/i);
+});
+
 test("v15 backfills only active X rows, preserves expiry, and does not overwrite on rerun", async () => {
   const connectionString = getOptionalPostgresTestUrl("TEST_DATABASE_URL", "previewState.repository.spec.ts");
   if (!connectionString) return;

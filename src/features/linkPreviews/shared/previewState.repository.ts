@@ -48,7 +48,7 @@ export type PreviewTranslationState = PreviewTranslationStateV1 | LegacyPreviewT
 
 const boundedString = (max: number) => z.string().min(1).max(max);
 const httpsUrl = z.string().url().max(2_048).refine((value) => new URL(value).protocol === "https:", "HTTPS URL required");
-const sourceSchema = z.enum(["x", "youtube", "steam", "github", "tiktok"]);
+const sourceSchema = z.enum(["x", "youtube", "steam", "github", "tiktok", "instagram"]);
 
 const textPartSchema = z.object({
   text: z.string().max(4_000),
@@ -342,5 +342,15 @@ export async function migratePostgresTikTokPreviewSupport(pool: PgQueryable): Pr
     ALTER TABLE preview_translation_states
       ADD CONSTRAINT preview_translation_states_source_kind_check
       CHECK (source_kind IN ('x', 'youtube', 'steam', 'github', 'tiktok'));
+  `);
+}
+
+export async function migratePostgresInstagramPreviewSupport(pool: PgQueryable): Promise<void> {
+  await pool.query(`
+    ALTER TABLE preview_translation_states
+      DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check;
+    ALTER TABLE preview_translation_states
+      ADD CONSTRAINT preview_translation_states_source_kind_check
+      CHECK (source_kind IN ('x', 'youtube', 'steam', 'github', 'tiktok', 'instagram'));
   `);
 }
