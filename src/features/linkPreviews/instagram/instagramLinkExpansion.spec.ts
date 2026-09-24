@@ -231,6 +231,53 @@ const dashCdn = "https://scontent-nrt6-1.cdninstagram.com/dash";
   assert.equal(JSON.stringify(payload.components).includes("thumb.jpg"), false);
 }
 
+// 結合後に上限を超えた・結合に失敗した画質は諦めず、次の低い画質で作り直す
+{
+  const dash = {
+    videos: [
+      { url: `${dashCdn}/480.mp4`, bytes: 20 },
+      { url: `${dashCdn}/360.mp4`, bytes: 12 },
+      { url: `${dashCdn}/240.mp4`, bytes: 8 },
+    ],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+  };
+  const { fetcher } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const tried: number[] = [];
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async (video, audio) => {
+      tried.push(video.byteLength);
+      if (video.byteLength === 20) return { ok: false, reason: "too_large" };
+      if (video.byteLength === 12) return { ok: false, reason: "ffmpeg_failed" };
+      return { ok: true, buffer: Buffer.concat([video, audio ?? Buffer.alloc(0)]) };
+    },
+  });
+  assert.deepEqual(tried, [20, 12, 8]);
+  const payload = built as InstagramPreviewPayload;
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.equal((payload.files[0]?.attachment as Buffer).byteLength, 13);
+}
+
+// ffmpeg が無いときは画質を変えても作れないので、次の画質を取得しない
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }, { url: `${dashCdn}/240.mp4`, bytes: 8 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+  };
+  const { fetcher, requested } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  let muxCalls = 0;
+  await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async () => { muxCalls += 1; return { ok: false, reason: "ffmpeg_unavailable" }; },
+  });
+  assert.equal(muxCalls, 1);
+  assert.equal(requested.includes(`${dashCdn}/240.mp4`), false);
+}
+
 // 低画質版を作れない（ffmpeg が無いなど）ときはサムネイルを表示し、理由をログに残す
 {
   const dash = { videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }], audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 } };

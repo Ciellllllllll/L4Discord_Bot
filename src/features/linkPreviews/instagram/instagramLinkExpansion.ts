@@ -8,7 +8,7 @@ import type { BotContext } from "../../../bot/context.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { LocalLlmQueue } from "../../ai/localLlmQueue.js";
-import { muxVideoWithFfmpeg, type MuxVideo } from "../shared/ffmpegMux.js";
+import { muxVideoWithFfmpeg, type MuxVideo, type MuxVideoFailureReason } from "../shared/ffmpegMux.js";
 import {
   expandQueuedMediaPreviews,
   translateMediaPreview,
@@ -86,18 +86,23 @@ async function buildLowQualityVideo(
   // 音声がある投稿で音声だけ取れなかったときは、無音の動画を送らずサムネイルにする
   if (dash.audio && !audio) return undefined;
   const videoLimit = maxBytes - (audio?.buffer.byteLength ?? 0);
-  let video: DownloadedMedia | undefined;
+  let lastFailure: MuxVideoFailureReason | undefined;
   for (const track of candidates) {
-    video = await downloadMedia(track.url, trackLimits(videoLimit), deadline, options.fetcher);
-    if (video) break;
+    const video = await downloadMedia(track.url, trackLimits(videoLimit), deadline, options.fetcher);
+    if (!video) continue;
+    const result = await (options.muxVideo ?? muxVideoWithFfmpeg)(video.buffer, audio?.buffer, {
+      maxOutputBytes: maxBytes,
+      signal: deadline,
+    });
+    if (result.ok) return result.buffer;
+    lastFailure = result.reason;
+    // 結合後にコンテナの分だけ上限を超えた・その画質の結合に失敗した場合は、次の低い画質で作り直す。
+    // ffmpeg が無い・締め切りを過ぎた場合は画質を変えても作れないので打ち切る
+    if (result.reason !== "too_large" && result.reason !== "ffmpeg_failed") break;
   }
-  if (!video) return undefined;
-  const result = await (options.muxVideo ?? muxVideoWithFfmpeg)(video.buffer, audio?.buffer, {
-    maxOutputBytes: maxBytes,
-    signal: deadline,
-  });
-  if (result.ok) return result.buffer;
-  options.log?.warn({ reason: result.reason, shortcode: post.shortcode }, "instagram low-quality video unavailable");
+  if (lastFailure) {
+    options.log?.warn({ reason: lastFailure, shortcode: post.shortcode }, "instagram low-quality video unavailable");
+  }
   return undefined;
 }
 

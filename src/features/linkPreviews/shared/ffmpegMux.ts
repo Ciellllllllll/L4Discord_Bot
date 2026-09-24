@@ -14,9 +14,11 @@ export type MuxVideoOptions = {
   ffmpegPath?: string;
 };
 
+export type MuxVideoFailureReason = "ffmpeg_unavailable" | "ffmpeg_failed" | "too_large" | "aborted";
+
 export type MuxVideoResult =
   | { ok: true; buffer: Buffer }
-  | { ok: false; reason: "ffmpeg_unavailable" | "ffmpeg_failed" | "too_large" | "aborted" };
+  | { ok: false; reason: MuxVideoFailureReason };
 
 export type MuxVideo = (video: Buffer, audio: Buffer | undefined, options: MuxVideoOptions) => Promise<MuxVideoResult>;
 
