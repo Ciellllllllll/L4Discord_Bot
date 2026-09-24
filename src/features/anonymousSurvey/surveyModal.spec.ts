@@ -72,8 +72,8 @@ assert.equal(formatSurveyFeedbackPreview("😀".repeat(ANONYMOUS_SURVEY_VIEW_TEX
 
 // 匿名の自由記述はリンクやメンションとして描画されない
 assert.equal(
-  formatSurveyFeedbackPreview("[公式](https://evil.example) <@&123> <https://x.example>"),
-  "\\[公式](https://evil.example) \\<@&123> \\<https://x.example>",
+  formatSurveyFeedbackPreview("[公式](https://evil.example) <@&123> <https://x.example> http://raw.example @everyone @Here"),
+  "\\[公式](https:\u200B//evil.example) \\<@&123> \\<https:\u200B//x.example> http:\u200B//raw.example @\u200Beveryone @\u200BHere",
 );
 
 const createdAt = "2026-09-24T00:00:00.000Z";

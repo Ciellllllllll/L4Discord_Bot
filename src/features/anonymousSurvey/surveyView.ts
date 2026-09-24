@@ -93,7 +93,11 @@ export function formatSurveyFeedbackPreview(text: string): string {
     ? `${chars.slice(0, ANONYMOUS_SURVEY_VIEW_TEXT_PREVIEW_LENGTH).join("")}…`
     : chars.join("");
   // 匿名の自由記述がリンクやメンションとして描画されないようにする
-  return escapeMarkdown(preview, { maskedLink: true }).replace(/</g, "\\<");
+  // （URL の自動リンクと @everyone / @here はゼロ幅スペースで無効化する）
+  return escapeMarkdown(preview, { maskedLink: true })
+    .replace(/</g, "\\<")
+    .replace(/:\/\//g, ":​//")
+    .replace(/@(everyone|here)/gi, "@​$1");
 }
 
 export function formatAnonymousSurveyResponse(response: AnonymousSurveyView["responses"][number], index: number): string {
