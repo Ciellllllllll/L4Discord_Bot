@@ -24,6 +24,8 @@ export const PREVIEW_SHOW_TRANSLATION_ID = "preview:show-translation";
 
 const PREVIEW_TEXT_COMPONENT_ID_BASE = 2_140_000_000;
 const PREVIEW_ATTRIBUTION_COMPONENT_ID = 2_140_000_100;
+/** Discord のリンクボタンの URL の上限。超えるとメッセージ全体が拒否される */
+const MAX_LINK_BUTTON_URL_LENGTH = 512;
 
 export type PreviewDisplayMode = "translation" | "original";
 
@@ -193,7 +195,8 @@ function buildActionRow(
     label,
     url: document.url,
   }];
-  if (document.secondaryAction) {
+  // 長すぎる URL のボタンはカードごと送れなくなるので省く（開く先は本文やカードから辿れる）
+  if (document.secondaryAction && document.secondaryAction.url.length <= MAX_LINK_BUTTON_URL_LENGTH) {
     components.push({
       type: ComponentType.Button,
       style: ButtonStyle.Link,
