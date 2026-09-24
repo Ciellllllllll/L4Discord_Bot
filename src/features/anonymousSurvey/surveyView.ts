@@ -1,18 +1,22 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ButtonInteraction, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, escapeMarkdown, type ButtonInteraction, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
 import { sql, type Kysely } from "kysely";
 import type { BotContext } from "../../bot/context.js";
 import type { Database } from "../../core/db/types.js";
 import { isAdmin } from "../../core/permission.js";
 import { ComponentCardBuilder, componentCardsPayload, ephemeralComponentPayload } from "../panels/componentCard.js";
 
-export const ANONYMOUS_SURVEY_VIEW_PAGE_SIZE = 20;
+// 自由記述を含むため、メッセージ全体のテキスト上限（4000 字）に収まる件数にする
+export const ANONYMOUS_SURVEY_VIEW_PAGE_SIZE = 5;
+export const ANONYMOUS_SURVEY_VIEW_TEXT_PREVIEW_LENGTH = 150;
 export const ANONYMOUS_SURVEY_VIEW_PREFIX = "anon_survey:view:";
 
 export type AnonymousSurveyView = {
   totalResponses: number;
   averageRating: number | null;
   ratingCounts: [number, number, number, number, number];
-  responses: Array<{ rating: number; createdAt: string }>;
+  improvementCount: number;
+  bugReportCount: number;
+  responses: Array<{ rating: number | null; improvement: string | null; bugReport: string | null; createdAt: string }>;
   page: number;
   totalPages: number;
 };
@@ -37,6 +41,8 @@ export async function getAnonymousSurveyView(
     .select([
       sql<number>`count(*)`.as("totalResponses"),
       sql<number | null>`avg(rating)`.as("averageRating"),
+      sql<number>`count(improvement)`.as("improvementCount"),
+      sql<number>`count(bug_report)`.as("bugReportCount"),
     ])
     .where("guild_id", "=", guildId)
     .executeTakeFirstOrThrow();
@@ -52,11 +58,11 @@ export async function getAnonymousSurveyView(
     .execute();
   const ratingCounts: [number, number, number, number, number] = [0, 0, 0, 0, 0];
   for (const row of countRows) {
-    if (row.rating >= 1 && row.rating <= 5) ratingCounts[row.rating - 1] = toFiniteNumber(row.count);
+    if (row.rating !== null && row.rating >= 1 && row.rating <= 5) ratingCounts[row.rating - 1] = toFiniteNumber(row.count);
   }
   const rows = await db
     .selectFrom("anonymous_survey_responses")
-    .select(["rating", "created_at"])
+    .select(["rating", "improvement", "bug_report", "created_at"])
     .where("guild_id", "=", guildId)
     .orderBy("created_at", "desc")
     .orderBy("id", "desc")
@@ -68,16 +74,39 @@ export async function getAnonymousSurveyView(
     totalResponses,
     averageRating,
     ratingCounts,
-    responses: rows.map((row) => ({ rating: row.rating, createdAt: toCreatedAt(row.created_at) })),
+    improvementCount: toFiniteNumber(summary.improvementCount),
+    bugReportCount: toFiniteNumber(summary.bugReportCount),
+    responses: rows.map((row) => ({
+      rating: row.rating,
+      improvement: row.improvement,
+      bugReport: row.bug_report,
+      createdAt: toCreatedAt(row.created_at),
+    })),
     page,
     totalPages,
   };
 }
 
-function formatResponse(createdAt: string, rating: number, index: number): string {
-  const timestamp = new Date(createdAt).getTime();
-  const date = Number.isFinite(timestamp) ? `<t:${Math.floor(timestamp / 1000)}:f>` : createdAt;
-  return `${index}. 評価: ${rating} / ${date}`;
+export function formatSurveyFeedbackPreview(text: string): string {
+  const chars = Array.from(text.replace(/\s+/g, " ").trim());
+  const preview = chars.length > ANONYMOUS_SURVEY_VIEW_TEXT_PREVIEW_LENGTH
+    ? `${chars.slice(0, ANONYMOUS_SURVEY_VIEW_TEXT_PREVIEW_LENGTH).join("")}…`
+    : chars.join("");
+  // 匿名の自由記述がリンクやメンションとして描画されないようにする
+  // （URL の自動リンクと @everyone / @here はゼロ幅スペースで無効化する）
+  return escapeMarkdown(preview, { maskedLink: true })
+    .replace(/</g, "\\<")
+    .replace(/:\/\//g, ":​//")
+    .replace(/@(everyone|here)/gi, "@​$1");
+}
+
+export function formatAnonymousSurveyResponse(response: AnonymousSurveyView["responses"][number], index: number): string {
+  const timestamp = new Date(response.createdAt).getTime();
+  const date = Number.isFinite(timestamp) ? `<t:${Math.floor(timestamp / 1000)}:f>` : response.createdAt;
+  const lines = [`${index}. 評価: ${response.rating ?? "-"} / ${date}`];
+  if (response.improvement) lines.push(`└ 改善要望: ${formatSurveyFeedbackPreview(response.improvement)}`);
+  if (response.bugReport) lines.push(`└ バグ報告: ${formatSurveyFeedbackPreview(response.bugReport)}`);
+  return lines.join("\n");
 }
 
 export function buildAnonymousSurveyViewMessage(view: AnonymousSurveyView) {
@@ -85,6 +114,7 @@ export function buildAnonymousSurveyViewMessage(view: AnonymousSurveyView) {
     `回答数: **${view.totalResponses}件**`,
     `平均評価: **${view.averageRating === null ? "-" : view.averageRating.toFixed(2)}**`,
     `評価分布: 1=${view.ratingCounts[0]} / 2=${view.ratingCounts[1]} / 3=${view.ratingCounts[2]} / 4=${view.ratingCounts[3]} / 5=${view.ratingCounts[4]}`,
+    `改善要望あり: **${view.improvementCount}件** / バグ報告あり: **${view.bugReportCount}件**`,
   ].join("\n");
   const card = new ComponentCardBuilder()
     .setTitle("匿名アンケート結果")
@@ -92,9 +122,8 @@ export function buildAnonymousSurveyViewMessage(view: AnonymousSurveyView) {
     .setFooter({ text: view.totalResponses === 0 ? "回答はまだありません。" : `${view.page + 1} / ${view.totalPages} ページ` });
   if (view.responses.length > 0) {
     card.addTextDisplays(
-      view.responses.map((response, index) => formatResponse(
-        response.createdAt,
-        response.rating,
+      view.responses.map((response, index) => formatAnonymousSurveyResponse(
+        response,
         view.page * ANONYMOUS_SURVEY_VIEW_PAGE_SIZE + index + 1,
       )).join("\n"),
     );

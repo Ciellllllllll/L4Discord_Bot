@@ -18,6 +18,7 @@ import { ensurePostgresAiProviderSchema, PostgresAiProviderBudgetRepository, Pos
 import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
 import { dropPostgresSteamAppListTables, ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
+import { migratePostgresAnonymousSurveyFeedback } from "../features/anonymousSurvey/surveySchema.js";
 import { migratePostgresGithubPreviewSupport, migratePostgresPreviewTranslationStates, migratePostgresSteamPreviewSupport, migratePostgresTikTokPreviewSupport } from "../features/linkPreviews/shared/previewState.repository.js";
 import {
   ensurePostgresSteamExchangeRateSchema,
@@ -136,6 +137,7 @@ async function createDatabaseRuntimeUnsafe(
     { version: 17, name: "runtime_uptime_sessions", apply: ensurePostgresRuntimeUptimeSchema },
     { version: 18, name: "github_link_preview", apply: migratePostgresGithubPreviewSupport },
     { version: 19, name: "tiktok_link_preview", apply: migratePostgresTikTokPreviewSupport },
+    { version: 20, name: "anonymous_survey_feedback", apply: migratePostgresAnonymousSurveyFeedback },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);

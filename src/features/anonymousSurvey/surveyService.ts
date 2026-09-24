@@ -5,8 +5,11 @@ import type { Database } from "../../core/db/types.js";
 import type { StoredSlashCommand } from "./surveyCommandState.js";
 
 export const SKIP_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+export const SURVEY_TEXT_MAX_LENGTH = 1000;
 
 export type AnonymousSurveyAction = "answer" | "skip";
+// slashGate: アンケートのモーダル用 / continueCommand: 回答後に「コマンドを実行」ボタンで続行する用
+export type AnonymousSurveySessionAction = "slashGate" | "continueCommand";
 type SurveyDb = Kysely<Database> | Transaction<Database>;
 
 export type AnonymousSurveySessionPayload = {
@@ -61,12 +64,16 @@ export function parseAnonymousSurveySessionPayload(raw: unknown): AnonymousSurve
   return { command: { commandName: command.commandName, guildId: command.guildId, channelId: command.channelId, userId: command.userId, options } };
 }
 
-async function deleteAnonymousSurveySession(db: Kysely<Database>, sessionId: string): Promise<void> {
+async function deleteAnonymousSurveySession(
+  db: Kysely<Database>,
+  sessionId: string,
+  action: AnonymousSurveySessionAction,
+): Promise<void> {
   await db
     .deleteFrom("interaction_sessions")
     .where("id", "=", sessionId)
     .where("domain", "=", "anonymousSurvey")
-    .where("action", "=", "slashGate")
+    .where("action", "=", action)
     .execute();
 }
 
@@ -143,15 +150,54 @@ export function nextPromptAfterAnswer(now: Date): Date {
   ));
 }
 
+export type AnonymousSurveyAnswer = {
+  rating: number | null;
+  improvement: string | null;
+  bugReport: string | null;
+};
+
+export type AnonymousSurveySubmission = { kind: "skip" } | ({ kind: "answer" } & AnonymousSurveyAnswer);
+
+function normalizeFeedbackText(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim().slice(0, SURVEY_TEXT_MAX_LENGTH).trim();
+  return text || null;
+}
+
+function isValidRating(rating: number): boolean {
+  return Number.isInteger(rating) && rating >= 1 && rating <= 5;
+}
+
+export function parseAnonymousSurveySubmission(
+  ratingValues: readonly string[],
+  improvement: string | null | undefined,
+  bugReport: string | null | undefined,
+): AnonymousSurveySubmission {
+  const rawRating = ratingValues[0];
+  const parsedRating = rawRating === undefined ? null : Number(rawRating);
+  const rating = parsedRating !== null && isValidRating(parsedRating) ? parsedRating : null;
+  const answer = {
+    rating,
+    improvement: normalizeFeedbackText(improvement),
+    bugReport: normalizeFeedbackText(bugReport),
+  };
+  if (answer.rating === null && answer.improvement === null && answer.bugReport === null) return { kind: "skip" };
+  return { kind: "answer", ...answer };
+}
+
 export async function recordAnonymousSurveyAnswer(
   db: Kysely<Database>,
   guildId: string,
   userId: string,
-  rating: number,
+  answer: AnonymousSurveyAnswer,
   now = new Date(),
 ): Promise<void> {
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+  if (answer.rating !== null && !isValidRating(answer.rating)) {
     throw new Error("anonymous survey rating must be an integer from 1 to 5");
+  }
+  const improvement = normalizeFeedbackText(answer.improvement);
+  const bugReport = normalizeFeedbackText(answer.bugReport);
+  if (answer.rating === null && improvement === null && bugReport === null) {
+    throw new Error("anonymous survey answer must include a rating or feedback text");
   }
   await db.transaction().execute(async (trx) => {
     await trx
@@ -159,7 +205,9 @@ export async function recordAnonymousSurveyAnswer(
       .values({
         id: randomUUID(),
         guild_id: guildId,
-        rating,
+        rating: answer.rating,
+        improvement,
+        bug_report: bugReport,
         created_at: iso(now) as unknown as Date,
       })
       .execute();
@@ -181,13 +229,14 @@ export async function createAnonymousSurveySession(
   guildId: string,
   userId: string,
   command: StoredSlashCommand,
+  action: AnonymousSurveySessionAction = "slashGate",
 ): Promise<string> {
   const id = randomUUID();
   await createSession(db, {
     id,
     guildId,
     domain: "anonymousSurvey",
-    action: "slashGate",
+    action,
     payload: { command },
     executorUserId: userId,
     ttlHours: 1,
@@ -198,18 +247,19 @@ export async function createAnonymousSurveySession(
 export async function getAnonymousSurveySession(
   db: Kysely<Database>,
   sessionId: string,
+  action: AnonymousSurveySessionAction = "slashGate",
 ): Promise<AnonymousSurveySessionPayload & { guildId: string; executorUserId: string | null } | null> {
   let session: Awaited<ReturnType<typeof getSession>>;
   try {
     session = await getSession(db, sessionId);
   } catch {
-    await deleteAnonymousSurveySession(db, sessionId).catch(() => undefined);
+    await deleteAnonymousSurveySession(db, sessionId, action).catch(() => undefined);
     return null;
   }
-  if (!session || session.domain !== "anonymousSurvey" || session.action !== "slashGate") return null;
+  if (!session || session.domain !== "anonymousSurvey" || session.action !== action) return null;
   const payload = parseAnonymousSurveySessionPayload(session.payload);
   if (!payload || !payloadMatchesSession(payload, session.guild_id, session.executor_user_id)) {
-    await deleteAnonymousSurveySession(db, sessionId).catch(() => undefined);
+    await deleteAnonymousSurveySession(db, sessionId, action).catch(() => undefined);
     return null;
   }
   return {
@@ -239,13 +289,14 @@ export async function consumeAnonymousSurveySession(
   db: Kysely<Database>,
   sessionId: string,
   userId: string,
+  action: AnonymousSurveySessionAction = "slashGate",
 ): Promise<AnonymousSurveySessionPayload & { guildId: string; executorUserId: string | null } | null> {
   const nowIso = iso(new Date());
   const row = await db
     .deleteFrom("interaction_sessions")
     .where("id", "=", sessionId)
     .where("domain", "=", "anonymousSurvey")
-    .where("action", "=", "slashGate")
+    .where("action", "=", action)
     .where("executor_user_id", "=", userId)
     .where("expires_at", ">", nowIso as unknown as Date)
     .returning(["payload", "guild_id", "executor_user_id"])

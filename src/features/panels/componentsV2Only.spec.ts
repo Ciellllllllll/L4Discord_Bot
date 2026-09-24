@@ -33,8 +33,7 @@ function isPayloadProducingSpread(prop: ts.ObjectLiteralElementLike, sourceFile:
   if (!ts.isSpreadAssignment(prop)) return false;
   const text = prop.expression.getText(sourceFile);
   return /\bpayload\b/.test(text)
-    || /\bbuild[A-Za-z0-9_]*Payload\(/.test(text)
-    || /\bbuildAnonymousSurveyMessage\(/.test(text);
+    || /\bbuild[A-Za-z0-9_]*Payload\(/.test(text);
 }
 
 function includesMessageFlag(expression: ts.Expression, flagName: string, sourceFile: ts.SourceFile): boolean {

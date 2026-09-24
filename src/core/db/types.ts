@@ -282,7 +282,9 @@ export interface AiR18UserSettingsRow {
 export interface AnonymousSurveyResponsesRow {
   id: string;
   guild_id: string;
-  rating: number;
+  rating: number | null;
+  improvement: string | null;
+  bug_report: string | null;
   created_at: Date;
 }
 

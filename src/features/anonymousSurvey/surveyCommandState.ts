@@ -5,6 +5,7 @@ import {
   type ChatInputCommandInteraction,
   type CommandInteractionOption,
   type InteractionReplyOptions,
+  type ModalSubmitInteraction,
   type User,
 } from "discord.js";
 
@@ -119,7 +120,7 @@ function hasEphemeralFlag(payload?: InteractionReplyOptions | string): boolean {
 }
 
 export function createSurveyReplayInteraction(
-  interaction: ButtonInteraction,
+  interaction: ButtonInteraction | ModalSubmitInteraction,
   command: StoredSlashCommand,
   options: { preferFollowUp?: boolean } = {},
 ): ChatInputCommandInteraction {
@@ -152,6 +153,8 @@ export function createSurveyReplayInteraction(
     },
     followUp: async (payload: InteractionReplyOptions | string) => interaction.followUp(payload as InteractionReplyOptions),
     showModal: async (modal: Parameters<ButtonInteraction["showModal"]>[0]) => {
+      // モーダル送信への応答として別のモーダルは開けない
+      if (interaction.isModalSubmit()) throw new Error("Cannot show a modal in response to a modal submit");
       const result = await interaction.showModal(modal);
       replay.replied = true;
       return result;

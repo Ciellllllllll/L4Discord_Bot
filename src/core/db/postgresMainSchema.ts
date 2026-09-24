@@ -186,7 +186,9 @@ export async function ensurePostgresMainSchema(pool: PgQueryable): Promise<void>
     CREATE TABLE IF NOT EXISTS anonymous_survey_responses (
       id text PRIMARY KEY,
       guild_id text NOT NULL,
-      rating integer NOT NULL CHECK (rating >= 1 AND rating <= 5),
+      rating integer CHECK (rating >= 1 AND rating <= 5),
+      improvement text,
+      bug_report text,
       created_at timestamptz NOT NULL
     );
 
