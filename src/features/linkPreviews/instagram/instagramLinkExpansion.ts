@@ -81,15 +81,19 @@ async function attachInstagramMedia(post: InstagramPost, options: InstagramReply
   };
 
   const pageMediaUrls = await fetchInstagramPageMedia(post, deadline, options.fetcher);
+  const itemCount = pageMediaUrls?.length ?? MAX_INSTAGRAM_MEDIA_ITEMS;
   let firstItemAttached = false;
-  for (let index = 1; index <= MAX_INSTAGRAM_MEDIA_ITEMS; index += 1) {
+  for (let index = 1; index <= itemCount; index += 1) {
     // 先頭を OG 画像で補う枠を1件残す
     if (remaining <= 0 || items.length >= MAX_ATTACHMENTS_PER_MESSAGE - (firstItemAttached ? 0 : 1) || deadline.aborted) break;
-    const cdnUrl = pageMediaUrls
-      ? pageMediaUrls[index - 1]
-      : await resolveInstagramMirrorMedia(post.shortcode, index, deadline, options.fetcher);
-    // 項目が尽きたか、ミラーが使えない
-    if (!cdnUrl) break;
+    // 本体ページで URL が得られなかった項目だけ、同じ番号をミラーで補う
+    const cdnUrl = pageMediaUrls?.[index - 1]
+      ?? await resolveInstagramMirrorMedia(post.shortcode, index, deadline, options.fetcher);
+    if (!cdnUrl) {
+      // ミラーだけが頼りのときは、項目が尽きたかミラーが使えないので打ち切る
+      if (!pageMediaUrls) break;
+      continue;
+    }
     const item = await download(cdnUrl, { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) }, index);
     if (!item) continue;
     items.push(item);

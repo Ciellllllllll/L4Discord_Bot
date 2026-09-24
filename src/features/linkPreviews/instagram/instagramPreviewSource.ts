@@ -291,9 +291,10 @@ function findPageMedia(value: unknown, shortcode: string): Record<string, unknow
 
 /**
  * ブラウザ向けの本体ページに埋め込まれた投稿データ（JSON）から、各項目（カルーセルなら全項目）の CDN URL を取り出す。
- * Instagram の CDN 以外を指す項目は除く。投稿データが見つからなければ undefined。
+ * 項目の位置は保ち、URL が無い・Instagram の CDN 以外を指す項目は undefined にする（呼び出し側がその項目だけ補う）。
+ * 投稿データが見つからない、または使える項目が1つもなければ undefined。
  */
-export function extractInstagramPageMedia(html: string, shortcode: string): string[] | undefined {
+export function extractInstagramPageMedia(html: string, shortcode: string): Array<string | undefined> | undefined {
   for (const match of html.matchAll(/<script type="application\/json"[^>]*>([\s\S]*?)<\/script>/g)) {
     const json = match[1]!;
     // 対象の投稿を含まないスクリプトは解析しない
@@ -307,11 +308,12 @@ export function extractInstagramPageMedia(html: string, shortcode: string): stri
     if (!media) continue;
     const items = Array.isArray(media.carousel_media) ? media.carousel_media : [media];
     const urls = items
-      .map((item) => asRecord(item))
-      .flatMap((item) => item ? [pageMediaItemUrl(item)] : [])
-      .filter((url): url is string => Boolean(url))
-      .slice(0, MAX_INSTAGRAM_MEDIA_ITEMS);
-    return urls.length > 0 ? urls : undefined;
+      .slice(0, MAX_INSTAGRAM_MEDIA_ITEMS)
+      .map((item) => {
+        const record = asRecord(item);
+        return record ? pageMediaItemUrl(record) : undefined;
+      });
+    return urls.some(Boolean) ? urls : undefined;
   }
   return undefined;
 }
@@ -325,7 +327,7 @@ export async function fetchInstagramPageMedia(
   post: Pick<InstagramPost, "url" | "shortcode">,
   deadline: AbortSignal,
   fetcher: FetchLike = fetch,
-): Promise<string[] | undefined> {
+): Promise<Array<string | undefined> | undefined> {
   if (deadline.aborted) return undefined;
   try {
     const response = await fetcher(post.url, {

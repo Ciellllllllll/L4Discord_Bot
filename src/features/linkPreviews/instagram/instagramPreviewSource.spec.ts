@@ -219,7 +219,8 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
       ],
     } } } }]] }),
   ].join("\n");
-  assert.deepEqual(extractInstagramPageMedia(html, "BsOGulcndj-"), [`${cdn}/1.mp4`, `${cdn}/2-large.jpg`]);
+  // CDN 以外を指す項目は位置を保ったまま undefined にする
+  assert.deepEqual(extractInstagramPageMedia(html, "BsOGulcndj-"), [`${cdn}/1.mp4`, `${cdn}/2-large.jpg`, undefined]);
   assert.equal(extractInstagramPageMedia(html, "Missing123"), undefined);
   assert.equal(extractInstagramPageMedia("<html></html>", "BsOGulcndj-"), undefined);
 
@@ -229,7 +230,7 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
       init = requestInit;
       return new Response(html, { status: 200 });
     }),
-    [`${cdn}/1.mp4`, `${cdn}/2-large.jpg`],
+    [`${cdn}/1.mp4`, `${cdn}/2-large.jpg`, undefined],
   );
   assert.match((init?.headers as Record<string, string>)["User-Agent"] ?? "", /^Mozilla\/5\.0/);
 

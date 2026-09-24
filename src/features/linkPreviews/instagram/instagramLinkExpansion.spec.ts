@@ -154,6 +154,36 @@ async function buildOne(
   assert.equal(requested.includes("https://uuinstagram.com/images/DHVrPLrIyQ_/1"), true);
 }
 
+// 本体ページのカルーセルの一部の URL が使えなくても、後ろの項目の番号をずらさず、その項目だけミラーで補う
+{
+  const { fetcher, requested } = fakeFetcher(
+    [{ contentType: "video/mp4", bytes: 3 }],
+    {
+      pageItems: [
+        { contentType: "video/mp4", bytes: 3, url: "https://evil.example/1.mp4" },
+        { contentType: "image/png", bytes: 2 },
+      ],
+    },
+  );
+  const payload = await buildOne(fetcher);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4", "instagram-image-2.png"]);
+  assert.equal(requested.includes("https://evil.example/1.mp4"), false);
+  assert.deepEqual(requested.filter((url) => url.includes("uuinstagram.com")), ["https://uuinstagram.com/images/DHVrPLrIyQ_/1"]);
+}
+
+// 本体ページの1番目が使えず、ミラーでも取れなければ、2番目を先頭と取り違えずにカバー画像を先頭に出す
+{
+  const { fetcher } = fakeFetcher([], {
+    mirrorDown: true,
+    pageItems: [
+      { contentType: "video/mp4", bytes: 3, url: "https://evil.example/1.mp4" },
+      { contentType: "image/png", bytes: 2 },
+    ],
+  });
+  const payload = await buildOne(fetcher);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-image-1.jpg", "instagram-image-2.png"]);
+}
+
 // カルーセルは項目ごとに動画・画像を判定して添付し、取得できなかった項目は表示しない
 {
   const { fetcher } = fakeFetcher([
