@@ -40,6 +40,8 @@ export type InstagramReplyTarget = {
   url: string;
   shortcode: string;
   kind: InstagramPostKind;
+  /** `/<user>/p/<code>/` の形のURLに含まれていた投稿者 */
+  username?: string;
 };
 
 export type InstagramPost = {
@@ -95,7 +97,13 @@ export function parseInstagramUrl(urlText: string): InstagramReplyTarget | null 
     const kind = postKind(parts[kindIndex])!;
     const shortcode = parts[kindIndex + 1];
     if (!shortcode || !SHORTCODE_PATTERN.test(shortcode)) return null;
-    return { url: `https://www.instagram.com/${kind}/${shortcode}/`, shortcode, kind };
+    const username = kindIndex === 1 ? parts[0] : undefined;
+    return {
+      url: `https://www.instagram.com/${kind}/${shortcode}/`,
+      shortcode,
+      kind,
+      ...(username && /^[A-Za-z0-9._]+$/.test(username) ? { username } : {}),
+    };
   } catch {
     return null;
   }
@@ -150,14 +158,13 @@ export function normalizeInstagramOgMeta(meta: InstagramOgMeta, target: Instagra
   const parsedUrl = ogUrl ? parseInstagramUrl(ogUrl) : null;
   // ログイン画面・非公開・削除済みの投稿では投稿の og:url が返らない
   if (!parsedUrl || parsedUrl.shortcode !== target.shortcode) return { status: "fallback", reason: "post_unavailable" };
-  const urlParts = new URL(ogUrl!).pathname.split("/").filter(Boolean);
   const title = meta["og:title"] ?? "";
   const description = meta["og:description"] ?? "";
   // いいね・コメント数は非表示設定の投稿では省略される
   const summaryMatch = description.match(/^((?:[\d.,]+[KMB]? (?:likes?|comments?)(?:, )?)+) - /);
   const summary = summaryMatch?.[1] ?? "";
   const afterSummary = summaryMatch ? description.slice(summaryMatch[0].length) : description;
-  const username = urlParts.length >= 3 ? urlParts[0]! : afterSummary.match(/^([A-Za-z0-9._]+) on /)?.[1];
+  const username = parsedUrl.username ?? afterSummary.match(/^([A-Za-z0-9._]+) on /)?.[1];
   if (!username) return { status: "fallback", reason: "invalid_data" };
 
   const titleMarker = title.indexOf(" on Instagram");
@@ -203,8 +210,10 @@ async function readHead(response: Response): Promise<string> {
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
+      // チャンクの境目で `</head>` が分かれても見つかるよう、前回の末尾から探す
+      const searchFrom = Math.max(0, text.length - "</head>".length);
       text += decoder.decode(value, { stream: true });
-      const headEnd = text.indexOf("</head>");
+      const headEnd = text.indexOf("</head>", searchFrom);
       if (headEnd >= 0) return text.slice(0, headEnd);
       if (total > MAX_HEAD_BYTES) throw new Error("instagram head too large");
     }

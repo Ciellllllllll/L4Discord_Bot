@@ -1,7 +1,6 @@
 import {
   AttachmentBuilder,
   MessageFlags,
-  type APIMessageTopLevelComponent,
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
@@ -9,24 +8,23 @@ import type { BotContext } from "../../../bot/context.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { LocalLlmQueue } from "../../ai/localLlmQueue.js";
-import type { PreviewDocument } from "../shared/previewDocument.js";
+import {
+  expandQueuedMediaPreviews,
+  translateMediaPreview,
+  type MediaPreviewPayload,
+  type MediaPreviewTranslationOptions,
+} from "../shared/mediaPreviewExpansion.js";
 import {
   buildOriginalUrlReply,
-  chunkUrlsForMessages,
   downloadMedia,
   IMAGE_EXTENSIONS,
   IMAGE_MAX_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MEDIA_TOTAL_TIMEOUT_MS,
-  mediaPreviewBuildQueue,
   type DownloadedMedia,
 } from "../shared/previewMediaDownload.js";
-import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
-import { savePreviewTranslationState } from "../shared/previewState.repository.js";
-import {
-  translatePreviewDocument,
-  type PreviewDocumentTranslations,
-} from "../shared/previewTranslationGate.js";
+import { buildTranslatedPreview } from "../shared/previewPipeline.js";
+import type { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
   fetchInstagramPreview,
   instagramPreviewToDocument,
@@ -44,24 +42,12 @@ type LoggerLike = {
   warn: (obj: unknown, msg?: string) => void;
 };
 
-export type InstagramPreviewPayload = {
-  embeds: [];
-  flags: MessageFlags.IsComponentsV2;
-  components: APIMessageTopLevelComponent[];
-  files: AttachmentBuilder[];
-  allowedMentions: { parse: []; repliedUser: false };
-  previewState?: PreviewPipelineState;
-};
+export type InstagramPreviewPayload = MediaPreviewPayload;
 
-export type InstagramReplyBuildOptions = {
+export type InstagramReplyBuildOptions = MediaPreviewTranslationOptions & {
   fetcher?: FetchLike;
   /** 動画・画像を添付できる合計サイズ（サーバーのブーストレベルに依存）。0 ならミラーにもアクセスしない */
   attachmentSizeLimitBytes: number;
-  config?: Pick<AppConfig, "DEEPSEEK_API_KEY"> & Partial<AppConfig>;
-  log?: LoggerLike;
-  aiRouter?: AiProviderRouter;
-  guildId?: string;
-  translate?: (document: PreviewDocument) => Promise<PreviewDocumentTranslations>;
   /** テスト用。メディア取得全体の締め切り（既定 30 秒） */
   mediaTotalTimeoutMs?: number;
 };
@@ -76,59 +62,44 @@ function attachmentName(media: DownloadedMedia, index: number): string {
 
 /**
  * 投稿の各項目（動画・画像）をミラー経由で CDN から取得して添付する。合計が上限を超えないよう残り容量を減らしながら取得し、
- * 取得できなかった項目は表示しない。1件も取得できなければ本体の OG 画像（動画ならサムネイル）で表示する。
+ * 取得できなかった項目は表示しない。ただし1番目の項目（リールの動画やカルーセルの先頭）が取れなかったときは、
+ * そのカバー画像である本体の OG 画像を先頭に表示する。
  */
 async function attachInstagramMedia(post: InstagramPost, options: InstagramReplyBuildOptions): Promise<AttachedMedia> {
   if (options.attachmentSizeLimitBytes <= 0) return { files: [] };
   const deadline = AbortSignal.timeout(options.mediaTotalTimeoutMs ?? MEDIA_TOTAL_TIMEOUT_MS);
   let remaining = options.attachmentSizeLimitBytes;
-  const files: AttachmentBuilder[] = [];
-  const mediaUrls: string[] = [];
-  const attach = (media: DownloadedMedia, name: string): void => {
+  const items: Array<{ url: string; file: AttachmentBuilder }> = [];
+  const download = async (url: string, limits: Parameters<typeof downloadMedia>[1], index: number) => {
+    const media = await downloadMedia(url, limits, deadline, options.fetcher);
+    if (!media) return undefined;
     remaining -= media.buffer.byteLength;
-    files.push(new AttachmentBuilder(media.buffer, { name }));
-    mediaUrls.push(`attachment://${name}`);
+    const name = attachmentName(media, index);
+    return { url: `attachment://${name}`, file: new AttachmentBuilder(media.buffer, { name }) };
   };
 
+  let firstItemAttached = false;
   for (let index = 1; index <= MAX_INSTAGRAM_MEDIA_ITEMS; index += 1) {
-    if (remaining <= 0 || files.length >= MAX_ATTACHMENTS_PER_MESSAGE || deadline.aborted) break;
+    // 先頭を OG 画像で補う枠を1件残す
+    if (remaining <= 0 || items.length >= MAX_ATTACHMENTS_PER_MESSAGE - (firstItemAttached ? 0 : 1) || deadline.aborted) break;
     const cdnUrl = await resolveInstagramMirrorMedia(post.shortcode, index, deadline, options.fetcher);
     // 項目が尽きたか、ミラーが使えない
     if (!cdnUrl) break;
-    const media = await downloadMedia(
-      cdnUrl,
-      { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) },
-      deadline,
-      options.fetcher,
-    );
-    if (media) attach(media, attachmentName(media, index));
+    const item = await download(cdnUrl, { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) }, index);
+    if (!item) continue;
+    items.push(item);
+    if (index === 1) firstItemAttached = true;
   }
-  if (files.length > 0) return { mediaUrls, files };
+  const mediaUrls = items.map((item) => item.url);
+  const files = items.map((item) => item.file);
+  if (firstItemAttached || !post.imageUrl) return { ...(items.length > 0 ? { mediaUrls } : {}), files };
 
-  if (!post.imageUrl) return { files };
-  const image = await downloadMedia(post.imageUrl, { image: Math.min(IMAGE_MAX_BYTES, remaining) }, deadline, options.fetcher);
-  if (!image) return { mediaUrls: [post.imageUrl], files };
-  attach(image, attachmentName(image, 1));
-  return { mediaUrls, files };
-}
-
-async function translateForInstagram(
-  document: PreviewDocument,
-  options: InstagramReplyBuildOptions,
-): Promise<PreviewDocumentTranslations> {
-  try {
-    if (options.translate) return await options.translate(document);
-    if (!options.config) return { translations: {} };
-    return await translatePreviewDocument(document, {
-      config: options.config,
-      log: options.log,
-      router: options.aiRouter,
-      guildId: options.guildId,
-    });
-  } catch (err) {
-    options.log?.warn({ reason: "request_or_response_error", err: String(err) }, "instagram preview translation skipped");
-    return { translations: {} };
-  }
+  const cover = await download(post.imageUrl, { image: Math.min(IMAGE_MAX_BYTES, remaining) }, 1);
+  // 取得できなければ OG 画像のURLのまま表示する（CDN のURLは失効するが、何も出ないよりよい）
+  return {
+    mediaUrls: [cover?.url ?? post.imageUrl, ...mediaUrls],
+    files: cover ? [cover.file, ...files] : files,
+  };
 }
 
 async function buildInstagramReplyPayload(
@@ -144,7 +115,7 @@ async function buildInstagramReplyPayload(
   // 保存スキーマは https URL のみ許可するため、状態には attachment:// を含まないこの文書を保存する
   // （表示切り替えは本文テキストのみ差し替えるので、メディア部分の違いは影響しない）。
   const sourceDocument = instagramPreviewToDocument(result.post);
-  const translations = await translateForInstagram(sourceDocument, options);
+  const translations = await translateMediaPreview(sourceDocument, options, "instagram");
   const media = await attachInstagramMedia(result.post, options);
   const built = await buildTranslatedPreview(
     instagramPreviewToDocument(result.post, media.mediaUrls ? { mediaUrls: media.mediaUrls } : {}),
@@ -197,48 +168,13 @@ export async function expandInstagramLinks(
     aiRouter: deps.aiRouter,
     guildId: message.guildId ?? deps.config?.GUILD_ID,
   };
-  const buildAndReply = async (target: InstagramReplyTarget): Promise<void> => {
-    const [payload] = await build([target], options);
-    if (!payload) return;
-    const { previewState, ...replyPayload } = payload as InstagramPreviewPayload;
-    const reply = await message.reply(replyPayload);
-    if (!previewState || !message.guildId) return;
-    try {
-      await (deps.saveState ?? savePreviewTranslationState)(deps.db, {
-        version: 1,
-        messageId: reply.id,
-        guildId: message.guildId,
-        channelId: message.channelId,
-        sourceUrl: previewState.document.url,
-        ...previewState,
-      });
-    } catch (err) {
-      deps.log.warn({ err: String(err), messageId: reply.id }, "instagram preview state save failed");
-    }
-  };
-  const queue = deps.queue ?? mediaPreviewBuildQueue;
-  // 構築→返信を共有キューで1件ずつ行い、返信済みの動画バッファを次の構築前に手放す
-  for (const [index, target] of targets.slice(0, MAX_INSTAGRAM_TARGETS_PER_MESSAGE).entries()) {
-    try {
-      const ticket = queue.enqueue({ userId: `instagram:${message.id}:${index}`, run: () => buildAndReply(target) });
-      if (ticket.ok) {
-        await ticket.promise;
-        continue;
-      }
-      deps.log.warn({ reason: ticket.reason, messageId: message.id }, "instagram preview queue full; replying original url");
-      await message.reply(buildOriginalUrlReply(target.url));
-    } catch (err) {
-      deps.log.warn({ err: String(err) }, "instagram preview reply error");
-    }
-  }
-  // 上限を超えた分も元メッセージの埋め込みは非表示になっているため、元URLをまとめて返信する。
-  // 正規化でURLが元より長くなりうるので、文字数上限に収まるよう複数通に分ける
-  const overflowUrls = targets.slice(MAX_INSTAGRAM_TARGETS_PER_MESSAGE).map((target) => target.url);
-  for (const urls of chunkUrlsForMessages(overflowUrls)) {
-    try {
-      await message.reply(buildOriginalUrlReply(urls));
-    } catch (err) {
-      deps.log.warn({ err: String(err) }, "instagram preview overflow reply error");
-    }
-  }
+  await expandQueuedMediaPreviews(message, targets, {
+    source: "instagram",
+    maxTargets: MAX_INSTAGRAM_TARGETS_PER_MESSAGE,
+    build: async (target) => (await build([target], options))[0],
+    db: deps.db,
+    log: deps.log,
+    ...(deps.saveState ? { saveState: deps.saveState } : {}),
+    ...(deps.queue ? { queue: deps.queue } : {}),
+  });
 }

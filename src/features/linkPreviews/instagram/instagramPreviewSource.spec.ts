@@ -23,7 +23,12 @@ assert.deepEqual(parseInstagramUrl("instagram.com/reel/DHVrPLrIyQ_。"), {
 assert.equal(parseInstagramUrl("https://www.instagram.com/reels/DHVrPLrIyQ_/")?.kind, "reel");
 assert.equal(parseInstagramUrl("https://m.instagram.com/tv/CabcdEFG/")?.kind, "tv");
 assert.equal(parseInstagramUrl("https://instagr.am/p/CabcdEFG")?.shortcode, "CabcdEFG");
-assert.equal(parseInstagramUrl("https://www.instagram.com/natgeo/reel/DHVrPLrIyQ_/")?.shortcode, "DHVrPLrIyQ_");
+assert.deepEqual(parseInstagramUrl("https://www.instagram.com/natgeo/reel/DHVrPLrIyQ_/"), {
+  url: "https://www.instagram.com/reel/DHVrPLrIyQ_/",
+  shortcode: "DHVrPLrIyQ_",
+  kind: "reel",
+  username: "natgeo",
+});
 // プロフィール・ストーリー・他ドメインは対象外
 assert.equal(parseInstagramUrl("https://www.instagram.com/natgeo/"), null);
 assert.equal(parseInstagramUrl("https://www.instagram.com/stories/natgeo/123/"), null);
@@ -82,6 +87,15 @@ const eggHtml = `<!DOCTYPE html><html><head>
   }
 }
 
+// og:url の余分なパスをユーザー名と取り違えない
+{
+  const result = normalizeInstagramOgMeta({
+    "og:url": "https://www.instagram.com/p/BsOGulcndj-/c/123/",
+    "og:description": "5 likes - someone on March 18, 2025: &quot;hi&quot;",
+  }, eggTarget);
+  assert.equal(result.status === "ok" ? result.post.username : result.reason, "someone");
+}
+
 // ログイン画面・別の投稿の OG は使わない
 assert.deepEqual(normalizeInstagramOgMeta({ "og:url": "https://www.instagram.com/accounts/login/" }, eggTarget), {
   status: "fallback",
@@ -95,7 +109,9 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
   let init: RequestInit | undefined;
   let pulled = 0;
   const encoder = new TextEncoder();
-  const chunks = [eggHtml.slice(0, 200), eggHtml.slice(200), ...Array.from({ length: 50 }, () => "y".repeat(64 * 1024))];
+  // `</head>` がチャンクの境目で分かれていても見つける
+  const headSplit = eggHtml.indexOf("</head>") + 3;
+  const chunks = [eggHtml.slice(0, 200), eggHtml.slice(200, headSplit), eggHtml.slice(headSplit), ...Array.from({ length: 50 }, () => "y".repeat(64 * 1024))];
   const body = new ReadableStream<Uint8Array>({
     pull(controller) {
       const chunk = chunks[pulled];
@@ -110,7 +126,7 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
   });
   assert.equal(result.status, "ok");
   assert.equal((init?.headers as Record<string, string>)["User-Agent"], "facebookexternalhit/1.1");
-  assert.ok(pulled <= 3, `head の後は読まない（${pulled}）`);
+  assert.ok(pulled <= 4, `head の後は読まない（${pulled}）`);
 }
 
 // head が終わらない巨大な応答やエラー応答は読み切らずにフォールバックする

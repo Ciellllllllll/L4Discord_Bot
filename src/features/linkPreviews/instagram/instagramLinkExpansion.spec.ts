@@ -100,7 +100,8 @@ async function buildOne(
   assert.equal(JSON.stringify(payload.components).includes("cdninstagram.com/item/3"), false);
 }
 
-// 添付の合計サイズ上限を超える動画は取得せず、残りの容量で後続の画像を添付する
+// 添付の合計サイズ上限を超える動画は取得せず、残りの容量で後続の画像を添付する。
+// 先頭の項目が取れなかったときは、そのカバー画像（本体の OG 画像）を先頭に表示する
 {
   const { fetcher } = fakeFetcher([
     { contentType: "video/mp4", bytes: 50 },
@@ -108,7 +109,20 @@ async function buildOne(
     { contentType: "image/jpeg", bytes: 20 },
   ]);
   const payload = await buildOne(fetcher, 30);
-  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-image-2.jpg"]);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-image-1.jpg", "instagram-image-2.jpg"]);
+  const json = JSON.stringify(payload.components);
+  assert.ok(json.indexOf("attachment://instagram-image-1.jpg") < json.indexOf("attachment://instagram-image-2.jpg"));
+}
+
+// 先頭が取れない10枚のカルーセルでも、カバー画像の枠を残して添付を Discord の上限10件に収める
+{
+  const { fetcher } = fakeFetcher([
+    { contentType: "video/mp4", bytes: 5_000 },
+    ...Array.from({ length: 9 }, () => ({ contentType: "image/png", bytes: 1 })),
+  ]);
+  const payload = await buildOne(fetcher, 1024);
+  assert.equal(payload.files.length, 10);
+  assert.equal(payload.files[0]?.name, "instagram-image-1.jpg");
 }
 
 // content-length が無くても、上限を超えた時点で読み込みを打ち切る
