@@ -268,14 +268,23 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
-/** 本体ページの投稿データの1項目から、動画（あれば）か最大サイズの画像の CDN URL を取り出す。 */
-function pageMediaItemUrl(item: Record<string, unknown>): string | undefined {
-  const [video] = Array.isArray(item.video_versions) ? item.video_versions : [];
-  const videoUrl = asRecord(video)?.url;
-  if (typeof videoUrl === "string") return isInstagramCdnUrl(videoUrl) ? videoUrl : undefined;
-  const [image] = Array.isArray(asRecord(item.image_versions2)?.candidates) ? asRecord(item.image_versions2)!.candidates as unknown[] : [];
-  const imageUrl = asRecord(image)?.url;
-  return typeof imageUrl === "string" && isInstagramCdnUrl(imageUrl) ? imageUrl : undefined;
+/** `[{ url }, ...]` の形の候補から、Instagram の CDN を指す URL を順番どおり・重複なしで取り出す。 */
+function cdnCandidateUrls(value: unknown): string[] {
+  const urls = (Array.isArray(value) ? value : [])
+    .map((candidate) => asRecord(candidate)?.url)
+    .filter((url): url is string => typeof url === "string" && isInstagramCdnUrl(url));
+  return [...new Set(urls)];
+}
+
+/**
+ * 本体ページの投稿データの1項目から、候補の CDN URL を取り出す。動画なら各画質（先頭が既定の画質）、
+ * 画像なら各サイズ（先頭が最大）。前の候補が取れなかったときに次を試す。使える候補が無ければ undefined。
+ */
+function pageMediaItemUrls(item: Record<string, unknown>): string[] | undefined {
+  const urls = Array.isArray(item.video_versions)
+    ? cdnCandidateUrls(item.video_versions)
+    : cdnCandidateUrls(asRecord(item.image_versions2)?.candidates);
+  return urls.length > 0 ? urls : undefined;
 }
 
 function findPageMedia(value: unknown, shortcode: string): Record<string, unknown> | undefined {
@@ -290,11 +299,11 @@ function findPageMedia(value: unknown, shortcode: string): Record<string, unknow
 }
 
 /**
- * ブラウザ向けの本体ページに埋め込まれた投稿データ（JSON）から、各項目（カルーセルなら全項目）の CDN URL を取り出す。
+ * ブラウザ向けの本体ページに埋め込まれた投稿データ（JSON）から、各項目（カルーセルなら全項目）の候補の CDN URL を取り出す。
  * 項目の位置は保ち、URL が無い・Instagram の CDN 以外を指す項目は undefined にする（呼び出し側がその項目だけ補う）。
  * 投稿データが見つからない、または使える項目が1つもなければ undefined。
  */
-export function extractInstagramPageMedia(html: string, shortcode: string): Array<string | undefined> | undefined {
+export function extractInstagramPageMedia(html: string, shortcode: string): Array<string[] | undefined> | undefined {
   for (const match of html.matchAll(/<script type="application\/json"[^>]*>([\s\S]*?)<\/script>/g)) {
     const json = match[1]!;
     // 対象の投稿を含まないスクリプトは解析しない
@@ -311,7 +320,7 @@ export function extractInstagramPageMedia(html: string, shortcode: string): Arra
       .slice(0, MAX_INSTAGRAM_MEDIA_ITEMS)
       .map((item) => {
         const record = asRecord(item);
-        return record ? pageMediaItemUrl(record) : undefined;
+        return record ? pageMediaItemUrls(record) : undefined;
       });
     return urls.some(Boolean) ? urls : undefined;
   }
@@ -319,7 +328,7 @@ export function extractInstagramPageMedia(html: string, shortcode: string): Arra
 }
 
 /**
- * 本体ページをブラウザとして取得し、埋め込みの投稿データから各項目の CDN URL を得る。
+ * 本体ページをブラウザとして取得し、埋め込みの投稿データから各項目の候補の CDN URL を得る。
  * クローラー向けの OG には動画が無く、ミラーも一部のリールで動画の代わりにカバー画像を返すため、こちらを優先する。
  * 取得・解析できなければ undefined（呼び出し側はミラーにフォールバックする）。
  */
@@ -327,7 +336,7 @@ export async function fetchInstagramPageMedia(
   post: Pick<InstagramPost, "url" | "shortcode">,
   deadline: AbortSignal,
   fetcher: FetchLike = fetch,
-): Promise<Array<string | undefined> | undefined> {
+): Promise<Array<string[] | undefined> | undefined> {
   if (deadline.aborted) return undefined;
   try {
     const response = await fetcher(post.url, {

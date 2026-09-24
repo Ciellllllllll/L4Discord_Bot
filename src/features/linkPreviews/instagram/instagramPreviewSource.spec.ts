@@ -220,7 +220,12 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
     } } } }]] }),
   ].join("\n");
   // CDN 以外を指す項目は位置を保ったまま undefined にする
-  assert.deepEqual(extractInstagramPageMedia(html, "BsOGulcndj-"), [`${cdn}/1.mp4`, `${cdn}/2-large.jpg`, undefined]);
+  // 各項目の候補（動画の画質違い・画像のサイズ違い）を順番どおりに返す
+  assert.deepEqual(extractInstagramPageMedia(html, "BsOGulcndj-"), [
+    [`${cdn}/1.mp4`, `${cdn}/1-low.mp4`],
+    [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`],
+    undefined,
+  ]);
   assert.equal(extractInstagramPageMedia(html, "Missing123"), undefined);
   assert.equal(extractInstagramPageMedia("<html></html>", "BsOGulcndj-"), undefined);
 
@@ -230,7 +235,7 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
       init = requestInit;
       return new Response(html, { status: 200 });
     }),
-    [`${cdn}/1.mp4`, `${cdn}/2-large.jpg`, undefined],
+    [[`${cdn}/1.mp4`, `${cdn}/1-low.mp4`], [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`], undefined],
   );
   assert.match((init?.headers as Record<string, string>)["User-Agent"] ?? "", /^Mozilla\/5\.0/);
 

@@ -21,9 +21,14 @@ const pageHtml = `<html><head>
 type CdnItem = { contentType: string; bytes: number; status?: number; contentLength?: boolean };
 
 /** ブラウザとして取得した本体ページ。投稿データは埋め込み JSON に入っている */
-function browserPageHtml(code: string, itemUrls: readonly string[]): string {
+function browserPageHtml(code: string, itemUrls: readonly string[], alternates: ReadonlyMap<string, string> = new Map()): string {
   const item = (url: string) => url.endsWith(".mp4")
-    ? { media_type: 2, video_versions: [{ type: 101, url }], image_versions2: { candidates: [{ url: `${url}.jpg` }] } }
+    ? {
+      media_type: 2,
+      // 2つ目以降は画質違い（同じ URL が並ぶことも多い）
+      video_versions: [{ type: 101, url }, { type: 102, url }, ...(alternates.has(url) ? [{ type: 103, url: alternates.get(url) }] : [])],
+      image_versions2: { candidates: [{ url: `${url}.jpg` }] },
+    }
     : { media_type: 1, image_versions2: { candidates: [{ url }, { url: `${url}?small` }] } };
   const media = itemUrls.length > 1
     ? { code, media_type: 8, image_versions2: { candidates: [] }, carousel_media: itemUrls.map(item) }
@@ -42,22 +47,35 @@ function browserPageHtml(code: string, itemUrls: readonly string[]): string {
  */
 function fakeFetcher(
   items: CdnItem[],
-  options: { mirrorDown?: boolean; page?: Response; pageItems?: Array<CdnItem & { url?: string }> } = {},
+  options: {
+    mirrorDown?: boolean;
+    page?: Response;
+    /** `alternate` は同じ項目の別の画質（先頭の画質が取れないときに試す） */
+    pageItems?: Array<CdnItem & { url?: string; alternate?: CdnItem }>;
+  } = {},
 ) {
   const requested: string[] = [];
   const pageItemUrls = (options.pageItems ?? []).map((item, i) =>
     item.url ?? `https://scontent-nrt6-1.cdninstagram.com/page/${i + 1}${item.contentType.startsWith("video/") ? ".mp4" : ""}`);
+  const alternates = new Map<string, string>();
+  const alternateItems = new Map<string, CdnItem>();
+  for (const [i, item] of (options.pageItems ?? []).entries()) {
+    if (!item.alternate) continue;
+    const url = `https://scontent-nrt6-1.cdninstagram.com/page/${i + 1}-alt.mp4`;
+    alternates.set(pageItemUrls[i]!, url);
+    alternateItems.set(url, item.alternate);
+  }
   const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
     requested.push(url);
     if (url.startsWith("https://www.instagram.com/")) {
       const userAgent = (init?.headers as Record<string, string> | undefined)?.["User-Agent"] ?? "";
       if (options.pageItems && !userAgent.startsWith("facebookexternalhit")) {
-        return new Response(browserPageHtml(target.shortcode, pageItemUrls), { status: 200 });
+        return new Response(browserPageHtml(target.shortcode, pageItemUrls, alternates), { status: 200 });
       }
       return options.page ?? new Response(pageHtml, { status: 200 });
     }
     const pageIndex = pageItemUrls.indexOf(url);
-    const pageItem = pageIndex >= 0 ? options.pageItems?.[pageIndex] : undefined;
+    const pageItem = alternateItems.get(url) ?? (pageIndex >= 0 ? options.pageItems?.[pageIndex] : undefined);
     if (pageItem) {
       return new Response(new Uint8Array(pageItem.bytes), {
         status: pageItem.status ?? 200,
@@ -130,6 +148,29 @@ async function buildOne(
   const payload = await buildOne(fetcher);
   assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
   assert.equal(requested.some((url) => url.includes("uuinstagram.com")), false, "本体ページで取れたらミラーは使わない");
+}
+
+// 本体ページの既定の画質が取れなければ、別の画質を試す（同じ URL は二度取得しない）
+{
+  const { fetcher, requested } = fakeFetcher([], {
+    pageItems: [{ contentType: "video/mp4", bytes: 3, status: 503, alternate: { contentType: "video/mp4", bytes: 4 } }],
+  });
+  const payload = await buildOne(fetcher);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.equal((payload.files[0]?.attachment as Buffer).byteLength, 4);
+  assert.equal(requested.filter((url) => url.endsWith("/page/1.mp4")).length, 1);
+  assert.equal(requested.some((url) => url.includes("uuinstagram.com")), false);
+}
+
+// 本体ページの候補がどれも取れなければ、その項目だけ同じ番号をミラーで補う
+{
+  const { fetcher, requested } = fakeFetcher(
+    [{ contentType: "video/mp4", bytes: 3 }],
+    { pageItems: [{ contentType: "video/mp4", bytes: 3, status: 503 }] },
+  );
+  const payload = await buildOne(fetcher);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.deepEqual(requested.filter((url) => url.includes("uuinstagram.com")), ["https://uuinstagram.com/images/DHVrPLrIyQ_/1"]);
 }
 
 // 本体ページのカルーセルは各項目の動画・画像（最大サイズの候補）を順番どおりに添付する

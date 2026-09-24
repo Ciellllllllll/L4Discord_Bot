@@ -80,21 +80,27 @@ async function attachInstagramMedia(post: InstagramPost, options: InstagramReply
     return { url: `attachment://${name}`, file: new AttachmentBuilder(media.buffer, { name }) };
   };
 
-  const pageMediaUrls = await fetchInstagramPageMedia(post, deadline, options.fetcher);
-  const itemCount = pageMediaUrls?.length ?? MAX_INSTAGRAM_MEDIA_ITEMS;
+  const pageMedia = await fetchInstagramPageMedia(post, deadline, options.fetcher);
+  const itemCount = pageMedia?.length ?? MAX_INSTAGRAM_MEDIA_ITEMS;
   let firstItemAttached = false;
   for (let index = 1; index <= itemCount; index += 1) {
     // 先頭を OG 画像で補う枠を1件残す
     if (remaining <= 0 || items.length >= MAX_ATTACHMENTS_PER_MESSAGE - (firstItemAttached ? 0 : 1) || deadline.aborted) break;
-    // 本体ページで URL が得られなかった項目だけ、同じ番号をミラーで補う
-    const cdnUrl = pageMediaUrls?.[index - 1]
-      ?? await resolveInstagramMirrorMedia(post.shortcode, index, deadline, options.fetcher);
-    if (!cdnUrl) {
-      // ミラーだけが頼りのときは、項目が尽きたかミラーが使えないので打ち切る
-      if (!pageMediaUrls) break;
-      continue;
+    const limits = { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) };
+    const candidates = pageMedia?.[index - 1] ?? [];
+    let item: Awaited<ReturnType<typeof download>>;
+    // 本体ページの候補（画質・サイズ違い）を順に試す
+    for (const url of candidates) {
+      item = await download(url, limits, index);
+      if (item) break;
     }
-    const item = await download(cdnUrl, { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) }, index);
+    if (!item) {
+      // 本体ページで取れなかった項目だけ、同じ番号をミラーで補う
+      const mirrorUrl = await resolveInstagramMirrorMedia(post.shortcode, index, deadline, options.fetcher);
+      // ミラーだけが頼りのときは、項目が尽きたかミラーが使えないので打ち切る
+      if (!mirrorUrl && !pageMedia) break;
+      if (mirrorUrl && !candidates.includes(mirrorUrl)) item = await download(mirrorUrl, limits, index);
+    }
     if (!item) continue;
     items.push(item);
     if (index === 1) firstItemAttached = true;
