@@ -106,6 +106,27 @@ test("video cache references can be saved, retrieved by video and media mode, up
   assert.deepEqual(calls.at(-1)?.params, ["message-1"]);
 });
 
+test("notification history separates notified videos from ones that failed to post", async () => {
+  const calls: Array<{ sql: string; params: unknown[] | undefined }> = [];
+  const pool = {
+    query: async (sql: string, params?: unknown[]) => {
+      calls.push({ sql: sql.replace(/\s+/g, " ").trim(), params });
+      return { rows: [
+        { video_id: "sent-1", status: "sent" },
+        { video_id: "pending-1", status: "pending" },
+        { video_id: "failed-1", status: "failed" },
+      ], rowCount: 3 };
+    },
+  };
+  const repo = new PostgresYouTubeWatcherRepository(pool as never);
+  const history = await repo.notificationHistory("subscription-1");
+  // 送信中（pending）は二重送信を避けるため通知済みとして扱う
+  assert.deepEqual([...history.sent].sort(), ["pending-1", "sent-1"]);
+  assert.deepEqual([...history.failed], ["failed-1"]);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]!.params, ["subscription-1"]);
+});
+
 test("due GoogleVideo retries select only pending none references older than the cutoff", async () => {
   const calls: Array<{ sql: string; params: unknown[] | undefined }> = [];
   const pool = {

@@ -220,3 +220,33 @@ test("RSS recovering resets the fallback interval for the next outage", async ()
   });
   assert.equal(throttle.has("UCabc"), false);
 });
+
+test("a fallback video that failed to post is retried even after a newer one was notified", async () => {
+  // 古い方の通知が失敗して新しい方が成功すると、新しい方が起点になる。失敗した古い方も再試行の対象に残す
+  const videos = [video("newer", "1 hour ago"), video("failedOlder", "2 hours ago"), video("sent", "1 day ago"), video("old", "2 years ago")];
+  const entries = fallbackEntriesSinceLastNotified(videos, "channel", new Set(["newer", "sent"]), NOW, new Set(["failedOlder"]));
+  assert.deepEqual(entries.map((entry) => entry.videoId), ["failedOlder"]);
+
+  // 起点より新しい未通知の動画と一緒に、古い順で返す
+  const withNew = fallbackEntriesSinceLastNotified(
+    [video("brandNew", "10 minutes ago"), ...videos],
+    "channel",
+    new Set(["newer", "sent"]),
+    NOW,
+    new Set(["failedOlder"]),
+  );
+  assert.deepEqual(withNew.map((entry) => entry.videoId), ["failedOlder", "brandNew"]);
+
+  // 通知済みの動画が一覧に無くても、一度試みて失敗した動画は再試行する（それ以外は古い動画かもしれないので通知しない）
+  const noAnchor = fallbackEntriesSinceLastNotified([video("x", "1 hour ago"), video("failed", "2 hours ago")], "channel", new Set(), NOW, new Set(["failed"]));
+  assert.deepEqual(noAnchor.map((entry) => entry.videoId), ["failed"]);
+
+  const resolved = await resolveYouTubeWatcherEntries("UCabc", new Set(["newer", "sent"]), {
+    fetchFeed: async () => ({ ok: false as const, error: "RSSの取得に失敗しました。(HTTP 404)" }),
+    fetchFallback: async () => ({ ok: true as const, channelTitle: "channel", videos }),
+    fallbackCache: new Map(),
+    failedVideoIds: new Set(["failedOlder"]),
+    now: NOW,
+  });
+  assert.deepEqual(resolved.ok ? resolved.entries.map((entry) => entry.videoId) : resolved, ["failedOlder"]);
+});

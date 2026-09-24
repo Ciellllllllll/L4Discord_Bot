@@ -125,29 +125,36 @@ export function normalizeYouTubeChannelVideos(nodes: readonly unknown[]): YouTub
  * 代替手段の一覧（新しい順）から、新着として通知する動画を古い順に返す。
  * 一覧は RSS より長く、登録前の古い動画も含むため、一覧の中で最も新しい通知済みの動画より新しいものだけを新着とみなす。
  * 通知済みの動画が一覧に無ければ、どこからが新着か分からないので何も返さない（古い動画を大量に通知しない）。
+ * ただし、一度通知を試みて失敗した動画（`failedVideoIds`）は新着と判定済みなので、起点より古くても再試行する。
  */
 export function fallbackEntriesSinceLastNotified(
   videos: readonly YouTubeChannelVideo[],
   channelTitle: string,
   sentVideoIds: ReadonlySet<string>,
   now: number,
+  failedVideoIds: ReadonlySet<string> = new Set(),
 ): YouTubeFeedEntry[] {
   const anchor = videos.findIndex((video) => sentVideoIds.has(video.videoId));
-  if (anchor <= 0) return [];
+  const isTarget = (video: YouTubeChannelVideo, index: number) =>
+    !sentVideoIds.has(video.videoId) && ((anchor > 0 && index < anchor) || failedVideoIds.has(video.videoId));
+  let lastTarget = videos.length - 1;
+  while (lastTarget >= 0 && !isTarget(videos[lastTarget]!, lastTarget)) lastTarget -= 1;
+  if (lastTarget < 0) return [];
   // 投稿時期は大まかなので、新しい順の一覧の並びを保つよう、前の動画より必ず古い時刻にする
   let upperBound = now;
-  const entries = videos.slice(0, anchor).map((video) => {
+  const entries = videos.slice(0, lastTarget + 1).map((video, index) => {
     const publishedMs = Math.min(parseRelativePublishedText(video.publishedText ?? "", now) ?? upperBound, upperBound);
     upperBound = publishedMs - 1;
-    return {
+    const entry: YouTubeFeedEntry = {
       videoId: video.videoId,
       title: video.title,
       channelTitle,
       publishedAt: new Date(publishedMs).toISOString(),
       videoUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(video.videoId)}`,
       thumbnailUrl: video.thumbnailUrl ?? null,
-    } satisfies YouTubeFeedEntry;
-  });
+    };
+    return isTarget(video, index) ? [entry] : [];
+  }).flat();
   // 起点に近い古い方から通知する（次回のスキャンで起点が進み、残りを順に拾える）
   return entries.slice(-MAX_FALLBACK_ENTRIES_PER_SCAN).reverse();
 }
@@ -158,6 +165,8 @@ type ResolveDeps = {
   now?: number;
   /** テスト用。省略時はプロセス全体で共有するキャッシュを使う */
   fallbackCache?: FallbackCache;
+  /** 通知に失敗した動画。代替手段では起点より古くても再試行する（RSS では通知済み以外がすべて対象） */
+  failedVideoIds?: ReadonlySet<string>;
 };
 
 /**
@@ -189,7 +198,7 @@ export async function resolveYouTubeWatcherEntries(
   return {
     ok: true,
     // 近似の投稿日時は取得した時点を基準にし、使い回しても登録間でそろえる
-    entries: fallbackEntriesSinceLastNotified(fallback.videos, fallback.channelTitle, sentVideoIds, current.fetchedAt),
+    entries: fallbackEntriesSinceLastNotified(fallback.videos, fallback.channelTitle, sentVideoIds, current.fetchedAt, deps.failedVideoIds),
     notice,
     usedFallback,
   };

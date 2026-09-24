@@ -239,9 +239,10 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
      }
    }
   for (const subscription of await repo.list(ctx.config.GUILD_ID, true)) {
-    const sent = await repo.sentVideoIds(subscription.id);
+    const history = await repo.notificationHistory(subscription.id);
     // RSS を優先し、RSS が取れないときだけ代替手段（youtubei.js の動画一覧）で補う
-    const feed = await resolveYouTubeWatcherEntries(subscription.youtubeChannelId, sent, {
+    const feed = await resolveYouTubeWatcherEntries(subscription.youtubeChannelId, history.sent, {
+      failedVideoIds: history.failed,
       fetchFeed: (channelId) => fetchYouTubeChannelFeed(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
       fetchFallback: (channelId) => fetchYouTubeChannelVideos(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
     });

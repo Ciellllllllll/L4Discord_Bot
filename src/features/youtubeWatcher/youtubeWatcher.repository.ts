@@ -159,9 +159,16 @@ export class PostgresYouTubeWatcherRepository {
     return result.rows.map(mapSubscription);
   }
 
-  async sentVideoIds(subscriptionId: string): Promise<Set<string>> {
-    const result = await this.pool.query("SELECT video_id FROM youtube_watch_posts WHERE subscription_id = $1 AND status IN ('pending', 'sent')", [subscriptionId]);
-    return new Set(result.rows.map((row) => row.video_id as string));
+  /** 通知済み（送信中を含む）の動画と、通知に失敗した動画。送信中は二重送信を避けるため通知済みとして扱う */
+  async notificationHistory(subscriptionId: string): Promise<{ sent: Set<string>; failed: Set<string> }> {
+    const result = await this.pool.query("SELECT video_id, status FROM youtube_watch_posts WHERE subscription_id = $1", [subscriptionId]);
+    const sent = new Set<string>();
+    const failed = new Set<string>();
+    for (const row of result.rows) {
+      if (row.status === "pending" || row.status === "sent") sent.add(row.video_id as string);
+      else if (row.status === "failed") failed.add(row.video_id as string);
+    }
+    return { sent, failed };
   }
 
   async savePost(subscriptionId: string, entry: YouTubeFeedEntry, input: { status: "pending" | "sent" | "failed"; messageId?: string | null; error?: string | null; durableMediaUrl?: string | null }): Promise<void> {
