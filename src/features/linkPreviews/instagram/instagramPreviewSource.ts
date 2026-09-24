@@ -276,15 +276,71 @@ function cdnCandidateUrls(value: unknown): string[] {
   return [...new Set(urls)];
 }
 
+/** DASH の1トラック（映像だけ・音声だけのファイル） */
+export type InstagramDashTrack = {
+  url: string;
+  bandwidth: number;
+  /** マニフェストに記載されたファイルサイズ（あれば） */
+  bytes?: number;
+};
+
+export type InstagramPageMediaItem = {
+  /** 候補の URL。動画なら各画質（先頭が既定の画質）、画像なら各サイズ（先頭が最大）。前の候補が取れなければ次を試す */
+  urls: string[];
+  /** 動画の画質違いのトラック。上限を超える動画を低画質で送るときに使う */
+  dash?: {
+    /** ビットレートの高い順 */
+    videos: InstagramDashTrack[];
+    /** 高音質の順。音声の無い動画では空 */
+    audios: InstagramDashTrack[];
+  };
+};
+
+function positiveNumber(value: string | undefined): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+/** DASH マニフェスト（XML）から、映像トラックと音声トラックをそれぞれビットレートの高い順に取り出す。 */
+export function parseInstagramDashManifest(manifest: string): InstagramPageMediaItem["dash"] {
+  const $ = load(manifest, { xml: true });
+  const videos: InstagramDashTrack[] = [];
+  const audios: InstagramDashTrack[] = [];
+  $("Representation").each((_, element) => {
+    const representation = $(element);
+    const adaptationSet = representation.parent();
+    const mimeType = representation.attr("mimeType") ?? adaptationSet.attr("mimeType") ?? "";
+    const contentType = adaptationSet.attr("contentType") ?? mimeType.split("/")[0];
+    const url = representation.children("BaseURL").first().text().trim();
+    if (!isInstagramCdnUrl(url)) return;
+    const bytes = positiveNumber(representation.attr("FBContentLength"));
+    const track: InstagramDashTrack = {
+      url,
+      bandwidth: positiveNumber(representation.attr("bandwidth")) ?? 0,
+      ...(bytes ? { bytes } : {}),
+    };
+    if (contentType === "video") videos.push(track);
+    else if (contentType === "audio") audios.push(track);
+  });
+  if (videos.length === 0) return undefined;
+  videos.sort((a, b) => b.bandwidth - a.bandwidth);
+  audios.sort((a, b) => b.bandwidth - a.bandwidth);
+  return { videos, audios };
+}
+
 /**
- * 本体ページの投稿データの1項目から、候補の CDN URL を取り出す。動画なら各画質（先頭が既定の画質）、
- * 画像なら各サイズ（先頭が最大）。前の候補が取れなかったときに次を試す。使える候補が無ければ undefined。
+ * 本体ページの投稿データの1項目から、候補の CDN URL と（動画なら）画質違いのトラックを取り出す。
+ * 使える候補が無ければ undefined。
  */
-function pageMediaItemUrls(item: Record<string, unknown>): string[] | undefined {
-  const urls = Array.isArray(item.video_versions)
-    ? cdnCandidateUrls(item.video_versions)
-    : cdnCandidateUrls(asRecord(item.image_versions2)?.candidates);
-  return urls.length > 0 ? urls : undefined;
+function pageMediaItem(item: Record<string, unknown>): InstagramPageMediaItem | undefined {
+  if (Array.isArray(item.video_versions)) {
+    const urls = cdnCandidateUrls(item.video_versions);
+    if (urls.length === 0) return undefined;
+    const dash = typeof item.video_dash_manifest === "string" ? parseInstagramDashManifest(item.video_dash_manifest) : undefined;
+    return { urls, ...(dash ? { dash } : {}) };
+  }
+  const urls = cdnCandidateUrls(asRecord(item.image_versions2)?.candidates);
+  return urls.length > 0 ? { urls } : undefined;
 }
 
 function findPageMedia(value: unknown, shortcode: string): Record<string, unknown> | undefined {
@@ -303,7 +359,7 @@ function findPageMedia(value: unknown, shortcode: string): Record<string, unknow
  * 項目の位置は保ち、URL が無い・Instagram の CDN 以外を指す項目は undefined にする（呼び出し側がその項目だけ補う）。
  * 投稿データが見つからない、または使える項目が1つもなければ undefined。
  */
-export function extractInstagramPageMedia(html: string, shortcode: string): Array<string[] | undefined> | undefined {
+export function extractInstagramPageMedia(html: string, shortcode: string): Array<InstagramPageMediaItem | undefined> | undefined {
   for (const match of html.matchAll(/<script type="application\/json"[^>]*>([\s\S]*?)<\/script>/g)) {
     const json = match[1]!;
     // 対象の投稿を含まないスクリプトは解析しない
@@ -320,7 +376,7 @@ export function extractInstagramPageMedia(html: string, shortcode: string): Arra
       .slice(0, MAX_INSTAGRAM_MEDIA_ITEMS)
       .map((item) => {
         const record = asRecord(item);
-        return record ? pageMediaItemUrls(record) : undefined;
+        return record ? pageMediaItem(record) : undefined;
       });
     return urls.some(Boolean) ? urls : undefined;
   }
@@ -336,7 +392,7 @@ export async function fetchInstagramPageMedia(
   post: Pick<InstagramPost, "url" | "shortcode">,
   deadline: AbortSignal,
   fetcher: FetchLike = fetch,
-): Promise<Array<string[] | undefined> | undefined> {
+): Promise<Array<InstagramPageMediaItem | undefined> | undefined> {
   if (deadline.aborted) return undefined;
   try {
     const response = await fetcher(post.url, {

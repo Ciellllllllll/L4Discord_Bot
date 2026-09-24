@@ -67,7 +67,7 @@ export async function cancelBody(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
 }
 
-export type MediaKind = "video" | "image";
+export type MediaKind = "video" | "image" | "audio";
 export type DownloadedMedia = { buffer: Buffer; contentType: string; kind: MediaKind };
 
 /**
@@ -89,6 +89,7 @@ export async function downloadMedia(
         Accept: [
           ...(kinds.includes("video") ? ["video/mp4", "video/*;q=0.9"] : []),
           ...(kinds.includes("image") ? ["image/*;q=0.9"] : []),
+          ...(kinds.includes("audio") ? ["audio/mp4", "audio/*;q=0.9"] : []),
           "*/*;q=0.1",
         ].join(","),
       },

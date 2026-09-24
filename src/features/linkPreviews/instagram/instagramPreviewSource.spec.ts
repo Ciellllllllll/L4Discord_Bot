@@ -7,6 +7,7 @@ import {
   fetchInstagramPreview,
   instagramPreviewToDocument,
   normalizeInstagramOgMeta,
+  parseInstagramDashManifest,
   parseInstagramUrl,
   resolveInstagramMirrorMedia,
 } from "./instagramPreviewSource.js";
@@ -222,8 +223,8 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
   // CDN 以外を指す項目は位置を保ったまま undefined にする
   // 各項目の候補（動画の画質違い・画像のサイズ違い）を順番どおりに返す
   assert.deepEqual(extractInstagramPageMedia(html, "BsOGulcndj-"), [
-    [`${cdn}/1.mp4`, `${cdn}/1-low.mp4`],
-    [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`],
+    { urls: [`${cdn}/1.mp4`, `${cdn}/1-low.mp4`] },
+    { urls: [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`] },
     undefined,
   ]);
   assert.equal(extractInstagramPageMedia(html, "Missing123"), undefined);
@@ -235,7 +236,7 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
       init = requestInit;
       return new Response(html, { status: 200 });
     }),
-    [[`${cdn}/1.mp4`, `${cdn}/1-low.mp4`], [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`], undefined],
+    [{ urls: [`${cdn}/1.mp4`, `${cdn}/1-low.mp4`] }, { urls: [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`] }, undefined],
   );
   assert.match((init?.headers as Record<string, string>)["User-Agent"] ?? "", /^Mozilla\/5\.0/);
 
@@ -246,4 +247,46 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
   let called = false;
   assert.equal(await fetchInstagramPageMedia(eggTarget, AbortSignal.abort(), async () => { called = true; return new Response(html); }), undefined);
   assert.equal(called, false, "締め切り後は取得しない");
+}
+
+// DASH マニフェストから映像トラック（高ビットレート順）と最も高音質な音声トラックを取り出す
+{
+  const cdn = "https://scontent-nrt6-1.cdninstagram.com";
+  const manifest = `<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><Period>
+<AdaptationSet contentType="video">
+  <Representation bandwidth="455535" mimeType="video/mp4" FBContentLength="2963937"><BaseURL>${cdn}/360.mp4?a=1&amp;b=2</BaseURL></Representation>
+  <Representation bandwidth="2080574" mimeType="video/mp4" FBContentLength="13537273"><BaseURL>${cdn}/720.mp4</BaseURL></Representation>
+  <Representation bandwidth="9000000" mimeType="video/mp4"><BaseURL>https://evil.example/1080.mp4</BaseURL></Representation>
+</AdaptationSet>
+<AdaptationSet contentType="audio">
+  <Representation bandwidth="32000" mimeType="audio/mp4"><BaseURL>${cdn}/audio-low.mp4</BaseURL></Representation>
+  <Representation bandwidth="70591" mimeType="audio/mp4" FBContentLength="460489"><BaseURL>${cdn}/audio.mp4</BaseURL></Representation>
+</AdaptationSet>
+</Period></MPD>`;
+  assert.deepEqual(parseInstagramDashManifest(manifest), {
+    videos: [
+      { url: `${cdn}/720.mp4`, bandwidth: 2080574, bytes: 13537273 },
+      { url: `${cdn}/360.mp4?a=1&b=2`, bandwidth: 455535, bytes: 2963937 },
+    ],
+    // 音声トラックは高音質の順にすべて残す（取れない・大きすぎるときに次を試す）
+    audios: [
+      { url: `${cdn}/audio.mp4`, bandwidth: 70591, bytes: 460489 },
+      { url: `${cdn}/audio-low.mp4`, bandwidth: 32000 },
+    ],
+  });
+  // 映像トラックが無いマニフェストは使わない
+  assert.equal(parseInstagramDashManifest(`<MPD><Period><AdaptationSet contentType="audio"></AdaptationSet></Period></MPD>`), undefined);
+  assert.equal(parseInstagramDashManifest("not xml"), undefined);
+
+  // 本体ページの動画にマニフェストがあれば、画質違いのトラックとして返す
+  const html = `<script type="application/json">${JSON.stringify({ media: {
+    code: "BsOGulcndj-",
+    video_versions: [{ url: `${cdn}/progressive.mp4` }],
+    video_dash_manifest: manifest,
+  } })}</script>`;
+  const [item] = extractInstagramPageMedia(html, "BsOGulcndj-") ?? [];
+  assert.deepEqual(item?.urls, [`${cdn}/progressive.mp4`]);
+  assert.equal(item?.dash?.videos.length, 2);
+  assert.equal(item?.dash?.audios[0]?.url, `${cdn}/audio.mp4`);
 }

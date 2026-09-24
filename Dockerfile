@@ -24,6 +24,11 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+# リンクプレビューで、添付上限を超える動画の低画質版（映像と音声）を再エンコードせずに結合するため
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=app-build --chown=node:node /app/dist ./dist

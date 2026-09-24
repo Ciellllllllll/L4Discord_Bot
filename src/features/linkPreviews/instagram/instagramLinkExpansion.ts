@@ -8,6 +8,7 @@ import type { BotContext } from "../../../bot/context.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { LocalLlmQueue } from "../../ai/localLlmQueue.js";
+import { muxVideoWithFfmpeg, type MuxVideo, type MuxVideoFailureReason } from "../shared/ffmpegMux.js";
 import {
   expandQueuedMediaPreviews,
   translateMediaPreview,
@@ -32,6 +33,7 @@ import {
   MAX_INSTAGRAM_MEDIA_ITEMS,
   resolveInstagramMirrorMedia,
   type FetchLike,
+  type InstagramPageMediaItem,
   type InstagramPost,
   type InstagramReplyTarget,
 } from "./instagramPreviewSource.js";
@@ -51,6 +53,8 @@ export type InstagramReplyBuildOptions = MediaPreviewTranslationOptions & {
   attachmentSizeLimitBytes: number;
   /** テスト用。メディア取得全体の締め切り（既定 30 秒） */
   mediaTotalTimeoutMs?: number;
+  /** テスト用。映像と音声の結合（既定は ffmpeg） */
+  muxVideo?: MuxVideo;
 };
 
 type AttachedMedia = { mediaUrls?: string[]; files: AttachmentBuilder[] };
@@ -62,10 +66,59 @@ function attachmentName(media: DownloadedMedia, index: number): string {
 }
 
 /**
+ * 上限を超える動画を、DASH の低画質の映像トラックと音声トラックを結合して上限内に収める（再エンコードはしない）。
+ * 収まる画質が無い・ffmpeg が使えないなどで作れなければ undefined。
+ */
+async function buildLowQualityVideo(
+  dash: NonNullable<InstagramPageMediaItem["dash"]>,
+  maxBytes: number,
+  deadline: AbortSignal,
+  post: InstagramPost,
+  options: InstagramReplyBuildOptions,
+): Promise<Buffer | undefined> {
+  // 各トラックは映像だけ・音声だけでも content-type が video/mp4 のことがあるため、どちらも受け付ける
+  const trackLimits = (limit: number) => ({ video: limit, audio: limit });
+  let lastFailure: MuxVideoFailureReason | undefined;
+  const warn = () => {
+    if (lastFailure) options.log?.warn({ reason: lastFailure, shortcode: post.shortcode }, "instagram low-quality video unavailable");
+  };
+  // 音声は高音質から順に試す。音声のある投稿で音声が1つも取れなければ、無音の動画は送らずサムネイルにする
+  const audioTracks = dash.audios.length > 0 ? dash.audios : [undefined];
+  for (const audioTrack of audioTracks) {
+    // マニフェストのサイズで、この音声と合わせて収まらないと分かっている画質は取得しない
+    const audioBytes = audioTrack?.bytes ?? 0;
+    const videoTracks = dash.videos.filter((track) => track.bytes === undefined || track.bytes + audioBytes <= maxBytes);
+    if (videoTracks.length === 0) continue;
+    const audio = audioTrack ? await downloadMedia(audioTrack.url, trackLimits(maxBytes), deadline, options.fetcher) : undefined;
+    if (audioTrack && !audio) continue;
+    const videoLimit = maxBytes - (audio?.buffer.byteLength ?? 0);
+    for (const track of videoTracks) {
+      const video = await downloadMedia(track.url, trackLimits(videoLimit), deadline, options.fetcher);
+      if (!video) continue;
+      const result = await (options.muxVideo ?? muxVideoWithFfmpeg)(video.buffer, audio?.buffer, {
+        maxOutputBytes: maxBytes,
+        signal: deadline,
+      });
+      if (result.ok) return result.buffer;
+      lastFailure = result.reason;
+      // 結合後にコンテナの分だけ上限を超えた・その画質の結合に失敗した場合は、次の低い画質で作り直す。
+      // ffmpeg が無い・締め切りを過ぎた場合は、画質や音声を変えても作れないので打ち切る
+      if (result.reason !== "too_large" && result.reason !== "ffmpeg_failed") {
+        warn();
+        return undefined;
+      }
+    }
+  }
+  warn();
+  return undefined;
+}
+
+/**
  * 投稿の各項目（動画・画像）を CDN から取得して添付する。項目の URL は本体ページの投稿データから得て、
  * 得られなければミラー経由で得る。合計が上限を超えないよう残り容量を減らしながら取得し、
  * 取得できなかった項目は表示しない。ただし1番目の項目（リールの動画やカルーセルの先頭）が取れなかったときは、
  * そのカバー画像である本体の OG 画像を先頭に表示する。
+ * 上限を超える動画は、本体ページに画質違いのトラックがあれば低画質版を作って添付する。
  */
 async function attachInstagramMedia(post: InstagramPost, options: InstagramReplyBuildOptions): Promise<AttachedMedia> {
   if (options.attachmentSizeLimitBytes <= 0) return { files: [] };
@@ -87,12 +140,22 @@ async function attachInstagramMedia(post: InstagramPost, options: InstagramReply
     // 先頭を OG 画像で補う枠を1件残す
     if (remaining <= 0 || items.length >= MAX_ATTACHMENTS_PER_MESSAGE - (firstItemAttached ? 0 : 1) || deadline.aborted) break;
     const limits = { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) };
-    const candidates = pageMedia?.[index - 1] ?? [];
+    const pageItem = pageMedia?.[index - 1];
+    const candidates = pageItem?.urls ?? [];
     let item: Awaited<ReturnType<typeof download>>;
     // 本体ページの候補（画質・サイズ違い）を順に試す
     for (const url of candidates) {
       item = await download(url, limits, index);
       if (item) break;
+    }
+    // 上限を超える動画は、低画質の映像と音声を結合して上限内に収める
+    if (!item && pageItem?.dash) {
+      const lowQuality = await buildLowQualityVideo(pageItem.dash, remaining, deadline, post, options);
+      if (lowQuality) {
+        remaining -= lowQuality.byteLength;
+        const name = `instagram-video-${index}.mp4`;
+        item = { url: `attachment://${name}`, file: new AttachmentBuilder(lowQuality, { name }) };
+      }
     }
     if (!item) {
       // 本体ページで取れなかった項目だけ、同じ番号をミラーで補う

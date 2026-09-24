@@ -20,14 +20,38 @@ const pageHtml = `<html><head>
 
 type CdnItem = { contentType: string; bytes: number; status?: number; contentLength?: boolean };
 
+type DashTrack = { url: string; bytes: number };
+/** `lowAudio` は `audio` より低音質の音声トラック */
+type DashTracks = { videos: DashTrack[]; audio?: DashTrack; lowAudio?: DashTrack };
+
+/** 画質違いの映像トラックと音声トラックを持つ DASH マニフェスト（XML） */
+function dashManifest(tracks: DashTracks): string {
+  const representation = (track: { url: string; bytes: number }, bandwidth: number, mimeType: string) =>
+    `<Representation bandwidth="${bandwidth}" mimeType="${mimeType}" FBContentLength="${track.bytes}">`
+    + `<BaseURL>${track.url.replace(/&/g, "&amp;")}</BaseURL></Representation>`;
+  const videos = tracks.videos.map((track, i) => representation(track, 1_000 - i, "video/mp4")).join("");
+  const audios = [
+    ...(tracks.lowAudio ? [representation(tracks.lowAudio, 20, "audio/mp4")] : []),
+    ...(tracks.audio ? [representation(tracks.audio, 50, "audio/mp4")] : []),
+  ];
+  const audio = audios.length > 0 ? `<AdaptationSet contentType="audio">${audios.join("")}</AdaptationSet>` : "";
+  return `<?xml version="1.0"?><MPD><Period><AdaptationSet contentType="video">${videos}</AdaptationSet>${audio}</Period></MPD>`;
+}
+
 /** ブラウザとして取得した本体ページ。投稿データは埋め込み JSON に入っている */
-function browserPageHtml(code: string, itemUrls: readonly string[], alternates: ReadonlyMap<string, string> = new Map()): string {
+function browserPageHtml(
+  code: string,
+  itemUrls: readonly string[],
+  alternates: ReadonlyMap<string, string> = new Map(),
+  dash?: DashTracks,
+): string {
   const item = (url: string) => url.endsWith(".mp4")
     ? {
       media_type: 2,
       // 2つ目以降は画質違い（同じ URL が並ぶことも多い）
       video_versions: [{ type: 101, url }, { type: 102, url }, ...(alternates.has(url) ? [{ type: 103, url: alternates.get(url) }] : [])],
       image_versions2: { candidates: [{ url: `${url}.jpg` }] },
+      ...(dash ? { video_dash_manifest: dashManifest(dash) } : {}),
     }
     : { media_type: 1, image_versions2: { candidates: [{ url }, { url: `${url}?small` }] } };
   const media = itemUrls.length > 1
@@ -52,6 +76,8 @@ function fakeFetcher(
     page?: Response;
     /** `alternate` は同じ項目の別の画質（先頭の画質が取れないときに試す） */
     pageItems?: Array<CdnItem & { url?: string; alternate?: CdnItem }>;
+    /** 本体ページの動画に付ける画質違いのトラック（各トラックの実際の応答サイズは bytes） */
+    dash?: DashTracks & { failAudio?: boolean };
   } = {},
 ) {
   const requested: string[] = [];
@@ -70,9 +96,22 @@ function fakeFetcher(
     if (url.startsWith("https://www.instagram.com/")) {
       const userAgent = (init?.headers as Record<string, string> | undefined)?.["User-Agent"] ?? "";
       if (options.pageItems && !userAgent.startsWith("facebookexternalhit")) {
-        return new Response(browserPageHtml(target.shortcode, pageItemUrls, alternates), { status: 200 });
+        return new Response(browserPageHtml(target.shortcode, pageItemUrls, alternates, options.dash), { status: 200 });
       }
       return options.page ?? new Response(pageHtml, { status: 200 });
+    }
+    const dashTrack = [
+      ...(options.dash?.videos ?? []),
+      ...(options.dash?.audio ? [options.dash.audio] : []),
+      ...(options.dash?.lowAudio ? [options.dash.lowAudio] : []),
+    ].find((track) => track.url === url);
+    if (dashTrack) {
+      if (options.dash?.failAudio && dashTrack === options.dash.audio) return new Response("gone", { status: 404 });
+      // 実際の CDN は音声だけのトラックも video/mp4 で返す
+      return new Response(new Uint8Array(dashTrack.bytes), {
+        status: 200,
+        headers: { "content-type": "video/mp4", "content-length": String(dashTrack.bytes) },
+      });
     }
     const pageIndex = pageItemUrls.indexOf(url);
     const pageItem = alternateItems.get(url) ?? (pageIndex >= 0 ? options.pageItems?.[pageIndex] : undefined);
@@ -171,6 +210,171 @@ async function buildOne(
   const payload = await buildOne(fetcher);
   assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
   assert.deepEqual(requested.filter((url) => url.includes("uuinstagram.com")), ["https://uuinstagram.com/images/DHVrPLrIyQ_/1"]);
+}
+
+const dashCdn = "https://scontent-nrt6-1.cdninstagram.com/dash";
+
+// 上限を超える動画は、上限に収まる低画質の映像トラックと音声トラックを結合して添付する（ミラーは使わない）
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/720.mp4?a=1&b=2`, bytes: 40 }, { url: `${dashCdn}/360.mp4`, bytes: 12 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+  };
+  const { fetcher, requested } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const muxed: Array<{ video: number; audio?: number; maxOutputBytes: number }> = [];
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async (video, audio, muxOptions) => {
+      muxed.push({ video: video.byteLength, ...(audio ? { audio: audio.byteLength } : {}), maxOutputBytes: muxOptions.maxOutputBytes });
+      return { ok: true, buffer: Buffer.concat([video, audio ?? Buffer.alloc(0)]) };
+    },
+  });
+  const payload = built as InstagramPreviewPayload;
+  assert.deepEqual(muxed, [{ video: 12, audio: 5, maxOutputBytes: 30 }]);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.equal((payload.files[0]?.attachment as Buffer).byteLength, 17);
+  assert.equal(requested.some((url) => url.startsWith(`${dashCdn}/720.mp4`)), false, "収まらないと分かっている画質は取得しない");
+  assert.equal(requested.some((url) => url.includes("uuinstagram.com")), false);
+  assert.equal(JSON.stringify(payload.components).includes("thumb.jpg"), false);
+}
+
+// 結合後に上限を超えた・結合に失敗した画質は諦めず、次の低い画質で作り直す
+{
+  const dash = {
+    videos: [
+      { url: `${dashCdn}/480.mp4`, bytes: 20 },
+      { url: `${dashCdn}/360.mp4`, bytes: 12 },
+      { url: `${dashCdn}/240.mp4`, bytes: 8 },
+    ],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+  };
+  const { fetcher } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const tried: number[] = [];
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async (video, audio) => {
+      tried.push(video.byteLength);
+      if (video.byteLength === 20) return { ok: false, reason: "too_large" };
+      if (video.byteLength === 12) return { ok: false, reason: "ffmpeg_failed" };
+      return { ok: true, buffer: Buffer.concat([video, audio ?? Buffer.alloc(0)]) };
+    },
+  });
+  assert.deepEqual(tried, [20, 12, 8]);
+  const payload = built as InstagramPreviewPayload;
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.equal((payload.files[0]?.attachment as Buffer).byteLength, 13);
+}
+
+// 高音質の音声トラックが取れなければ、低音質の音声トラックで作る
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+    lowAudio: { url: `${dashCdn}/audio-low.mp4`, bytes: 3 },
+    failAudio: true,
+  };
+  const { fetcher } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const muxed: number[] = [];
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async (video, audio) => {
+      muxed.push(audio?.byteLength ?? 0);
+      return { ok: true, buffer: Buffer.concat([video, audio ?? Buffer.alloc(0)]) };
+    },
+  });
+  assert.deepEqual(muxed, [3]);
+  assert.deepEqual((built as InstagramPreviewPayload).files.map((file) => file.name), ["instagram-video-1.mp4"]);
+}
+
+// 高音質の音声トラックでは映像が収まらないときは、取得せずに低音質の音声トラックで作る
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 20 },
+    lowAudio: { url: `${dashCdn}/audio-low.mp4`, bytes: 3 },
+  };
+  const { fetcher, requested } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async (video, audio) => ({ ok: true, buffer: Buffer.concat([video, audio ?? Buffer.alloc(0)]) }),
+  });
+  assert.equal(requested.includes(`${dashCdn}/audio.mp4`), false);
+  assert.equal(((built as InstagramPreviewPayload).files[0]?.attachment as Buffer).byteLength, 15);
+}
+
+// ffmpeg が無いときは画質を変えても作れないので、次の画質を取得しない
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }, { url: `${dashCdn}/240.mp4`, bytes: 8 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+  };
+  const { fetcher, requested } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  let muxCalls = 0;
+  await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async () => { muxCalls += 1; return { ok: false, reason: "ffmpeg_unavailable" }; },
+  });
+  assert.equal(muxCalls, 1);
+  assert.equal(requested.includes(`${dashCdn}/240.mp4`), false);
+}
+
+// 低画質版を作れない（ffmpeg が無いなど）ときはサムネイルを表示し、理由をログに残す
+{
+  const dash = { videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }], audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 } };
+  const { fetcher } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  const warnings: unknown[] = [];
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    log: { warn: (obj) => { warnings.push(obj); } },
+    muxVideo: async () => ({ ok: false, reason: "ffmpeg_unavailable" }),
+  });
+  assert.deepEqual((built as InstagramPreviewPayload).files.map((file) => file.name), ["instagram-image-1.jpg"]);
+  assert.deepEqual(warnings, [{ reason: "ffmpeg_unavailable", shortcode: "DHVrPLrIyQ_" }]);
+}
+
+// 音声トラックが取れないときは無音の動画を作らず、サムネイルにする
+{
+  const dash = {
+    videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }],
+    audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 },
+    failAudio: true,
+  };
+  const { fetcher } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 50 }], dash });
+  let muxCalls = 0;
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async () => { muxCalls += 1; return { ok: false, reason: "ffmpeg_failed" }; },
+  });
+  assert.equal(muxCalls, 0);
+  assert.deepEqual((built as InstagramPreviewPayload).files.map((file) => file.name), ["instagram-image-1.jpg"]);
+}
+
+// 通常の動画が上限に収まるときは低画質版を作らない
+{
+  const dash = { videos: [{ url: `${dashCdn}/360.mp4`, bytes: 12 }], audio: { url: `${dashCdn}/audio.mp4`, bytes: 5 } };
+  const { fetcher, requested } = fakeFetcher([], { pageItems: [{ contentType: "video/mp4", bytes: 3 }], dash });
+  const [built] = await buildInstagramReplyPayloads([target], {
+    fetcher,
+    attachmentSizeLimitBytes: 30,
+    translate: async () => ({ translations: {} }),
+    muxVideo: async () => { throw new Error("should not mux"); },
+  });
+  assert.deepEqual((built as InstagramPreviewPayload).files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.equal(requested.some((url) => url.startsWith(dashCdn)), false);
 }
 
 // 本体ページのカルーセルは各項目の動画・画像（最大サイズの候補）を順番どおりに添付する
