@@ -45,19 +45,17 @@ const deepSeekTimeoutMinutes = Number(DEEPSEEK_TIMEOUT_MINUTES) > 0 ? Number(DEE
 // スクリプト開始時点からの締め切り。準備（GitHub API など）にかかった時間も含めて上限内に収める
 const scriptDeadline = AbortSignal.timeout(deepSeekTimeoutMinutes * 60_000);
 
-function requireEnv(name, value) {
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-}
+// 必須設定の検証は main() の中で行う。読み込み時点で例外にすると main().catch の失敗通知まで届かないため、
+// ここでは不足している名前を集めるだけにし、以降の初期化も値がなくても例外にならないようにする
+const missingRequiredEnv = Object.entries({
+  DEEPSEEK_API_KEY,
+  GITHUB_TOKEN,
+  GITHUB_REPOSITORY,
+  GITHUB_EVENT_NAME,
+  HEAD_SHA,
+}).filter(([, value]) => !value).map(([name]) => name);
 
-requireEnv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY);
-requireEnv("GITHUB_TOKEN", GITHUB_TOKEN);
-requireEnv("GITHUB_REPOSITORY", GITHUB_REPOSITORY);
-requireEnv("GITHUB_EVENT_NAME", GITHUB_EVENT_NAME);
-requireEnv("HEAD_SHA", HEAD_SHA);
-
-const [owner, repo] = GITHUB_REPOSITORY.split("/");
+const [owner, repo] = String(GITHUB_REPOSITORY ?? "").split("/");
 const isPullRequest = GITHUB_EVENT_NAME === "pull_request";
 const isPush = GITHUB_EVENT_NAME === "push";
 const isIssueComment = GITHUB_EVENT_NAME === "issue_comment";
@@ -79,8 +77,8 @@ function readGitHubEventPayload() {
 const eventPayload = readGitHubEventPayload();
 const prNumber = PR_NUMBER || String(eventPayload.pull_request?.number ?? eventPayload.issue?.number ?? "");
 
-if (isPullRequest || isIssueComment) {
-  requireEnv("PR_NUMBER", prNumber);
+if ((isPullRequest || isIssueComment) && !prNumber) {
+  missingRequiredEnv.push("PR_NUMBER");
 }
 
 function truncateText(text, maxLength) {
@@ -585,8 +583,9 @@ async function requestDeepSeekReviewUntilDeadline(diffText, reviewAll, repositor
   if (finishReason === "length") {
     throw new Error(`DeepSeek response was truncated by max_tokens (${maxDeepSeekTokens}). usage=${JSON.stringify(usage ?? {})}`);
   }
-  // 資源不足・コンテンツフィルタ・中断などで途中まで返った本文は、JSON 解析の汎用エラーにせず理由を明示する
-  if (finishReason && finishReason !== "stop") {
+  // 資源不足・コンテンツフィルタ・中断などで途中まで返った本文や、終了理由が届く前に接続が閉じた場合は、
+  // 未完成の出力をレビューとして投稿しないよう理由を明示して失敗にする
+  if (finishReason !== "stop") {
     throw new Error(`DeepSeek stopped before completing the review. finish_reason=${finishReason} usage=${JSON.stringify(usage ?? {})}`);
   }
 
@@ -1043,6 +1042,10 @@ async function runReview(mode, files, options = {}) {
 }
 
 async function main() {
+  if (missingRequiredEnv.length > 0) {
+    throw new Error(`Required environment variables are missing: ${missingRequiredEnv.join(", ")}`);
+  }
+
   const reviewAll = await shouldReviewAllRepository();
 
   if (isPullRequest) {

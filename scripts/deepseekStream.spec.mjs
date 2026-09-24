@@ -58,6 +58,15 @@ const event = (value) => `data: ${JSON.stringify(value)}\n\n`;
   assert.equal(result.finishReason, "length");
 }
 
+// 終了理由が届く前に接続が閉じた場合は finishReason が null のまま返る（呼び出し側で失敗扱いにする）
+{
+  const result = await readDeepSeekStream(streamResponse([
+    event({ choices: [{ delta: { content: "{\"summary\":\"途中\"}" } }] }),
+  ]));
+  assert.equal(result.content, "{\"summary\":\"途中\"}");
+  assert.equal(result.finishReason, null);
+}
+
 // ストリーム中のエラーは例外にする
 await assert.rejects(
   readDeepSeekStream(streamResponse([event({ error: { message: "overloaded" } })])),
