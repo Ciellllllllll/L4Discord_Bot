@@ -20,12 +20,50 @@ const pageHtml = `<html><head>
 
 type CdnItem = { contentType: string; bytes: number; status?: number; contentLength?: boolean };
 
-/** 本体ページ・ミラー・CDN を模した fetcher。`items` の順にミラーが CDN へリダイレクトする */
-function fakeFetcher(items: CdnItem[], options: { mirrorDown?: boolean; page?: Response } = {}) {
+/** ブラウザとして取得した本体ページ。投稿データは埋め込み JSON に入っている */
+function browserPageHtml(code: string, itemUrls: readonly string[]): string {
+  const item = (url: string) => url.endsWith(".mp4")
+    ? { media_type: 2, video_versions: [{ type: 101, url }], image_versions2: { candidates: [{ url: `${url}.jpg` }] } }
+    : { media_type: 1, image_versions2: { candidates: [{ url }, { url: `${url}?small` }] } };
+  const media = itemUrls.length > 1
+    ? { code, media_type: 8, image_versions2: { candidates: [] }, carousel_media: itemUrls.map(item) }
+    : { code, ...item(itemUrls[0] ?? "") };
+  const data = { require: [["ScheduledServerJS", "handle", null, [{ __bbox: { result: { data: { media } } } }]]] };
+  return `<html><head><title>Instagram</title></head><body>
+<script type="application/json" data-sjs>{"other":{"code":"${code}"}}</script>
+<script type="application/json" data-sjs>not json ${code}</script>
+<script type="application/json" data-sjs>${JSON.stringify(data)}</script>
+</body></html>`;
+}
+
+/**
+ * 本体ページ・ミラー・CDN を模した fetcher。`items` の順にミラーが CDN へリダイレクトする。
+ * `pageItems` を渡すと、ブラウザとしての取得に対してその項目を埋め込んだページを返す
+ */
+function fakeFetcher(
+  items: CdnItem[],
+  options: { mirrorDown?: boolean; page?: Response; pageItems?: Array<CdnItem & { url?: string }> } = {},
+) {
   const requested: string[] = [];
-  const fetcher = async (url: string, _init?: RequestInit): Promise<Response> => {
+  const pageItemUrls = (options.pageItems ?? []).map((item, i) =>
+    item.url ?? `https://scontent-nrt6-1.cdninstagram.com/page/${i + 1}${item.contentType.startsWith("video/") ? ".mp4" : ""}`);
+  const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
     requested.push(url);
-    if (url.startsWith("https://www.instagram.com/")) return options.page ?? new Response(pageHtml, { status: 200 });
+    if (url.startsWith("https://www.instagram.com/")) {
+      const userAgent = (init?.headers as Record<string, string> | undefined)?.["User-Agent"] ?? "";
+      if (options.pageItems && !userAgent.startsWith("facebookexternalhit")) {
+        return new Response(browserPageHtml(target.shortcode, pageItemUrls), { status: 200 });
+      }
+      return options.page ?? new Response(pageHtml, { status: 200 });
+    }
+    const pageIndex = pageItemUrls.indexOf(url);
+    const pageItem = pageIndex >= 0 ? options.pageItems?.[pageIndex] : undefined;
+    if (pageItem) {
+      return new Response(new Uint8Array(pageItem.bytes), {
+        status: pageItem.status ?? 200,
+        headers: { "content-type": pageItem.contentType, "content-length": String(pageItem.bytes) },
+      });
+    }
     const mirror = url.match(/^https:\/\/uuinstagram\.com\/images\/[^/]+\/(\d+)$/);
     if (mirror) {
       if (options.mirrorDown) throw new Error("mirror down");
@@ -81,6 +119,39 @@ async function buildOne(
     "https://uuinstagram.com/images/DHVrPLrIyQ_/1",
     "https://uuinstagram.com/images/DHVrPLrIyQ_/2",
   ]);
+}
+
+// ミラーが動画の代わりにカバー画像を返すリールでも、本体ページの埋め込み JSON にある動画を添付する
+{
+  const { fetcher, requested } = fakeFetcher(
+    [{ contentType: "image/jpeg", bytes: 2 }],
+    { pageItems: [{ contentType: "video/mp4", bytes: 3 }] },
+  );
+  const payload = await buildOne(fetcher);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.equal(requested.some((url) => url.includes("uuinstagram.com")), false, "本体ページで取れたらミラーは使わない");
+}
+
+// 本体ページのカルーセルは各項目の動画・画像（最大サイズの候補）を順番どおりに添付する
+{
+  const { fetcher, requested } = fakeFetcher([], {
+    pageItems: [{ contentType: "video/mp4", bytes: 3 }, { contentType: "image/png", bytes: 2 }],
+  });
+  const payload = await buildOne(fetcher);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4", "instagram-image-2.png"]);
+  assert.equal(requested.some((url) => url.endsWith("?small")), false);
+}
+
+// 本体ページの URL が Instagram の CDN 以外を指していたら使わず、ミラーにフォールバックする
+{
+  const { fetcher, requested } = fakeFetcher(
+    [{ contentType: "video/mp4", bytes: 3 }],
+    { pageItems: [{ contentType: "video/mp4", bytes: 3, url: "https://evil.example/a.mp4" }] },
+  );
+  const payload = await buildOne(fetcher);
+  assert.deepEqual(payload.files.map((file) => file.name), ["instagram-video-1.mp4"]);
+  assert.equal(requested.includes("https://evil.example/a.mp4"), false);
+  assert.equal(requested.includes("https://uuinstagram.com/images/DHVrPLrIyQ_/1"), true);
 }
 
 // カルーセルは項目ごとに動画・画像を判定して添付し、取得できなかった項目は表示しない
