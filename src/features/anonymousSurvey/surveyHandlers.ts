@@ -1,35 +1,31 @@
-import { MessageFlags, type ButtonInteraction } from "discord.js";
+import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { handleSlashCommand } from "../../commands/slashHandlers.js";
 import {
   consumeAnonymousSurveySession,
+  createAnonymousSurveySession,
   getAnonymousSurveySession,
+  parseAnonymousSurveySubmission,
   recordAnonymousSurveyAnswer,
   recordAnonymousSurveySkip,
+  type AnonymousSurveySessionAction,
 } from "./surveyService.js";
 import { createSurveyReplayInteraction } from "./surveyCommandState.js";
+import { ephemeralComponentPayload } from "../panels/componentCard.js";
 import {
-  SURVEY_RATING_PREFIX,
-  SURVEY_SKIP_PREFIX,
-  SURVEY_SUBMIT_PREFIX,
+  SURVEY_BUG_REPORT_FIELD_ID,
+  SURVEY_CONTINUE_PREFIX,
+  SURVEY_IMPROVEMENT_FIELD_ID,
+  SURVEY_LEGACY_BUTTON_PREFIXES,
+  SURVEY_MODAL_PREFIX,
+  SURVEY_RATING_FIELD_ID,
   buildAnonymousSurveyCompletedMessage,
+  buildAnonymousSurveyContinueMessage,
   buildAnonymousSurveyExpiredMessage,
-  buildAnonymousSurveyMessage,
 } from "./surveyUi.js";
 
 const MODAL_SLASH_COMMANDS = new Set(["change_prompt", "create_prompt"]);
 const SURVEY_ONLY_SLASH_COMMANDS = new Set(["survey"]);
-
-function parseRatingId(customId: string): { sessionId: string; rating: number } | null {
-  if (!customId.startsWith(SURVEY_RATING_PREFIX)) return null;
-  const rest = customId.slice(SURVEY_RATING_PREFIX.length);
-  const splitAt = rest.lastIndexOf(":");
-  if (splitAt < 1) return null;
-  const sessionId = rest.slice(0, splitAt);
-  const rating = Number(rest.slice(splitAt + 1));
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return null;
-  return { sessionId, rating };
-}
 
 function parseActionId(customId: string, prefix: string): string | null {
   if (!customId.startsWith(prefix)) return null;
@@ -37,23 +33,13 @@ function parseActionId(customId: string, prefix: string): string | null {
   return sessionId || null;
 }
 
-function parseSubmitId(customId: string): { sessionId: string; rating: number | null } | null {
-  const sessionId = parseActionId(customId, SURVEY_SUBMIT_PREFIX);
-  if (!sessionId) return null;
-  const splitAt = sessionId.lastIndexOf(":");
-  if (splitAt < 1) return { sessionId, rating: null };
-  const rawRating = sessionId.slice(splitAt + 1);
-  const rating = Number(rawRating);
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return { sessionId, rating: null };
-  return { sessionId: sessionId.slice(0, splitAt), rating };
-}
-
 async function getOwnedSessionOrReply(
-  interaction: ButtonInteraction,
+  interaction: ButtonInteraction | ModalSubmitInteraction,
   ctx: BotContext,
   sessionId: string,
+  action: AnonymousSurveySessionAction = "slashGate",
 ) {
-  const session = await getAnonymousSurveySession(ctx.db, sessionId);
+  const session = await getAnonymousSurveySession(ctx.db, sessionId, action);
   if (!session) {
     await interaction.reply({ ...buildAnonymousSurveyExpiredMessage(), flags: MessageFlags.Ephemeral });
     return null;
@@ -65,54 +51,81 @@ async function getOwnedSessionOrReply(
   return session;
 }
 
+function readTextField(interaction: ModalSubmitInteraction, customId: string): string | null {
+  try {
+    return interaction.fields.getTextInputValue(customId);
+  } catch {
+    return null;
+  }
+}
+
+function readStringSelectField(interaction: ModalSubmitInteraction, customId: string): readonly string[] {
+  try {
+    return interaction.fields.getStringSelectValues(customId);
+  } catch {
+    return [];
+  }
+}
+
+export async function handleAnonymousSurveyModalSubmit(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
+  const sessionId = parseActionId(interaction.customId, SURVEY_MODAL_PREFIX);
+  if (!sessionId) return false;
+  if (!(await getOwnedSessionOrReply(interaction, ctx, sessionId))) return true;
+  const session = await consumeAnonymousSurveySession(ctx.db, sessionId, interaction.user.id);
+  if (!session) {
+    await interaction.reply({ ...buildAnonymousSurveyExpiredMessage(), flags: MessageFlags.Ephemeral });
+    return true;
+  }
+
+  const submission = parseAnonymousSurveySubmission(
+    readStringSelectField(interaction, SURVEY_RATING_FIELD_ID),
+    readTextField(interaction, SURVEY_IMPROVEMENT_FIELD_ID),
+    readTextField(interaction, SURVEY_BUG_REPORT_FIELD_ID),
+  );
+  const recording = submission.kind === "answer"
+    ? recordAnonymousSurveyAnswer(ctx.db, session.guildId, interaction.user.id, submission)
+    : recordAnonymousSurveySkip(ctx.db, session.guildId, interaction.user.id);
+
+  if (SURVEY_ONLY_SLASH_COMMANDS.has(session.command.commandName)) {
+    await recording;
+    await interaction.reply(ephemeralComponentPayload(buildAnonymousSurveyCompletedMessage(submission.kind)));
+    return true;
+  }
+  if (MODAL_SLASH_COMMANDS.has(session.command.commandName)) {
+    const [, continueSessionId] = await Promise.all([
+      recording,
+      createAnonymousSurveySession(ctx.db, session.guildId, interaction.user.id, session.command, "continueCommand"),
+    ]);
+    await interaction.reply(ephemeralComponentPayload(buildAnonymousSurveyContinueMessage(submission.kind, continueSessionId)));
+    return true;
+  }
+  // 最初の応答は 3 秒以内に必要なため、回答の保存を待たずにコマンドを実行する
+  const recorded = recording.catch((err: unknown) => {
+    ctx.log.error({ err, guildId: session.guildId }, "failed to record anonymous survey submission");
+  });
+  try {
+    await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command), ctx, { skipSurvey: true });
+  } finally {
+    await recorded;
+  }
+  return true;
+}
+
 export async function handleAnonymousSurveyButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  const rating = parseRatingId(interaction.customId);
-  if (rating) {
-    const session = await getOwnedSessionOrReply(interaction, ctx, rating.sessionId);
-    if (!session) return true;
-    await interaction.update(buildAnonymousSurveyMessage(rating.sessionId, rating.rating));
-    return true;
-  }
-
-  const submit = parseSubmitId(interaction.customId);
-  if (submit) {
-    if (!submit.rating) {
-      await interaction.reply({ content: "満足度を選択してから送信してください。", flags: MessageFlags.Ephemeral });
-      return true;
-    }
-    if (!(await getOwnedSessionOrReply(interaction, ctx, submit.sessionId))) return true;
-    const session = await consumeAnonymousSurveySession(ctx.db, submit.sessionId, interaction.user.id);
+  const continueSessionId = parseActionId(interaction.customId, SURVEY_CONTINUE_PREFIX);
+  if (continueSessionId) {
+    if (!(await getOwnedSessionOrReply(interaction, ctx, continueSessionId, "continueCommand"))) return true;
+    const session = await consumeAnonymousSurveySession(ctx.db, continueSessionId, interaction.user.id, "continueCommand");
     if (!session) {
       await interaction.reply({ ...buildAnonymousSurveyExpiredMessage(), flags: MessageFlags.Ephemeral });
       return true;
     }
-    await recordAnonymousSurveyAnswer(ctx.db, session.guildId, interaction.user.id, submit.rating);
-    if (SURVEY_ONLY_SLASH_COMMANDS.has(session.command.commandName)) {
-      await interaction.update(buildAnonymousSurveyCompletedMessage("answer"));
-      return true;
-    }
-    const preferFollowUp = !MODAL_SLASH_COMMANDS.has(session.command.commandName);
-    if (preferFollowUp) await interaction.update(buildAnonymousSurveyCompletedMessage("answer"));
-    await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command, { preferFollowUp }), ctx, { skipSurvey: true });
+    await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command), ctx, { skipSurvey: true });
     return true;
   }
 
-  const skipSessionId = parseActionId(interaction.customId, SURVEY_SKIP_PREFIX);
-  if (skipSessionId) {
-    if (!(await getOwnedSessionOrReply(interaction, ctx, skipSessionId))) return true;
-    const session = await consumeAnonymousSurveySession(ctx.db, skipSessionId, interaction.user.id);
-    if (!session) {
-      await interaction.reply({ ...buildAnonymousSurveyExpiredMessage(), flags: MessageFlags.Ephemeral });
-      return true;
-    }
-    await recordAnonymousSurveySkip(ctx.db, session.guildId, interaction.user.id);
-    if (SURVEY_ONLY_SLASH_COMMANDS.has(session.command.commandName)) {
-      await interaction.update(buildAnonymousSurveyCompletedMessage("skip"));
-      return true;
-    }
-    const preferFollowUp = !MODAL_SLASH_COMMANDS.has(session.command.commandName);
-    if (preferFollowUp) await interaction.update(buildAnonymousSurveyCompletedMessage("skip"));
-    await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command, { preferFollowUp }), ctx, { skipSurvey: true });
+  if (SURVEY_LEGACY_BUTTON_PREFIXES.some((prefix) => interaction.customId.startsWith(prefix))) {
+    await interaction.reply({ ...buildAnonymousSurveyExpiredMessage(), flags: MessageFlags.Ephemeral });
     return true;
   }
 

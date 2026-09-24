@@ -56,7 +56,7 @@ import { handleExecutionFlowButton } from "../features/execution/executionFlow.j
 import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
 import { handleGameDealButton } from "../features/gameDeals/gameDealWatcher.js";
 import { handleWerewolfButton, handleWerewolfStringSelect } from "../features/werewolf/werewolfGame.js";
-import { handleAnonymousSurveyButton } from "../features/anonymousSurvey/surveyHandlers.js";
+import { handleAnonymousSurveyButton, handleAnonymousSurveyModalSubmit } from "../features/anonymousSurvey/surveyHandlers.js";
 import { handleAnonymousSurveyViewButton } from "../features/anonymousSurvey/surveyView.js";
 import { parseCustomId } from "./parseCustomId.js";
 import { handleVxTwitterPreviewButton } from "../features/utilities/vxtwitterPreviewInteractions.js";
@@ -186,6 +186,7 @@ export async function handleDetecterModal(
 }
 
 export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<void> {
+  if (await handleAnonymousSurveyModalSubmit(interaction, ctx)) return;
   if (await handleChangePromptModalSubmit(interaction, ctx)) return;
   if (await handleCreatePromptModalSubmit(interaction, ctx)) return;
   if (await handleReminderHubModal(interaction, ctx)) return;

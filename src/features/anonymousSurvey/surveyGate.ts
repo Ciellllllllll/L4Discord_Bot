@@ -6,8 +6,7 @@ import {
   createAnonymousSurveySession,
 } from "./surveyService.js";
 import { storeSlashCommand } from "./surveyCommandState.js";
-import { buildAnonymousSurveyMessage } from "./surveyUi.js";
-import { ephemeralComponentPayload } from "../panels/componentCard.js";
+import { buildAnonymousSurveyModal } from "./surveyUi.js";
 
 type AnonymousSurveyPromptOptions = {
   ignoreAdmin?: boolean;
@@ -35,7 +34,7 @@ export async function promptAnonymousSurvey(
     interaction.user.id,
     storeSlashCommand(interaction),
   );
-  await interaction.reply(ephemeralComponentPayload(buildAnonymousSurveyMessage(sessionId)));
+  await interaction.showModal(buildAnonymousSurveyModal(sessionId));
   return true;
 }
 
