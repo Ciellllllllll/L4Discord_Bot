@@ -250,7 +250,7 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
       ctx.log.warn({ subscriptionId: subscription.id, error: feed.error }, "youtube watcher RSS scan failed");
       continue;
     }
-    if (feed.notice) {
+    if (feed.usedFallback) {
       ctx.log.warn({ subscriptionId: subscription.id, notice: feed.notice, entries: feed.entries.length }, "youtube watcher RSS failed; used fallback");
     }
     const target = await fetchTarget(ctx.client, subscription.discordChannelId);

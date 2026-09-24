@@ -15,8 +15,9 @@ const MAX_FALLBACK_ENTRIES_PER_SCAN = 10;
  * 制限されると、同じ IP から行う動画ファイルの取得まで巻き込むため間引く（障害中の通知は最大この分だけ遅れる）
  */
 const FALLBACK_MIN_INTERVAL_MS = 5 * 60 * 1000;
-/** チャンネルごとの代替手段を最後に使った時刻 */
-const fallbackUsedAt = new Map<string, number>();
+/** チャンネルごとに、代替手段を最後に使った時刻と、そのとき失敗していればその理由 */
+export type FallbackThrottle = Map<string, { usedAt: number; error?: string }>;
+const fallbackUsage: FallbackThrottle = new Map();
 /** 使い回すクライアントを作り直す間隔（訪問者情報の期限切れに備える） */
 const CLIENT_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const UNIT_MS: Readonly<Record<string, number>> = {
@@ -155,20 +156,21 @@ type ResolveDeps = {
   fetchFallback: (channelId: string) => Promise<YouTubeChannelVideosResult>;
   now?: number;
   /** テスト用。省略時はプロセス全体で共有する記録を使う */
-  fallbackThrottle?: Map<string, number>;
+  fallbackThrottle?: FallbackThrottle;
 };
 
 /**
  * 通知する動画を古い順に返す。RSS を優先し、RSS が取れないときだけ代替手段を使う。
  * 代替手段を使ったときは、RSS の失敗理由を `notice` に入れる（登録一覧の「最終エラー」に表示するため）。
- * 代替手段は同じチャンネルに対して一定間隔に1回まで使い、間の回は何も通知しない。
+ * 代替手段は同じチャンネルに対して一定間隔に1回まで使い、間の回は何も通知しない
+ * （前回の代替手段が失敗していれば、その失敗を報告し続ける）。`usedFallback` は実際に代替手段を使ったかどうか。
  */
 export async function resolveYouTubeWatcherEntries(
   channelId: string,
   sentVideoIds: ReadonlySet<string>,
   deps: ResolveDeps,
-): Promise<{ ok: true; entries: YouTubeFeedEntry[]; notice?: string } | { ok: false; error: string }> {
-  const throttle = deps.fallbackThrottle ?? fallbackUsedAt;
+): Promise<{ ok: true; entries: YouTubeFeedEntry[]; notice?: string; usedFallback?: boolean } | { ok: false; error: string }> {
+  const throttle = deps.fallbackThrottle ?? fallbackUsage;
   const feed = await deps.fetchFeed(channelId);
   if (feed.ok) {
     // RSS が復旧したら、次の障害ではすぐ代替手段を使えるよう記録を消す
@@ -177,15 +179,20 @@ export async function resolveYouTubeWatcherEntries(
   }
   const now = deps.now ?? Date.now();
   const notice = `${feed.error}（代替手段で確認中）`;
-  const lastUsedAt = throttle.get(channelId);
-  if (lastUsedAt !== undefined && now - lastUsedAt < FALLBACK_MIN_INTERVAL_MS) return { ok: true, entries: [], notice };
-  throttle.set(channelId, now);
+  const last = throttle.get(channelId);
+  if (last && now - last.usedAt < FALLBACK_MIN_INTERVAL_MS) {
+    return last.error
+      ? { ok: false, error: `${feed.error} / ${last.error}` }
+      : { ok: true, entries: [], notice, usedFallback: false };
+  }
   const fallback = await deps.fetchFallback(channelId);
+  throttle.set(channelId, fallback.ok ? { usedAt: now } : { usedAt: now, error: fallback.error });
   if (!fallback.ok) return { ok: false, error: `${feed.error} / ${fallback.error}` };
   return {
     ok: true,
     entries: fallbackEntriesSinceLastNotified(fallback.videos, fallback.channelTitle, sentVideoIds, now),
     notice,
+    usedFallback: true,
   };
 }
 

@@ -6,6 +6,7 @@ import {
   normalizeYouTubeChannelVideos,
   parseRelativePublishedText,
   resolveYouTubeWatcherEntries,
+  type FallbackThrottle,
   type YouTubeChannelVideo,
 } from "./youtubeWatcherFallback.js";
 
@@ -125,6 +126,7 @@ test("resolveYouTubeWatcherEntries falls back only when RSS fails and records wh
   if (result.ok) {
     assert.deepEqual(result.entries.map((entry) => entry.videoId), ["new"]);
     assert.equal(result.notice, "RSSの取得に失敗しました。(HTTP 404)（代替手段で確認中）");
+    assert.equal(result.usedFallback, true);
   }
 
   const bothFailed = await resolveYouTubeWatcherEntries("UCabc", new Set(), {
@@ -137,7 +139,7 @@ test("resolveYouTubeWatcherEntries falls back only when RSS fails and records wh
 });
 
 test("resolveYouTubeWatcherEntries uses the fallback at most once per interval for each channel", async () => {
-  const throttle = new Map<string, number>();
+  const throttle: FallbackThrottle = new Map();
   let fallbackCalls = 0;
   const deps = (now: number) => ({
     fetchFeed: async () => ({ ok: false as const, error: "RSSの取得に失敗しました。(HTTP 404)" }),
@@ -151,9 +153,14 @@ test("resolveYouTubeWatcherEntries uses the fallback at most once per interval f
   const first = await resolveYouTubeWatcherEntries("UCabc", new Set(["sent"]), deps(NOW));
   assert.deepEqual(first.ok ? first.entries.map((entry) => entry.videoId) : first, ["new"]);
 
-  // 間隔内は YouTube にアクセスせず、通知もしない（「代替手段で確認中」の表示だけ残す）
+  // 間隔内は YouTube にアクセスせず、通知もしない（「代替手段で確認中」の表示だけ残し、ログ用に未使用と分かるようにする）
   const throttled = await resolveYouTubeWatcherEntries("UCabc", new Set(["sent"]), deps(NOW + 60_000));
-  assert.deepEqual(throttled, { ok: true, entries: [], notice: "RSSの取得に失敗しました。(HTTP 404)（代替手段で確認中）" });
+  assert.deepEqual(throttled, {
+    ok: true,
+    entries: [],
+    notice: "RSSの取得に失敗しました。(HTTP 404)（代替手段で確認中）",
+    usedFallback: false,
+  });
   assert.equal(fallbackCalls, 1);
 
   // 別のチャンネルは独立して使える
@@ -165,8 +172,8 @@ test("resolveYouTubeWatcherEntries uses the fallback at most once per interval f
   assert.equal(fallbackCalls, 3);
 });
 
-test("a failed fallback is retried on the next interval, not immediately", async () => {
-  const throttle = new Map<string, number>();
+test("a failed fallback keeps reporting its error until it is retried on the next interval", async () => {
+  const throttle: FallbackThrottle = new Map();
   let fallbackCalls = 0;
   const deps = (now: number) => ({
     fetchFeed: async () => ({ ok: false as const, error: "RSSの取得に失敗しました。(HTTP 404)" }),
@@ -174,14 +181,15 @@ test("a failed fallback is retried on the next interval, not immediately", async
     fallbackThrottle: throttle,
     now,
   });
-  assert.equal((await resolveYouTubeWatcherEntries("UCabc", new Set(), deps(NOW))).ok, false);
-  const throttled = await resolveYouTubeWatcherEntries("UCabc", new Set(), deps(NOW + 60_000));
-  assert.equal(throttled.ok, true);
+  const error = "RSSの取得に失敗しました。(HTTP 404) / 代替手段での取得に失敗しました。";
+  assert.deepEqual(await resolveYouTubeWatcherEntries("UCabc", new Set(), deps(NOW)), { ok: false, error });
+  // 間隔内は再試行しないが、「確認中」で上書きせず前回の失敗を報告し続ける
+  assert.deepEqual(await resolveYouTubeWatcherEntries("UCabc", new Set(), deps(NOW + 60_000)), { ok: false, error });
   assert.equal(fallbackCalls, 1);
 });
 
 test("RSS recovering resets the fallback interval for the next outage", async () => {
-  const throttle = new Map<string, number>([["UCabc", NOW]]);
+  const throttle: FallbackThrottle = new Map([["UCabc", { usedAt: NOW }]]);
   await resolveYouTubeWatcherEntries("UCabc", new Set(), {
     fetchFeed: async () => ({ ok: true, entries: [] }),
     fetchFallback: async () => ({ ok: false, error: "unused" }),
