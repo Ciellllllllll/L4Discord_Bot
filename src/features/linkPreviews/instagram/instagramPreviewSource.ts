@@ -1,5 +1,6 @@
 import { load } from "cheerio";
 import { URL } from "node:url";
+import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
 import { cancelBody, type FetchLike } from "../shared/previewMediaDownload.js";
 
@@ -17,6 +18,11 @@ const MAX_HEAD_BYTES = 512 * 1024;
  * リンクプレビュー用クローラーとして取得する
  */
 const CRAWLER_USER_AGENT = "facebookexternalhit/1.1";
+/** 投稿データ（動画・カルーセルの各項目）はブラウザ向けのページにだけ埋め込まれる */
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+/** ブラウザ向けのページは 1MB 近くあり、投稿データは本文の後半にあるため、全体を上限付きで読む */
+const MAX_PAGE_BYTES = 4 * 1024 * 1024;
 /**
  * 動画とカルーセルの各項目は Instagram 本体の OG に含まれないため、InstaFix 互換のミラーから取得する。
  * ミラーは `/images/<shortcode>/<n>` で n 番目の項目（動画・画像とも）の CDN URL へリダイレクトする
@@ -255,6 +261,103 @@ export async function fetchInstagramPreview(
     return normalizeInstagramOgMeta(extractInstagramOgMeta(await readHead(response)), target);
   } catch (err) {
     return { status: "fallback", reason: err instanceof Error ? (err.name === "TimeoutError" ? "AbortError" : err.name) : "fetch_error" };
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+/** `[{ url }, ...]` の形の候補から、Instagram の CDN を指す URL を順番どおり・重複なしで取り出す。 */
+function cdnCandidateUrls(value: unknown): string[] {
+  const urls = (Array.isArray(value) ? value : [])
+    .map((candidate) => asRecord(candidate)?.url)
+    .filter((url): url is string => typeof url === "string" && isInstagramCdnUrl(url));
+  return [...new Set(urls)];
+}
+
+/**
+ * 本体ページの投稿データの1項目から、候補の CDN URL を取り出す。動画なら各画質（先頭が既定の画質）、
+ * 画像なら各サイズ（先頭が最大）。前の候補が取れなかったときに次を試す。使える候補が無ければ undefined。
+ */
+function pageMediaItemUrls(item: Record<string, unknown>): string[] | undefined {
+  const urls = Array.isArray(item.video_versions)
+    ? cdnCandidateUrls(item.video_versions)
+    : cdnCandidateUrls(asRecord(item.image_versions2)?.candidates);
+  return urls.length > 0 ? urls : undefined;
+}
+
+function findPageMedia(value: unknown, shortcode: string): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = asRecord(value);
+  if (record?.code === shortcode && ("video_versions" in record || "image_versions2" in record)) return record;
+  for (const child of Object.values(value)) {
+    const found = findPageMedia(child, shortcode);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * ブラウザ向けの本体ページに埋め込まれた投稿データ（JSON）から、各項目（カルーセルなら全項目）の候補の CDN URL を取り出す。
+ * 項目の位置は保ち、URL が無い・Instagram の CDN 以外を指す項目は undefined にする（呼び出し側がその項目だけ補う）。
+ * 投稿データが見つからない、または使える項目が1つもなければ undefined。
+ */
+export function extractInstagramPageMedia(html: string, shortcode: string): Array<string[] | undefined> | undefined {
+  for (const match of html.matchAll(/<script type="application\/json"[^>]*>([\s\S]*?)<\/script>/g)) {
+    const json = match[1]!;
+    // 対象の投稿を含まないスクリプトは解析しない
+    if (!json.includes(`"${shortcode}"`)) continue;
+    let media: Record<string, unknown> | undefined;
+    try {
+      media = findPageMedia(JSON.parse(json), shortcode);
+    } catch {
+      continue;
+    }
+    if (!media) continue;
+    const items = Array.isArray(media.carousel_media) ? media.carousel_media : [media];
+    const urls = items
+      .slice(0, MAX_INSTAGRAM_MEDIA_ITEMS)
+      .map((item) => {
+        const record = asRecord(item);
+        return record ? pageMediaItemUrls(record) : undefined;
+      });
+    return urls.some(Boolean) ? urls : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * 本体ページをブラウザとして取得し、埋め込みの投稿データから各項目の候補の CDN URL を得る。
+ * クローラー向けの OG には動画が無く、ミラーも一部のリールで動画の代わりにカバー画像を返すため、こちらを優先する。
+ * 取得・解析できなければ undefined（呼び出し側はミラーにフォールバックする）。
+ */
+export async function fetchInstagramPageMedia(
+  post: Pick<InstagramPost, "url" | "shortcode">,
+  deadline: AbortSignal,
+  fetcher: FetchLike = fetch,
+): Promise<Array<string[] | undefined> | undefined> {
+  if (deadline.aborted) return undefined;
+  try {
+    const response = await fetcher(post.url, {
+      signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), deadline]),
+      headers: {
+        "User-Agent": BROWSER_USER_AGENT,
+        Accept: "text/html",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+      },
+    });
+    if (!response.ok) {
+      await cancelBody(response);
+      return undefined;
+    }
+    const html = new TextDecoder().decode(await readResponseArrayBufferWithLimit(response, MAX_PAGE_BYTES));
+    return extractInstagramPageMedia(html, post.shortcode);
+  } catch {
+    return undefined;
   }
 }
 

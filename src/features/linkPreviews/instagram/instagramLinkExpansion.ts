@@ -26,6 +26,7 @@ import {
 import { buildTranslatedPreview } from "../shared/previewPipeline.js";
 import type { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
+  fetchInstagramPageMedia,
   fetchInstagramPreview,
   instagramPreviewToDocument,
   MAX_INSTAGRAM_MEDIA_ITEMS,
@@ -61,7 +62,8 @@ function attachmentName(media: DownloadedMedia, index: number): string {
 }
 
 /**
- * 投稿の各項目（動画・画像）をミラー経由で CDN から取得して添付する。合計が上限を超えないよう残り容量を減らしながら取得し、
+ * 投稿の各項目（動画・画像）を CDN から取得して添付する。項目の URL は本体ページの投稿データから得て、
+ * 得られなければミラー経由で得る。合計が上限を超えないよう残り容量を減らしながら取得し、
  * 取得できなかった項目は表示しない。ただし1番目の項目（リールの動画やカルーセルの先頭）が取れなかったときは、
  * そのカバー画像である本体の OG 画像を先頭に表示する。
  */
@@ -78,14 +80,27 @@ async function attachInstagramMedia(post: InstagramPost, options: InstagramReply
     return { url: `attachment://${name}`, file: new AttachmentBuilder(media.buffer, { name }) };
   };
 
+  const pageMedia = await fetchInstagramPageMedia(post, deadline, options.fetcher);
+  const itemCount = pageMedia?.length ?? MAX_INSTAGRAM_MEDIA_ITEMS;
   let firstItemAttached = false;
-  for (let index = 1; index <= MAX_INSTAGRAM_MEDIA_ITEMS; index += 1) {
+  for (let index = 1; index <= itemCount; index += 1) {
     // 先頭を OG 画像で補う枠を1件残す
     if (remaining <= 0 || items.length >= MAX_ATTACHMENTS_PER_MESSAGE - (firstItemAttached ? 0 : 1) || deadline.aborted) break;
-    const cdnUrl = await resolveInstagramMirrorMedia(post.shortcode, index, deadline, options.fetcher);
-    // 項目が尽きたか、ミラーが使えない
-    if (!cdnUrl) break;
-    const item = await download(cdnUrl, { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) }, index);
+    const limits = { video: remaining, image: Math.min(IMAGE_MAX_BYTES, remaining) };
+    const candidates = pageMedia?.[index - 1] ?? [];
+    let item: Awaited<ReturnType<typeof download>>;
+    // 本体ページの候補（画質・サイズ違い）を順に試す
+    for (const url of candidates) {
+      item = await download(url, limits, index);
+      if (item) break;
+    }
+    if (!item) {
+      // 本体ページで取れなかった項目だけ、同じ番号をミラーで補う
+      const mirrorUrl = await resolveInstagramMirrorMedia(post.shortcode, index, deadline, options.fetcher);
+      // ミラーだけが頼りのときは、項目が尽きたかミラーが使えないので打ち切る
+      if (!mirrorUrl && !pageMedia) break;
+      if (mirrorUrl && !candidates.includes(mirrorUrl)) item = await download(mirrorUrl, limits, index);
+    }
     if (!item) continue;
     items.push(item);
     if (index === 1) firstItemAttached = true;

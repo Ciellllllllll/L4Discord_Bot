@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   collectInstagramReplyTargets,
   extractInstagramOgMeta,
+  extractInstagramPageMedia,
+  fetchInstagramPageMedia,
   fetchInstagramPreview,
   instagramPreviewToDocument,
   normalizeInstagramOgMeta,
@@ -197,4 +199,51 @@ assert.equal(normalizeInstagramOgMeta({}, eggTarget).status, "fallback");
     assert.equal(attached.includes("attachment://instagram-video-1.mp4"), true);
     assert.equal(attached.includes("egg.jpg"), false);
   }
+}
+
+// ブラウザ向けページの埋め込み JSON から、対象の投稿の各項目の CDN URL を取り出す
+{
+  const cdn = "https://scontent-nrt6-1.cdninstagram.com";
+  const script = (value: unknown) => `<script type="application/json" data-sjs>${JSON.stringify(value)}</script>`;
+  const html = [
+    // 関連投稿など、別の投稿のデータは使わない
+    script({ related: { code: "OtherCode1", video_versions: [{ url: `${cdn}/other.mp4` }] } }),
+    `<script type="application/json">{broken "BsOGulcndj-"</script>`,
+    script({ require: [[{ result: { data: { media: {
+      code: "BsOGulcndj-",
+      image_versions2: { candidates: [] },
+      carousel_media: [
+        { video_versions: [{ url: `${cdn}/1.mp4` }, { url: `${cdn}/1-low.mp4` }], image_versions2: { candidates: [{ url: `${cdn}/1.jpg` }] } },
+        { image_versions2: { candidates: [{ url: `${cdn}/2-large.jpg` }, { url: `${cdn}/2-small.jpg` }] } },
+        { image_versions2: { candidates: [{ url: "https://evil.example/3.jpg" }] } },
+      ],
+    } } } }]] }),
+  ].join("\n");
+  // CDN 以外を指す項目は位置を保ったまま undefined にする
+  // 各項目の候補（動画の画質違い・画像のサイズ違い）を順番どおりに返す
+  assert.deepEqual(extractInstagramPageMedia(html, "BsOGulcndj-"), [
+    [`${cdn}/1.mp4`, `${cdn}/1-low.mp4`],
+    [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`],
+    undefined,
+  ]);
+  assert.equal(extractInstagramPageMedia(html, "Missing123"), undefined);
+  assert.equal(extractInstagramPageMedia("<html></html>", "BsOGulcndj-"), undefined);
+
+  let init: RequestInit | undefined;
+  assert.deepEqual(
+    await fetchInstagramPageMedia(eggTarget, new AbortController().signal, async (_url, requestInit) => {
+      init = requestInit;
+      return new Response(html, { status: 200 });
+    }),
+    [[`${cdn}/1.mp4`, `${cdn}/1-low.mp4`], [`${cdn}/2-large.jpg`, `${cdn}/2-small.jpg`], undefined],
+  );
+  assert.match((init?.headers as Record<string, string>)["User-Agent"] ?? "", /^Mozilla\/5\.0/);
+
+  let errorBodyRead = false;
+  const errorBody = new ReadableStream<Uint8Array>({ pull() { errorBodyRead = true; } }, { highWaterMark: 0 });
+  assert.equal(await fetchInstagramPageMedia(eggTarget, new AbortController().signal, async () => new Response(errorBody, { status: 429 })), undefined);
+  assert.equal(errorBodyRead, false);
+  let called = false;
+  assert.equal(await fetchInstagramPageMedia(eggTarget, AbortSignal.abort(), async () => { called = true; return new Response(html); }), undefined);
+  assert.equal(called, false, "締め切り後は取得しない");
 }
