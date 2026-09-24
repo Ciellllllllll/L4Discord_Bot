@@ -1,11 +1,12 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { readDeepSeekStream } from "./deepseekStream.mjs";
 
 const {
   DEEPSEEK_API_KEY,
   DEEPSEEK_MODEL = "deepseek-v4-pro",
-  DEEPSEEK_REASONING_EFFORT = "high",
+  DEEPSEEK_REASONING_EFFORT = "max",
 
   GITHUB_TOKEN,
   GITHUB_REPOSITORY,
@@ -26,7 +27,12 @@ const {
   MAX_DIFF_CHARS = "180000",
   MAX_REPOSITORY_CHARS = "350000",
   MAX_REVIEW_COMMENTS = "80",
-  MAX_DEEPSEEK_TOKENS = "12000",
+  // 思考モードでは推論トークンもこの上限に含まれる。小さいと推論だけで使い切り本文が空になるため、
+  // reasoning_effort=max 時の公式既定値（128K）に合わせる
+  MAX_DEEPSEEK_TOKENS = "131072",
+  // ワークフローのステップ上限（60分）に達すると外部から強制終了され失敗通知が送れないため、
+  // それより前にスクリプト自身で打ち切って通知できるようにする
+  DEEPSEEK_TIMEOUT_MINUTES = "55",
   SKIP_PUSH_REVIEW_IF_OPEN_PR = "true",
 } = process.env;
 
@@ -34,20 +40,22 @@ const maxDiffChars = Number(MAX_DIFF_CHARS);
 const maxRepositoryChars = Number(MAX_REPOSITORY_CHARS);
 const maxReviewComments = Number(MAX_REVIEW_COMMENTS);
 const maxDeepSeekTokens = Number(MAX_DEEPSEEK_TOKENS);
+// 不正な値だと読み込み時点で例外になり失敗通知まで届かないため、既定値にフォールバックする
+const deepSeekTimeoutMinutes = Number(DEEPSEEK_TIMEOUT_MINUTES) > 0 ? Number(DEEPSEEK_TIMEOUT_MINUTES) : 55;
+// スクリプト開始時点からの締め切り。準備（GitHub API など）にかかった時間も含めて上限内に収める
+const scriptDeadline = AbortSignal.timeout(deepSeekTimeoutMinutes * 60_000);
 
-function requireEnv(name, value) {
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-}
+// 必須設定の検証は main() の中で行う。読み込み時点で例外にすると main().catch の失敗通知まで届かないため、
+// ここでは不足している名前を集めるだけにし、以降の初期化も値がなくても例外にならないようにする
+const missingRequiredEnv = Object.entries({
+  DEEPSEEK_API_KEY,
+  GITHUB_TOKEN,
+  GITHUB_REPOSITORY,
+  GITHUB_EVENT_NAME,
+  HEAD_SHA,
+}).filter(([, value]) => !value).map(([name]) => name);
 
-requireEnv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY);
-requireEnv("GITHUB_TOKEN", GITHUB_TOKEN);
-requireEnv("GITHUB_REPOSITORY", GITHUB_REPOSITORY);
-requireEnv("GITHUB_EVENT_NAME", GITHUB_EVENT_NAME);
-requireEnv("HEAD_SHA", HEAD_SHA);
-
-const [owner, repo] = GITHUB_REPOSITORY.split("/");
+const [owner, repo] = String(GITHUB_REPOSITORY ?? "").split("/");
 const isPullRequest = GITHUB_EVENT_NAME === "pull_request";
 const isPush = GITHUB_EVENT_NAME === "push";
 const isIssueComment = GITHUB_EVENT_NAME === "issue_comment";
@@ -69,8 +77,8 @@ function readGitHubEventPayload() {
 const eventPayload = readGitHubEventPayload();
 const prNumber = PR_NUMBER || String(eventPayload.pull_request?.number ?? eventPayload.issue?.number ?? "");
 
-if (isPullRequest || isIssueComment) {
-  requireEnv("PR_NUMBER", prNumber);
+if ((isPullRequest || isIssueComment) && !prNumber) {
+  missingRequiredEnv.push("PR_NUMBER");
 }
 
 function truncateText(text, maxLength) {
@@ -465,8 +473,21 @@ function extractJson(text) {
 async function requestDeepSeekReview(diffText, options = {}) {
   const reviewAll = Boolean(options.reviewAll);
   const repositoryText = options.repositoryText ?? "";
+  try {
+    return await requestDeepSeekReviewUntilDeadline(diffText, reviewAll, repositoryText);
+  } catch (error) {
+    if (scriptDeadline.aborted) {
+      throw new Error(`DeepSeek review timed out after ${deepSeekTimeoutMinutes} minutes (DEEPSEEK_TIMEOUT_MINUTES).`, { cause: error });
+    }
+    throw error;
+  }
+}
+
+async function requestDeepSeekReviewUntilDeadline(diffText, reviewAll, repositoryText) {
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
+    // 応答ヘッダー待ちとストリーミング受信の両方を締め切りで中断する
+    signal: scriptDeadline,
     headers: {
       Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
       "Content-Type": "application/json",
@@ -481,6 +502,12 @@ async function requestDeepSeekReview(diffText, options = {}) {
         type: "json_object",
       },
       max_tokens: maxDeepSeekTokens,
+      // 推論が長いと非ストリーミングでは応答ヘッダーが返るまで数分かかり、
+      // fetch のヘッダー待ちタイムアウト（既定5分）で失敗するため、ストリーミングで受け取る
+      stream: true,
+      stream_options: {
+        include_usage: true,
+      },
       messages: [
         {
           role: "system",
@@ -542,17 +569,24 @@ async function requestDeepSeekReview(diffText, options = {}) {
     }),
   });
 
-  const text = await response.text();
-
   if (!response.ok) {
+    const text = await response.text();
     throw new Error(`DeepSeek API failed: ${response.status}\n${text}`);
   }
 
-  const json = JSON.parse(text);
-  const content = json.choices?.[0]?.message?.content;
+  const { content, finishReason, usage } = await readDeepSeekStream(response);
+  console.log(`DeepSeek finish_reason=${finishReason ?? "unknown"} usage=${JSON.stringify(usage ?? {})}`);
 
   if (!content) {
-    throw new Error("DeepSeek returned empty content.");
+    throw new Error(`DeepSeek returned empty content. finish_reason=${finishReason ?? "unknown"} usage=${JSON.stringify(usage ?? {})}`);
+  }
+  if (finishReason === "length") {
+    throw new Error(`DeepSeek response was truncated by max_tokens (${maxDeepSeekTokens}). usage=${JSON.stringify(usage ?? {})}`);
+  }
+  // 資源不足・コンテンツフィルタ・中断などで途中まで返った本文や、終了理由が届く前に接続が閉じた場合は、
+  // 未完成の出力をレビューとして投稿しないよう理由を明示して失敗にする
+  if (finishReason !== "stop") {
+    throw new Error(`DeepSeek stopped before completing the review. finish_reason=${finishReason} usage=${JSON.stringify(usage ?? {})}`);
   }
 
   return extractJson(content);
@@ -1008,6 +1042,10 @@ async function runReview(mode, files, options = {}) {
 }
 
 async function main() {
+  if (missingRequiredEnv.length > 0) {
+    throw new Error(`Required environment variables are missing: ${missingRequiredEnv.join(", ")}`);
+  }
+
   const reviewAll = await shouldReviewAllRepository();
 
   if (isPullRequest) {
@@ -1050,7 +1088,64 @@ async function main() {
   console.log(`Unsupported event: ${GITHUB_EVENT_NAME}`);
 }
 
-main().catch((error) => {
+/**
+ * レビュー失敗を通知する。ステップは continue-on-error のためワークフローは成功扱いになり、
+ * 通知しないとレビューが届いていないことに気づけない。
+ */
+async function notifyReviewFailure(error) {
+  const runUrl = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`;
+  const message = truncateText(error instanceof Error ? error.message : String(error), 1500);
+
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      ["## DeepSeek レビュー失敗", "", "```text", message, "```", ""].join("\n"),
+      "utf8",
+    );
+  }
+
+  if (!DISCORD_REVIEW_WEBHOOK_URL) {
+    return;
+  }
+
+  try {
+    const response = await fetch(DISCORD_REVIEW_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        username: "AIコードレビュー",
+        content: "DeepSeekによるコードレビューに失敗しました。",
+        allowed_mentions: { parse: [] },
+        embeds: [
+          {
+            title: "レビュー失敗",
+            url: runUrl,
+            color: 0xe74c3c,
+            description: `\`\`\`text\n${message}\n\`\`\``,
+            fields: [
+              { name: "リポジトリ", value: GITHUB_REPOSITORY || "unknown", inline: true },
+              { name: "ブランチ", value: GITHUB_REF_NAME || "unknown", inline: true },
+              { name: "モデル", value: DEEPSEEK_MODEL, inline: true },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.warn(`Discord webhook failed: ${response.status}\n${text}`);
+    }
+  } catch (notifyError) {
+    console.warn("Discord webhook failed.");
+    console.warn(notifyError);
+  }
+}
+
+main().catch(async (error) => {
   console.error(error);
+  await notifyReviewFailure(error);
   process.exit(1);
 });

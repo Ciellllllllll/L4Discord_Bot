@@ -43,6 +43,10 @@ jobs:
 
       - name: Build and publish
         uses: docker/build-push-action@v6
+        env:
+          # ビルド記録（.dockerbuild）をアーティファクトとして保存しない。
+          # アカウント共有のストレージ容量を消費し、容量上限時に警告になるため
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
           platforms: linux/amd64
