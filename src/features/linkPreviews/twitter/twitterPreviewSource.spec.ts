@@ -257,3 +257,21 @@ test("本文がカードの URL だけなら本文行を出さない", () => {
   const body = tweetPreviewToDocument(result.tweet).blocks.find((block) => block.id === "body");
   assert.equal(body?.type === "text" ? body.lines.length : null, 1, "投稿者名の行だけ");
 });
+
+test("本文末尾の URL は正規化してからカードの URL と比べる（末尾の / の有無などの違いを吸収する）", () => {
+  const result = cardTweet({
+    text: "見て https://example.com",
+    card: { url: "https://example.com", title: "Example", domain: "example.com" },
+  });
+  assert.equal(result.status, "ok");
+  if (result.status !== "ok") return;
+  const body = tweetPreviewToDocument(result.tweet).blocks.find((block) => block.id === "body");
+  const bodyText = body?.type === "text" ? body.lines.flatMap((line) => line.parts.map((part) => part.text)).join("\n") : "";
+  assert.equal(bodyText.includes("https://example.com"), false);
+  assert.equal(bodyText.includes("見て"), true);
+
+  // 別の URL で終わる本文はそのまま残す
+  const other = cardTweet({ text: "見て https://example.com/other", card: { url: "https://example.com", title: "Example" } });
+  const otherBody = other.status === "ok" ? tweetPreviewToDocument(other.tweet).blocks.find((block) => block.id === "body") : undefined;
+  assert.equal(otherBody?.type === "text" ? otherBody.lines.flatMap((line) => line.parts.map((part) => part.text)).join("\n").includes("https://example.com/other") : false, true);
+});

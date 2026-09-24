@@ -371,11 +371,16 @@ function mediaBlock(id: string, items: readonly TweetMedia[]): PreviewDocument["
   };
 }
 
-/** 本文の末尾がカードの記事 URL だけのとき（X 上では表示されない）は、重複しないよう取り除く。 */
+/**
+ * 本文の末尾がカードの記事 URL だけのとき（X 上では表示されない）は、重複しないよう取り除く。
+ * カードの URL は正規化済み（末尾の / の補完など）なので、本文末尾の URL も同じように正規化して比べる。
+ */
 function withoutTrailingCardUrl(text: string, card: TweetCard | undefined): string {
   if (!card) return text;
   const trimmed = text.trimEnd();
-  return trimmed.endsWith(card.url) ? trimmed.slice(0, -card.url.length).trimEnd() : text;
+  const lastToken = /\S+$/.exec(trimmed)?.[0];
+  if (!lastToken || safeHttpsUrl(lastToken) !== card.url) return text;
+  return trimmed.slice(0, -lastToken.length).trimEnd();
 }
 
 /**
