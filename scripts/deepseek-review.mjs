@@ -565,6 +565,10 @@ async function requestDeepSeekReview(diffText, options = {}) {
   if (finishReason === "length") {
     throw new Error(`DeepSeek response was truncated by max_tokens (${maxDeepSeekTokens}). usage=${JSON.stringify(usage ?? {})}`);
   }
+  // 資源不足・コンテンツフィルタ・中断などで途中まで返った本文は、JSON 解析の汎用エラーにせず理由を明示する
+  if (finishReason && finishReason !== "stop") {
+    throw new Error(`DeepSeek stopped before completing the review. finish_reason=${finishReason} usage=${JSON.stringify(usage ?? {})}`);
+  }
 
   return extractJson(content);
 }
@@ -1061,7 +1065,64 @@ async function main() {
   console.log(`Unsupported event: ${GITHUB_EVENT_NAME}`);
 }
 
-main().catch((error) => {
+/**
+ * レビュー失敗を通知する。ステップは continue-on-error のためワークフローは成功扱いになり、
+ * 通知しないとレビューが届いていないことに気づけない。
+ */
+async function notifyReviewFailure(error) {
+  const runUrl = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`;
+  const message = truncateText(error instanceof Error ? error.message : String(error), 1500);
+
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      ["## DeepSeek レビュー失敗", "", "```text", message, "```", ""].join("\n"),
+      "utf8",
+    );
+  }
+
+  if (!DISCORD_REVIEW_WEBHOOK_URL) {
+    return;
+  }
+
+  try {
+    const response = await fetch(DISCORD_REVIEW_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        username: "AIコードレビュー",
+        content: "DeepSeekによるコードレビューに失敗しました。",
+        allowed_mentions: { parse: [] },
+        embeds: [
+          {
+            title: "レビュー失敗",
+            url: runUrl,
+            color: 0xe74c3c,
+            description: `\`\`\`text\n${message}\n\`\`\``,
+            fields: [
+              { name: "リポジトリ", value: GITHUB_REPOSITORY || "unknown", inline: true },
+              { name: "ブランチ", value: GITHUB_REF_NAME || "unknown", inline: true },
+              { name: "モデル", value: DEEPSEEK_MODEL, inline: true },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.warn(`Discord webhook failed: ${response.status}\n${text}`);
+    }
+  } catch (notifyError) {
+    console.warn("Discord webhook failed.");
+    console.warn(notifyError);
+  }
+}
+
+main().catch(async (error) => {
   console.error(error);
+  await notifyReviewFailure(error);
   process.exit(1);
 });

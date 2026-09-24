@@ -11,14 +11,14 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: deepseek-review-${{ github.ref }}
-  cancel-in-progress: true
+  # reasoning_effort=max で実行が長くなるため、ブランチ単位で取り消すと連続プッシュ時に
+  # 前のプッシュの差分が一度もレビューされなくなる。コミットごとに独立して実行する
+  group: deepseek-review-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   deepseek-review:
     runs-on: ubuntu-latest
-    # reasoning_effort=max は推論に時間がかかるため、無制限に待たないよう上限を設ける
-    timeout-minutes: 60
 
     steps:
       - name: Resolve review target
@@ -52,6 +52,9 @@ jobs:
       - name: Run DeepSeek review
         if: steps.target.outputs.should-run == 'true'
         continue-on-error: true
+        # reasoning_effort=max は推論に時間がかかるため上限を設ける。
+        # ジョブ単位だと continue-on-error が効かず失敗扱いになるため、ステップに付ける
+        timeout-minutes: 60
         run: node scripts/deepseek-review.mjs
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
