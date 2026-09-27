@@ -1,10 +1,38 @@
-# Japanese Worker Contract
+# 日本語解析workerのAPI仕様
 
-The Japanese worker is a local-only HTTP process used by the TypeScript bot for Japanese morphological analysis and strict 5-7-5 detection.
+Botは日本語の解析を別プロセスへ依頼できます。
+この**日本語解析worker**は、文章を単語に分けて読みや品詞を求める形態素解析と、五七五の検出をHTTPで提供します。
+待ち受け先は同じホスト内から接続するループバックアドレスに限定され、既定値は `127.0.0.1:8787` です。
 
-## GET /health
+実装は [main.go](../workers/japanese-worker/main.go)、Bot側の通信処理は [japaneseAnalysisClient.ts](../src/features/japaneseAnalysis/japaneseAnalysisClient.ts) にあります。
+起動方法と設定は [日本語解析workerの起動と運用](japanese-worker-deployment.md) を参照してください。
 
-Response:
+## 要求と応答の共通仕様
+
+解析要求はJSONで送信します。
+本文の読み取り上限は64 KiB（65,536バイト）で、未知のフィールドやJSONの解析エラーを検出するとHTTP 400を返します。
+上限超過による解析失敗もHTTP 400になります。
+
+workerは解析前に、URL、Discordのユーザーへのメンション、ロールへのメンション、チャンネルへの言及、カスタム絵文字、コードブロック、インラインコードを空白へ置き換えます。
+その後、連続する空白を一つにまとめます。
+Bot側の通信処理自体は本文を加工せず、川柳検出やPacchi学習の呼び出し元がそれぞれの条件で本文を処理します。
+
+応答の形式はHTTPの状態コードによって異なります。
+正常時の応答だけを前提にせず、先に状態コードを確認してください。
+
+| 状態コード | 条件 | 応答 |
+| --- | --- | --- |
+| 200 | 解析成功、候補なし、または稼働確認成功 | 各APIの正常応答 |
+| 400 | JSONの解析失敗、未知のフィールド、本文上限による解析失敗 | `{"error":"invalid_json"}` |
+| 400 | 五七五以外の `rule` | 川柳応答の `error` に `only strict 5-7-5 is supported` |
+| 405 | 対象APIで受け付けないHTTPメソッド | 本文なし |
+| 500 | 川柳解析の失敗 | 川柳応答の `error` に `senryu_analysis_failed` |
+| 500 | ハンドラー内のパニックから復帰した場合 | `{"error":"internal_error"}` |
+
+## 稼働確認 `GET /health`
+
+workerがHTTP要求へ応答できる場合、HTTP 200と次のJSONを返します。
+解析結果の正しさやDiscordへの接続を確認するAPIではありません。
 
 ```json
 {
@@ -12,18 +40,20 @@ Response:
 }
 ```
 
-## POST /analyze/senryu
+## 五七五の検出 `POST /analyze/senryu`
 
-Request:
+解析する文章を `content` に指定します。
+`rule` は `[5, 7, 5]` のみを受け付け、省略時、`null`、空配列の場合も五七五として扱います。
 
 ```json
 {
-  "content": "string",
+  "content": "解析する文章",
   "rule": [5, 7, 5]
 }
 ```
 
-Response:
+候補が見つかると、最初の候補を `text` と三つの `phrases` に返します。
+次のJSONは応答の構造を示す例です。
 
 ```json
 {
@@ -34,19 +64,30 @@ Response:
 }
 ```
 
-`matched:false` means no 5-7-5 candidate was found. Worker errors, HTTP errors, timeouts, and invalid responses are separate client failures.
-
-## POST /analyze/morph
-
-Request:
+候補が見つからない場合、解析対象が空の場合、または候補を三句に分割できない場合は、次の正常応答を返します。
+`matched: false` は通信失敗とは区別します。
 
 ```json
 {
-  "content": "string"
+  "matched": false,
+  "text": null,
+  "phrases": [],
+  "error": null
 }
 ```
 
-Response:
+## 形態素解析 `POST /analyze/morph`
+
+解析する文章を `content` に指定します。
+
+```json
+{
+  "content": "原神"
+}
+```
+
+応答は単語ごとの情報を `tokens` に格納します。
+次のJSONは構造を示す例であり、品詞や読みの実際の値は辞書によって変わります。
 
 ```json
 {
@@ -64,4 +105,32 @@ Response:
 }
 ```
 
-URLs, Discord mentions, role mentions, channel mentions, custom emoji, code blocks, and inline code are excluded from analysis on both the TypeScript caller side and the worker side. `/analyze/morph` may return particles and auxiliaries; Pacchi filters them before learning.
+| フィールド | 内容 |
+| --- | --- |
+| `surface` | 本文に現れた表記 |
+| `base` | 辞書の基本形。取得できない場合は `surface` |
+| `reading` | 辞書の読み。取得できない場合は `surface` |
+| `pos` | 辞書の先頭4項目から空欄と `*` を除いた品詞情報。残らない場合は `["未知語"]` |
+| `isProperNoun` | `pos` に `固有名詞` を含むか |
+| `isOov` | 辞書の特徴情報が7項目未満かを基準にした未知語判定 |
+
+解析対象が空の場合は `{"tokens":[],"error":null}` を返します。
+助詞や助動詞も解析結果に含まれますが、Pacchiは語彙として学習する前に除外します。
+文型の学習では、別の処理で一部の助詞を残します。
+
+## Bot側の失敗判定
+
+Bot側の通信処理は、成功を `ok: true`、失敗を `ok: false` で返します。
+失敗理由は次のように分類します。
+
+| `reason` | 内容 |
+| --- | --- |
+| `http_error` | HTTP応答が成功の状態コードではない |
+| `invalid_json` | 成功応答の本文をJSONとして読めない |
+| `invalid_response` | フィールドの型などが期待する形式と異なる |
+| `timeout` | 設定した時間を超えて要求が中断された |
+| `unreachable` | その他の通信例外が発生した |
+
+川柳応答では、`matched: true` のときに `phrases` が三つあることも検査します。
+正常な形式で返された `error` の文字列だけを理由に、通信処理が失敗へ分類し直すことはありません。
+現在のworkerは解析エラーをHTTP 400または500で返すため、Bot側では `http_error` になります。
