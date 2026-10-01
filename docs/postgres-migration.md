@@ -1,7 +1,8 @@
 # PostgreSQLとBotの運用
 
 このBotはPostgreSQLを使用します。
-起動時にデータベースへ接続し、**マイグレーション**（テーブルなどの構造を更新する処理）を適用してからDiscordへ接続します。
+起動時にデータベースへ接続し、マイグレーションを適用してからDiscordへ接続します。
+マイグレーションは、テーブルなどの構造を更新する処理です。
 SQLiteを使う実行経路はありません。
 
 この文書は、2026年9月27日時点のリポジトリ内の実装と設定に基づきます。
@@ -10,12 +11,13 @@ VPS上の稼働状態やバックアップの成否は、この文書の更新�
 
 ## Botの接続設定
 
-Botの `.env` は [.env.example](../.env.example) を参照して設定します。
-データベースの接続先には `DATABASE_URL` を使います。
-`BOT_PROFILE=production` では `PRODUCTION_DATABASE_URL`、`debug` では `DEBUG_DATABASE_URL` が定義されていると、その値を優先します。
+Botの`.env`は[.env.example](../.env.example)を参照して設定します。
+データベースの接続先には`DATABASE_URL`を使います。
+`BOT_PROFILE=production`では`PRODUCTION_DATABASE_URL`、`debug`では`DEBUG_DATABASE_URL`が定義されていると、その値を優先します。
 Discordのトークンや各種IDなど、Bot自体の必須設定も必要です。
 
-データベース内では、用途ごとに**スキーマ**（テーブルをまとめる名前空間）を分けます。
+データベース内では、用途ごとにスキーマを分けます。
+スキーマは、テーブルをまとめる名前空間です。
 既定値は次のとおりです。
 
 | 設定 | 既定のスキーマ名 |
@@ -29,16 +31,16 @@ Discordのトークンや各種IDなど、Bot自体の必須設定も必要で�
 | `POSTGRES_AUTOMOD_SCHEMA` | `automod` |
 | `POSTGRES_REMINDER_SCHEMA` | `reminder` |
 
-添付ファイルの本体は `MESSAGE_ATTACHMENT_FILES_DIR`、保存先などの情報はPostgreSQLへ格納します。
+添付ファイルの本体は`MESSAGE_ATTACHMENT_FILES_DIR`、保存先などの情報はPostgreSQLへ格納します。
 DBのバックアップだけでは添付ファイルを復元できないため、ファイルの保存先も別途バックアップします。
 
-起動時の更新内容は [databaseRuntime.ts](../src/bot/databaseRuntime.ts) で管理しています。
-現行の `main` スキーマには、Instagramのリンクプレビュー対応までのマイグレーションが登録されています。
-起動ログの `Database runtime initialized successfully.` はDB初期化の成功を示し、Discord接続の成功とは区別します。
+起動時の更新内容は[databaseRuntime.ts](../src/bot/databaseRuntime.ts)で管理しています。
+現行の`main`スキーマには、Instagramのリンクプレビュー対応までのマイグレーションが登録されています。
+起動ログの`Database runtime initialized successfully.`はDB初期化の成功を示し、Discord接続の成功とは区別します。
 
 ## ローカルでの確認
 
-依存関係と検証コマンドは [package.json](../package.json) に定義されています。
+依存関係と検証コマンドは[package.json](../package.json)に定義されています。
 リポジトリのルートで実行します。
 
 ```powershell
@@ -49,9 +51,10 @@ mise exec -- npm run build
 mise exec -- npm test
 ```
 
-`npm test` と `npm run test:postgres` は同じ処理です。
-[docker-compose.test.yml](../docker-compose.test.yml) で一時的なPostgreSQL 16を起動し、TypeScriptとJavaScriptのテストを実行します。
-終了処理でテスト用Composeのボリュームを削除するため、DockerとComposeが使える環境で実行してください。
+`npm test`と`npm run test:postgres`は同じ処理です。
+[docker-compose.test.yml](../docker-compose.test.yml)で一時的なPostgreSQL 16を起動し、TypeScriptとJavaScriptのテストを実行します。
+DockerとComposeが使える環境で実行してください。
+終了処理では、テスト用Composeのボリュームを削除します。
 Goのworkerテストとバックアップスクリプトのテストは、このコマンドには含まれません。
 
 Botを起動する場合は、接続先と認証情報を確認したうえで次を実行します。
@@ -63,31 +66,32 @@ mise exec -- npm start
 
 ## Docker Composeの構成
 
-[docker-compose.yml](../docker-compose.yml) は次の2サービスで構成されています。
+[docker-compose.yml](../docker-compose.yml)は次の2サービスで構成されています。
 
 | サービス | 実行内容 | データの保存先 |
 | --- | --- | --- |
-| `postgres` | PostgreSQL 16 | 名前付きボリューム `postgres-data` |
+| `postgres` | PostgreSQL 16 | 名前付きボリューム`postgres-data` |
 | `bot` | Node.js 22のBotとGo製日本語解析worker | ホストから割り当てたディレクトリ |
 
-PostgreSQLのホスト側ポートは、既定で `127.0.0.1:5432` のみに割り当てます。
-`POSTGRES_HOST_PORT` でポートを変更でき、BotからはCompose内部の `postgres:5432` へ接続します。
-コンテナ起動時の接続確認には `pg_isready` を使いますが、これはBotのテーブルや権限の検証ではありません。
+PostgreSQLのホスト側ポートは、既定で`127.0.0.1:5432`のみに割り当てます。
+`POSTGRES_HOST_PORT`でポートを変更でき、BotからはCompose内部の`postgres:5432`へ接続します。
+コンテナ起動時の接続確認には`pg_isready`を使いますが、これはBotのテーブルや権限の検証ではありません。
 
-Botのファイルは、ホスト側の `data/production` をコンテナ側の `/app/data/production` に割り当てて保持します。
-この**バインドマウント**により、コンテナを作り直しても添付ファイルや個人プロンプトが残ります。
-旧添付ファイルの保存先 `data/message_log_attachments` も、同名のコンテナ内パスへ読み取り専用で割り当てます。
+Botのファイルは、ホスト側の`data/production`をコンテナ側の`/app/data/production`に割り当てて保持します。
+この割り当てをバインドマウントと呼びます。
+コンテナを作り直しても、添付ファイルや個人プロンプトはホスト側に残ります。
+旧添付ファイルの保存先`data/message_log_attachments`も、同名のコンテナ内パスへ読み取り専用で割り当てます。
 DBが旧保存先を参照している間は、この割り当てを維持してください。
 
-[Dockerfile](../Dockerfile) は、日本語解析workerのバイナリと、動画の映像と音声を結合するFFmpegを同梱します。
-実行ユーザーは `node` です。
+[Dockerfile](../Dockerfile)は、日本語解析workerのバイナリと、動画の映像と音声を結合するFFmpegを同梱します。
+実行ユーザーは`node`です。
 `.env`、実データ、DBのボリュームはイメージに含めません。
-workerの設定は [日本語解析workerの起動と運用](japanese-worker-deployment.md) を参照してください。
+workerの設定は[日本語解析workerの起動と運用](japanese-worker-deployment.md)を参照してください。
 
 ## VPSの設定ファイル
 
-Compose用の値は `/etc/l4discord/l4discord-compose.env`、Botの認証情報は `/opt/L4_DiscordBot/.env` に分けます。
-Compose用ファイルはroot所有、権限 `0600` で管理します。
+Compose用の値は`/etc/l4discord/l4discord-compose.env`、Botの認証情報は`/opt/L4_DiscordBot/.env`に分けます。
+Compose用ファイルはroot所有、権限`0600`で管理します。
 値の例を次に示します。
 プレースホルダーは実際の値へ置き換えてください。
 
@@ -101,19 +105,19 @@ BOT_DATA_DIR=./data/production
 BOT_LEGACY_ATTACHMENT_DATA_DIR=./data/message_log_attachments
 ```
 
-`BOT_DATABASE_URL` は既存のBot用ロールとDBへ接続するURLです。
+`BOT_DATABASE_URL`は既存のBot用ロールとDBへ接続するURLです。
 パスワード中の特殊文字はURLエンコードします。
-ComposeはこれをBotの `DATABASE_URL` と `PRODUCTION_DATABASE_URL` に設定し、`.env` の同名設定より優先します。
+ComposeはこれをBotの`DATABASE_URL`と`PRODUCTION_DATABASE_URL`に設定し、`.env`の同名設定より優先します。
 
-`POSTGRES_PASSWORD` は空のデータ領域を初期化するときの `postgres` ロールのパスワードです。
-Bot用の `l4bot` ロールと `l4discord` DBは、このCompose定義だけでは作成されません。
+`POSTGRES_PASSWORD`は空のデータ領域を初期化するときの`postgres`ロールのパスワードです。
+Bot用の`l4bot`ロールと`l4discord` DBは、このCompose定義だけでは作成されません。
 新規環境では別途作成し、移行環境ではバックアップから復元します。
 ロールを復元した後のパスワードは、初期化時の値と異なる場合があります。
 
 ## 日常の稼働確認
 
 VPSで次を実行すると、Composeの状態と直近のログを確認できます。
-デプロイが作成する `.deploy-bot-image.env` が存在する場合は、イメージ指定の上書きも読み込みます。
+デプロイが作成する`.deploy-bot-image.env`が存在する場合は、イメージ指定の上書きも読み込みます。
 
 ```bash
 cd /opt/L4_DiscordBot
@@ -125,7 +129,7 @@ sudo docker compose "${compose_args[@]}" ps
 sudo docker compose "${compose_args[@]}" logs --no-color --tail=200 bot postgres
 ```
 
-DB初期化のログに加えて、`discord gateway ready (clientReady)` を確認します。
+DB初期化のログに加えて、`discord gateway ready (clientReady)`を確認します。
 workerを有効にしている場合は、同じシェルで次を実行できます。
 
 ```bash
@@ -138,34 +142,35 @@ Discord上の基本コマンド、対象チャンネルの返信、添付ファ�
 
 ## releaseブランチからのデプロイ
 
-[Deploy release to VPS](../.github/workflows/deploy-release.yml) は、`release` へのpush、または同ブランチでの手動実行で起動します。
-コミットを識別するSHAをタグにしたLinux/amd64イメージをGHCR（GitHubのコンテナイメージ保存先）へ公開します。
+[Deploy release to VPS](../.github/workflows/deploy-release.yml)は、`release`へのpush、または同ブランチでの手動実行で起動します。
+コミットを識別するSHAをタグにして、Linux/amd64イメージをGHCRへ公開します。
+GHCRはGitHubのコンテナイメージ保存先です。
 同じタグが既にあれば、そのイメージを再利用します。
 
 VPSでは次の条件を確認してからBotを更新します。
 
-- systemd版の `l4-discordbot` が `inactive` かつ `masked` であること。
-- SSH接続ユーザーが `/opt/L4_DiscordBot` の所有者であること。
-- リモートの `release` が対象のSHAから進んでいないこと。
+- systemd版の`l4-discordbot`が`inactive`かつ`masked`であること。
+- SSH接続ユーザーが`/opt/L4_DiscordBot`の所有者であること。
+- リモートの`release`が対象のSHAから進んでいないこと。
 - ComposeのPostgreSQLが起動し、接続確認に成功していること。
 
-処理はVPSのチェックアウトを対象コミットへ合わせ、`.deploy-bot-image.env` に `BOT_IMAGE` を書き込みます。
+デプロイ処理ではVPSのチェックアウトを対象コミットへ合わせ、`.deploy-bot-image.env`に`BOT_IMAGE`を書き込みます。
 root専用のCompose設定を直接変更せず、後から読み込むこのファイルでイメージだけを上書きします。
-Dockerの操作には `sudo /usr/bin/docker` を使い、実行中の `GITHUB_TOKEN` でGHCRへログインします。
+Dockerの操作には`sudo /usr/bin/docker`を使い、実行中の`GITHUB_TOKEN`でGHCRへログインします。
 
-更新するサービスは `bot` だけです。
+更新するサービスは`bot`だけです。
 更新後はDB初期化とDiscord接続のログ、コンテナの稼働状態、再起動回数、致命的なエラーログを検査します。
 失敗時に旧イメージへ自動で戻す処理はないため、失敗した段階とDB更新の有無を確認して復旧を判断します。
 
-[Publish Docker image](../.github/workflows/docker-release.yml) は手動実行専用で、VPSへの反映は行いません。
+[Publish Docker image](../.github/workflows/docker-release.yml)は手動実行専用で、VPSへの反映は行いません。
 こちらは同じタグが既に存在すると失敗します。
 
 ## 日次バックアップ
 
 ### 保存内容と保持期間
 
-[scripts/postgres-backup.sh](../scripts/postgres-backup.sh) は、PostgreSQL 16のクライアントで次を保存します。
-既定の保存先は `/var/backups/postgresql/l4` です。
+[scripts/postgres-backup.sh](../scripts/postgres-backup.sh)は、PostgreSQL 16のクライアントで次を保存します。
+既定の保存先は`/var/backups/postgresql/l4`です。
 
 | ファイル | 内容 |
 | --- | --- |
@@ -174,18 +179,19 @@ Dockerの操作には `sudo /usr/bin/docker` を使い、実行中の `GITHUB_TO
 | `kendou_ranking.dump` | 剣道ランキング用DBのカスタム形式のダンプ |
 | `SHA256SUMS` | ファイルの破損確認に使うハッシュ値 |
 
-途中結果は `.partial-*` ディレクトリへ保存します。
-全ダンプの作成と `pg_restore --list` による一覧取得が成功した後、`backup-YYYYMMDDTHHMMSS+0900` のような名前へ変更します。
-その後に、成功済みの最新30世代を超える分を削除します。
+途中結果は`.partial-*`ディレクトリへ保存します。
+全ダンプの作成と`pg_restore --list`による一覧取得が成功した後、`backup-YYYYMMDDTHHMMSS+0900`のような名前へ変更します。
+その後、成功したバックアップのうち最新30世代を残し、古い分を削除します。
 名前の時差部分は実行環境のタイムゾーンによります。
 
-`pg_restore --list` の成功は、実際にDBを復元できたことまでは示しません。
+`pg_restore --list`の成功は、実際にDBを復元できたことまでは示しません。
 別環境での復元確認を行ってください。
-VPS内だけの保存ではVPSの消失やディスク故障に備えられず、添付ファイルなどもこのスクリプトの対象外です。
+VPS内だけに保存しても、VPSの消失やディスク故障には備えられません。
+添付ファイルなどは、このスクリプトの対象外です。
 
 ### 配置と接続先
 
-ホストにPostgreSQL 16のクライアントと `postgres` ユーザーがあることを確認し、リポジトリのルートから配置します。
+ホストにPostgreSQL 16のクライアントと`postgres`ユーザーがあることを確認し、リポジトリのルートから配置します。
 
 ```bash
 sudo install -d -m 0700 -o postgres -g postgres /var/backups/postgresql/l4
@@ -197,7 +203,7 @@ sudo systemd-analyze verify /etc/systemd/system/l4-postgresql-backup.service /et
 ```
 
 スクリプトの既定の接続先はUnixソケットです。
-ComposeのPostgreSQLへ接続する場合は、`/etc/l4discord/postgresql-backup.env` を用意します。
+ComposeのPostgreSQLへ接続する場合は、`/etc/l4discord/postgresql-backup.env`を用意します。
 
 ```dotenv
 PGHOST=127.0.0.1
@@ -206,8 +212,8 @@ PGUSER=postgres
 PGPASSFILE=/var/lib/postgresql/.pgpass
 ```
 
-この設定ファイルはroot所有、グループ `postgres`、権限 `0640` とします。
-`.pgpass` には復元後の有効なパスワードを登録し、所有者を `postgres`、権限を `0600` とします。
+この設定ファイルはroot所有、グループ`postgres`、権限`0640`とします。
+`.pgpass`には復元後の有効なパスワードを登録し、所有者を`postgres`、権限を`0600`とします。
 どちらもリポジトリへ保存しません。
 
 ### 実行結果と定期実行の確認
@@ -223,18 +229,18 @@ sudo systemctl enable --now l4-postgresql-backup.timer
 systemctl list-timers l4-postgresql-backup.timer --no-pager
 ```
 
-[timer定義](../deploy/systemd/l4-postgresql-backup.timer) は毎日06:00 JSTに実行します。
-`Persistent=true` のため、停止中に予定時刻を過ぎた場合は、timerの再開時に未実行分が実行されます。
+[timer定義](../deploy/systemd/l4-postgresql-backup.timer)では、バックアップを毎日06:00 JSTに実行するよう設定しています。
+`Persistent=true`のため、停止中に予定時刻を過ぎた場合は、timerの再開時に未実行分が実行されます。
 バックアップの終了状態に加え、保持世代の削除に関する警告もログで確認してください。
 
 ## 別環境での復元確認
 
 復元は、本番とは別のComposeプロジェクトと空のボリュームで確認します。
 次の例はDBだけを起動し、Botのログインやマイグレーションを行いません。
-本番ファイルを読み込まないよう、Bot用環境ファイルには `.env.example` を指定します。
+本番ファイルを読み込まないよう、Bot用環境ファイルには`.env.example`を指定します。
 
-以下はVPSのrootシェルで、同じシェル内の手順として実行します。
-`YOUR_COMMIT_SHA` と検証用パスワードを置き換え、`l4discord-rehearsal` が既存の作業で使われていないことを確認してください。
+以下の手順は、VPSの同じrootシェル内で続けて実行します。
+`YOUR_COMMIT_SHA`と検証用パスワードを置き換え、`l4discord-rehearsal`が既存の作業で使われていないことを確認してください。
 
 ```bash
 set -Eeuo pipefail
@@ -275,9 +281,10 @@ for database in l4discord kendou_ranking; do
 done
 ```
 
-`globals.sql` にある `CREATE ROLE postgres;` は、初期化済みのロールと重複します。
-この行が1件あることを検査して除外し、それ以外のSQLエラーは停止させます。
-DBは `pg_restore --create` で作成し、DB自体の権限や設定も復元します。
+`globals.sql`にある`CREATE ROLE postgres;`は、初期化済みのロールと重複します。
+この行が1件あることを確認して除外します。
+それ以外のSQLエラーが起きた場合は処理を停止します。
+DBは`pg_restore --create`で作成し、DB自体の権限や設定も復元します。
 追加のテーブルスペースなどがある環境では、復元先にも対応する保存先を準備する必要があります。
 
 復元後は、バックアップ取得時に保存した一覧と比較します。
@@ -337,7 +344,7 @@ Botで復元DBを検証すると、起動時にマイグレーションが適用
 DBの比較を先に終え、Botの確認には専用のDiscord認証情報と、本番から分離したファイル保存先を用意します。
 
 検証データが不要になったら、使用したプロジェクト名を確認してリハーサル用のボリュームだけを削除します。
-本番の `l4discord` に対して `down -v` を実行すると、DBの保存領域が削除されます。
+本番の`l4discord`に対して`down -v`を実行すると、DBの保存領域が削除されます。
 
 ```bash
 docker compose -p l4discord-rehearsal down -v
@@ -355,9 +362,9 @@ DBと添付ファイルは別々に保存されるため、復元後は両者の
 
 ## 旧環境からの移行記録
 
-従来の文書には、Ubuntu 22.04 LTS上のPostgreSQL 14クラスタ `14/main` と `l4-discordbot.service` から、ComposeのPostgreSQL 16とBotへ移行した記録があります。
-関連するDBは `l4discord` と `kendou_ranking`、関連サービスは `kendou-ranking.service` です。
-旧クラスタやサービスの現在の残存状態は、VPSで確認する必要があります。
+従来の文書には、Ubuntu 22.04 LTS上のPostgreSQL 14クラスタ`14/main`と`l4-discordbot.service`から、ComposeのPostgreSQL 16とBotへ移行した記録があります。
+関連するDBは`l4discord`と`kendou_ranking`、関連サービスは`kendou-ranking.service`です。
+旧クラスタやサービスが現在も残っているかは、VPSで確認する必要があります。
 
 当時の計画では、停止時間を04:00〜04:30 JST、切り戻し判断を停止から20分としていました。
 移行後の旧クラスタは比較用に7日間保持し、復元確認と削除承認の後に廃止する方針でした。
@@ -369,4 +376,4 @@ DBと添付ファイルは別々に保存されるため、復元後は両者の
 
 PostgreSQL 14のサポート終了予定日は2026年11月12日です。
 メジャーバージョン間では、データディレクトリの直接コピーで移行せず、論理バックアップからの復元など、対応する方法を使います。
-詳細は [PostgreSQLのサポート方針](https://www.postgresql.org/support/versioning/) と [PostgreSQL 16への更新手順](https://www.postgresql.org/docs/16/upgrading.html) を参照してください。
+詳細は[PostgreSQLのサポート方針](https://www.postgresql.org/support/versioning/)と[PostgreSQL 16への更新手順](https://www.postgresql.org/docs/16/upgrading.html)を参照してください。
