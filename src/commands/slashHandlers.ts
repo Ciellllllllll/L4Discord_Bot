@@ -29,6 +29,7 @@ import { listTicketUsageSummaries } from "../features/tickets/ticketUsageStats.j
 import { startAfkDisconnectCommand } from "../features/vc/afkDisconnect.js";
 import { handlePacchiHelp } from "../features/pacchi/pacchi.slash.js";
 import { handleBoketeSlash } from "../features/bokete/bokete.slash.js";
+import { handleBokeruSlash } from "../features/bokeru/bokeru.js";
 import { checkJapaneseWorkerHealth } from "../features/japaneseAnalysis/japaneseAnalysisClient.js";
 import {
   handleGameNow,
@@ -123,6 +124,8 @@ export async function handleSlashCommand(
       return handlePacchiHelp(interaction, ctx);
     case "bokete":
       return handleBoketeSlash(interaction, ctx);
+    case "bokeru":
+      return handleBokeruSlash(interaction, ctx);
     case "gif":
       return handleGif(interaction, ctx, member);
     case "member_count_setup":

@@ -46,6 +46,12 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
       .setDescription("Boketeを1件表示します")
       .toJSON(),
     new SlashCommandBuilder()
+      .setName("bokeru")
+      .setDescription("お題に回答して点数を競います")
+      .addSubcommand((sub) => sub.setName("start").setDescription("お題を出します"))
+      .addSubcommand((sub) => sub.setName("ranking").setDescription("ランキングを表示します"))
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName("gif")
       .setDescription("GIF自動返信を管理します")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

@@ -4,7 +4,7 @@ import { ComponentCardBuilder, componentCardsPayload } from "../panels/component
 import { fetchBoketePost, type FetchBoketePostOptions } from "./boketeClient.js";
 
 const FETCH_FAILED_MESSAGE = "投稿の取得に失敗しました。しばらくしてから再度お試しください。";
-const BOKETE_THREAD_ID = "1530637445765398578";
+export const BOKETE_THREAD_ID = "1530637445765398578";
 const RESTRICTED_CHANNEL_MESSAGE = "このコマンドは指定スレッドでのみ利用できます。";
 
 export async function handleBoketeSlash(
