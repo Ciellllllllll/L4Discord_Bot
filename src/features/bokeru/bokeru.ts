@@ -37,7 +37,8 @@ import {
   type BokeruResult,
 } from "./bokeruRepository.js";
 
-export const BOKERU_ROUND_MS = 10 * 60_000;
+export const BOKERU_ROUND_MS = 5 * 60_000;
+const BOKERU_NOTIFY_ROLE_ID = "1556559586956156990";
 const ANSWER_INPUT_ID = "answer";
 const ANSWER_MAX_LENGTH = 200;
 const NO_MENTIONS = { parse: [] as [] };
@@ -155,6 +156,11 @@ async function handleStart(interaction: ChatInputCommandInteraction, ctx: BotCon
   }
   const message = await interaction.editReply(renderOdai(roundId, odai, closesAt, true));
   await setBokeruRoundMessage(ctx.mainPgPool, roundId, message.id);
+  // 遅延応答の編集では通知が飛ばないため、メンションは新規メッセージで送る
+  await interaction.followUp({
+    content: `<@&${BOKERU_NOTIFY_ROLE_ID}> 新しいお題が出ました！`,
+    allowedMentions: { roles: [BOKERU_NOTIFY_ROLE_ID] },
+  }).catch((err) => ctx.log.warn({ err, roundId }, "bokeru: failed to notify role"));
   // ponytail: プロセス内タイマー。再起動で失われた分は finalizeDueBokeruRounds が30秒以内に拾う
   setTimeout(() => {
     void finalizeBokeruRound(ctx, roundId).catch((err) => ctx.log.error({ err, roundId }, "bokeru: finalize failed"));
