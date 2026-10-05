@@ -7,6 +7,13 @@ const DEFAULT_BASE = "https://api.deepseek.com";
 
 export type { ChatMessage } from "./chatTypes.js";
 
+// 画像入力は deepseek-flash のみ対応（https://api-docs.deepseek.com/guides/vision/）
+export type DeepSeekContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+export type DeepSeekMessage = ChatMessage | { role: "user"; content: DeepSeekContentPart[] };
+
 export type DeepSeekResult = {
   content: string;
   ms: number;
@@ -31,7 +38,7 @@ export type DeepSeekRequestOptions = {
 
 export async function deepseekChat(
   config: AppConfig,
-  messages: ChatMessage[],
+  messages: DeepSeekMessage[],
   third?: AbortSignal | DeepSeekRequestOptions,
 ): Promise<DeepSeekResult> {
   const options: DeepSeekRequestOptions =

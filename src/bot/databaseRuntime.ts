@@ -34,6 +34,7 @@ import { ensurePostgresTicketDatabaseSchema } from "../features/tickets/ticketDb
 import { ensurePostgresVcTempSchema } from "../features/vc/vcTempPersistence.js";
 import { ensurePostgresVcTimeSchema } from "../features/vc/vcTimeSchema.js";
 import { ensurePostgresYouTubeWatcherSchema, migratePostgresYouTubeVideoCacheReferences, migratePostgresYouTubeWatcherDurableMedia } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
+import { ensurePostgresBokeruSchema } from "../features/bokeru/bokeruRepository.js";
 
 export type DatabaseRuntime = {
   db: Kysely<Database>;
@@ -139,6 +140,7 @@ async function createDatabaseRuntimeUnsafe(
     { version: 19, name: "tiktok_link_preview", apply: migratePostgresTikTokPreviewSupport },
     { version: 20, name: "anonymous_survey_feedback", apply: migratePostgresAnonymousSurveyFeedback },
     { version: 21, name: "instagram_link_preview", apply: migratePostgresInstagramPreviewSupport },
+    { version: 22, name: "bokeru_initial", apply: ensurePostgresBokeruSchema },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);

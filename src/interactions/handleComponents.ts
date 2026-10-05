@@ -59,6 +59,7 @@ import { handleWerewolfButton, handleWerewolfStringSelect } from "../features/we
 import { handleAnonymousSurveyButton, handleAnonymousSurveyModalSubmit } from "../features/anonymousSurvey/surveyHandlers.js";
 import { handleAnonymousSurveyViewButton } from "../features/anonymousSurvey/surveyView.js";
 import { parseCustomId } from "./parseCustomId.js";
+import { handleBokeruButton, handleBokeruModal } from "../features/bokeru/bokeru.js";
 import { handleVxTwitterPreviewButton } from "../features/utilities/vxtwitterPreviewInteractions.js";
 import { handlePreviewInteraction } from "../features/linkPreviews/shared/previewInteractions.js";
 import { refreshPreviewTranslationState } from "../features/linkPreviews/linkPreviewMessageHandler.js";
@@ -139,6 +140,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
   if (await handleExecutionFlowButton(interaction, ctx)) return;
   if (await handleTimeoutExtendFlowButton(interaction, ctx)) return;
   if (await handleWerewolfButton(interaction, ctx)) return;
+  if (await handleBokeruButton(interaction, ctx)) return;
   if (await handleAutoModRaidButton(interaction, ctx)) return;
   if (await handleReminderHubButton(interaction, ctx)) return;
   if (await handleAiHistoryClearButton(interaction, ctx)) return;
@@ -187,6 +189,7 @@ export async function handleDetecterModal(
 
 export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<void> {
   if (await handleAnonymousSurveyModalSubmit(interaction, ctx)) return;
+  if (await handleBokeruModal(interaction, ctx)) return;
   if (await handleChangePromptModalSubmit(interaction, ctx)) return;
   if (await handleCreatePromptModalSubmit(interaction, ctx)) return;
   if (await handleReminderHubModal(interaction, ctx)) return;
