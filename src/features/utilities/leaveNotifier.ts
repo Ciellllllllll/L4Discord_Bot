@@ -273,12 +273,14 @@ export class LeaveNotifierMessageHandler {
     if (looksLikePrefixCommandLine(message.content)) {
       return;
     }
+    const matches = [...String(message.content || "").matchAll(MESSAGE_LINK_RE)];
+    if (matches.length === 0) return;
+
     const s = await getGuildSettingsData(this.ctx.db, message.guild.id);
     if (s.auto_reply_excluded_channel_ids?.includes(message.channelId)) {
       return;
     }
 
-    const matches = [...String(message.content || "").matchAll(MESSAGE_LINK_RE)];
     for (const m of matches) {
       const guildId = m[1]!;
       const channelId = m[2]!;

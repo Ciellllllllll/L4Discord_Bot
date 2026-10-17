@@ -48,6 +48,7 @@ function handlerFixture(options: {
   const warnings: unknown[] = [];
   const fetchedMembers: string[] = [];
   let messageFetches = 0;
+  let settingsQueries = 0;
   const reader = { id: "reader", guild: { id: "100" } };
   const bot = { id: "bot" };
   const guild = {
@@ -89,7 +90,10 @@ function handlerFixture(options: {
   const query = {
     selectAll() { return this; },
     where() { return this; },
-    executeTakeFirst: async () => ({ data: { auto_reply_excluded_channel_ids: options.excluded ? ["200"] : [] } }),
+    executeTakeFirst: async () => {
+      settingsQueries++;
+      return { data: { auto_reply_excluded_channel_ids: options.excluded ? ["200"] : [] } };
+    },
   };
   const ctx = {
     config: { GUILD_ID: "100" },
@@ -113,7 +117,20 @@ function handlerFixture(options: {
       send: async (payload: unknown) => { sent.push(payload); },
     },
   } as unknown as Message;
-  return { handler: new LeaveNotifierMessageHandler(ctx), message, sent, warnings, fetchedMembers, messageFetches: () => messageFetches };
+  return {
+    handler: new LeaveNotifierMessageHandler(ctx), message, sent, warnings, fetchedMembers,
+    messageFetches: () => messageFetches, settingsQueries: () => settingsQueries,
+  };
+}
+
+for (const content of ["普通の会話です", "", "https://example.com/article"]) {
+  void test(`does not query settings when there is no Discord message link: ${JSON.stringify(content)}`, async () => {
+    const fixture = handlerFixture({ postingGuildId: "999", content });
+    await fixture.handler.onMessage(fixture.message);
+    assert.equal(fixture.settingsQueries(), 0);
+    assert.equal(fixture.messageFetches(), 0);
+    assert.equal(fixture.sent.length, 0);
+  });
 }
 
 for (const [name, options] of [
@@ -125,6 +142,7 @@ for (const [name, options] of [
     const fixture = handlerFixture(options);
     await fixture.handler.onMessage(fixture.message);
     assert.equal(fixture.sent.length, 1);
+    assert.equal(fixture.settingsQueries(), 1);
     assert.equal(fixture.messageFetches(), 1);
     assert.ok(fixture.fetchedMembers.includes("reader"));
     const payload = fixture.sent[0] as { flags: number; allowedMentions: unknown };
