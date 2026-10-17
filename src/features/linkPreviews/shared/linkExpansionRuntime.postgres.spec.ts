@@ -66,7 +66,7 @@ void test("runtime synchronizes edits and bulk deletions outside GUILD_ID, inclu
       },
     } as unknown as BotContext;
     runtime = await registerRuntimeHandlers(ctx);
-    client.emit("messageUpdate", {}, { id: "source-edit", guildId: "other-guild", author: { bot: false } });
+    client.emit("messageUpdate", {}, { id: "source-edit", guildId: "other-guild", author: { bot: false }, content: "リンクを除去した本文" });
     client.emit("messageUpdate", {}, { id: "bot-quote", guildId: "quote-guild", author: { bot: true } });
     client.emit("messageDelete", { id: "source-delete", guildId: "other-guild" });
     client.emit("messageDeleteBulk", new Map([["source-bulk", { id: "source-bulk", guildId: "other-guild" }]]));

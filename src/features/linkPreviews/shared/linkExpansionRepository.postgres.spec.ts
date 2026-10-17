@@ -66,6 +66,12 @@ void test("PostgreSQL keeps durable expansion mappings for seven days, upserts r
     assert.equal((await pool.query("SELECT * FROM link_expansion_sources")).rowCount, 1);
     assert.equal((await pool.query("SELECT * FROM link_expansion_messages")).rowCount, 1);
     assert.equal((await debug.records("source"))[0]?.response_message_id, "debug-response");
+    const createdAt = Date.now() - 3 * 86_400_000;
+    const aged = await restarted.register({ id: "aged", guildId: "guild", channelId: "channel", createdTimestamp: createdAt });
+    assert.ok(aged);
+    assert.ok(Math.abs(aged.expires_at.getTime() - (createdAt + 7 * 86_400_000)) < 1_000, "expiry counts from the message creation time");
+    const stale = await restarted.register({ id: "stale", guildId: "guild", channelId: "channel", createdTimestamp: Date.now() - 8 * 86_400_000 });
+    assert.equal(stale, undefined, "an already expired message is not tracked");
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA ${quotePgIdent(schema)} CASCADE`);

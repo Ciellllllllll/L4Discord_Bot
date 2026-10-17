@@ -25,7 +25,7 @@ import { startReminderScheduler } from "../features/reminders/reminderScheduler.
 import { handleSenryuMessage } from "../features/senryu/senryu.message-handler.js";
 import { initKuromojiTokenizer } from "../features/senryu/senryu.kuromoji.js";
 import { trackStampMessage, trackStampReaction } from "../features/stamps/trackReaction.js";
-import { createUtilitiesMessageHandlers, runUtilitiesMessageChain } from "../features/utilities/utilitiesMessage.js";
+import { createUtilitiesMessageHandlers, runUtilitiesMessageChain, runUtilitiesMessageUpdate } from "../features/utilities/utilitiesMessage.js";
 import { sendMemberLeaveEmbed } from "../features/utilities/leaveNotifier.js";
 import { endOpenVcSessionForMemberPostgres, reconcileVcTimeSessionsAtReadyPostgres, trackVoiceStateUpdatePostgres } from "../features/vc/voiceSessionTracker.js";
 import { reconcileWerewolfGames } from "../features/werewolf/werewolfGame.js";
@@ -508,8 +508,8 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
     }
   });
 
-  client.on("messageUpdate", async (_oldMessage, newMessage) => {
-    void utilitiesBundle.expansions.onUpdate(newMessage).catch((err) => log.warn({ err }, "link expansion update failed"));
+  client.on("messageUpdate", async (oldMessage, newMessage) => {
+    void runUtilitiesMessageUpdate(utilitiesBundle, oldMessage, newMessage);
     try {
       const message = newMessage;
       if (!message.guildId || message.author?.bot) return;

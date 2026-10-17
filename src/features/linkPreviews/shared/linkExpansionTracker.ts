@@ -10,6 +10,9 @@ export type ExpansionReply = (
   message: Message, key: string, payload: MessageCreateOptions, quoted?: Message, options?: ExpansionReplyOptions,
 ) => Promise<Message>;
 
+/** 追跡期間。DB の既定値（7日）と揃える。 */
+const EXPANSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 function sourceHash(message: Pick<Message, "content">): string {
   return createHash("sha256").update(message.content ?? "").digest("hex");
 }
@@ -223,6 +226,16 @@ export class LinkExpansionTracker {
     for (const source of affected.values()) {
       await this.refresh(source);
     }
+  }
+
+  /** 追跡前の投稿が編集でリンクを得た場合に、新規投稿と同じ経路で展開する。 */
+  async onUntrackedUpdate(message: Message): Promise<void> {
+    if (this.stopped || !message.guildId || message.author?.bot) return;
+    if (Date.now() - message.createdTimestamp >= EXPANSION_TTL_MS) return;
+    await this.serial(message.id, async () => {
+      if (this.stopped || await this.repository.source(message.id)) return;
+      await this.renderSource(message);
+    });
   }
 
   async onDelete(message: { id: string }): Promise<void> {

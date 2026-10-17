@@ -186,6 +186,27 @@ void test("retryable fallback replies keep the source unrendered until reconcili
   assert.equal(f.edits.length, 4, "a completed render is not rebuilt again");
 });
 
+void test("edits that add links to untracked recent messages render once and ignore expired or plain ones", async () => {
+  const f = fixture();
+  Object.assign(f.source, { createdTimestamp: Date.now() - 1_000 });
+  await f.tracker.onUntrackedUpdate(f.source);
+  assert.equal(f.repository.responses.size, 2);
+  assert.equal(f.repository.sources.has("source"), true);
+  await f.tracker.onUntrackedUpdate(f.source);
+  assert.equal(f.renders(), 1, "a tracked source is refreshed by onUpdate instead");
+
+  const old = fixture();
+  Object.assign(old.source, { createdTimestamp: Date.now() - 8 * 86_400_000 });
+  await old.tracker.onUntrackedUpdate(old.source);
+  assert.equal(old.renders(), 0);
+  assert.equal(old.repository.sources.size, 0);
+
+  const plain = fixture();
+  Object.assign(plain.source, { content: "リンクなし", createdTimestamp: Date.now() });
+  await plain.tracker.onUntrackedUpdate(plain.source);
+  assert.equal(plain.repository.sources.size, 0, "a message that renders nothing stays untracked");
+});
+
 void test("updates registered responses in place and deletes removed links without extending expiry", async () => {
   const f = fixture();
   await f.tracker.onCreate(f.source);

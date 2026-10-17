@@ -54,11 +54,15 @@ export class LinkExpansionRepository {
     )).rows[0];
   }
 
-  async register(message: { id: string; guildId: string | null; channelId: string }): Promise<ExpansionSource | undefined> {
+  /** 追跡期限は投稿の作成時刻から数える。編集で初めて追跡する古い投稿の期限を延ばさない。 */
+  async register(
+    message: { id: string; guildId: string | null; channelId: string; createdTimestamp?: number },
+  ): Promise<ExpansionSource | undefined> {
     await this.pool.query(`
-      INSERT INTO link_expansion_sources(message_id, guild_id, channel_id, bot_id)
-      VALUES ($1, $2, $3, $4) ON CONFLICT (bot_id, message_id) DO NOTHING
-    `, [message.id, message.guildId, message.channelId, this.botId()]);
+      INSERT INTO link_expansion_sources(message_id, guild_id, channel_id, bot_id, expires_at)
+      VALUES ($1, $2, $3, $4, COALESCE(to_timestamp($5::double precision / 1000.0) + interval '7 days', CURRENT_TIMESTAMP + interval '7 days'))
+      ON CONFLICT (bot_id, message_id) DO NOTHING
+    `, [message.id, message.guildId, message.channelId, this.botId(), message.createdTimestamp ?? null]);
     return this.source(message.id);
   }
 

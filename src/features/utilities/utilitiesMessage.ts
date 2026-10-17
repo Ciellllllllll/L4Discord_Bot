@@ -1,4 +1,4 @@
-import type { Message } from "discord.js";
+import type { Message, PartialMessage } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { CatApiResponder } from "./catApiResponder.js";
 import { DogApiResponder } from "./dogApiResponder.js";
@@ -43,6 +43,27 @@ export function createUtilitiesMessageHandlers(ctx: BotContext): UtilitiesMessag
     leaveNotifierMessages: new LeaveNotifierMessageHandler(ctx, expansions.reply),
   };
   return bundle;
+}
+
+/** 追跡中の展開を更新し、リンクを持たなかった投稿が編集でリンクを得た場合は新たに展開する。 */
+export async function runUtilitiesMessageUpdate(
+  bundle: UtilitiesMessageBundle,
+  oldMessage: Message | PartialMessage,
+  newMessage: Message | PartialMessage,
+): Promise<void> {
+  await bundle.expansions.onUpdate(newMessage).catch((error) => {
+    bundle.log.warn({ err: String(error), messageId: newMessage.id }, "link expansion update failed");
+  });
+  // 埋め込みの解決だけで届く更新は、本文が同じなので新規展開の対象にしない。
+  if (oldMessage.content != null && oldMessage.content === newMessage.content) return;
+  try {
+    const message = newMessage.partial ? await newMessage.fetch() : newMessage;
+    if (!message.content) return;
+    if (!bundle.linkPreview.hasLinks(message) && !bundle.leaveNotifierMessages.hasLinks(message)) return;
+    await bundle.expansions.onUntrackedUpdate(message);
+  } catch (error) {
+    bundle.log.warn({ err: String(error), messageId: newMessage.id }, "link expansion for edited message failed");
+  }
 }
 
 export async function runUtilitiesMessageChain(bundle: UtilitiesMessageBundle, message: Message): Promise<void> {
