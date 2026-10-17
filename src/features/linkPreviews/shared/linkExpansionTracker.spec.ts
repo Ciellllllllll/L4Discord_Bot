@@ -41,6 +41,7 @@ class MemoryRepository extends LinkExpansionRepository {
     return false;
   }
   override async markRendered(id: string, hash: string) { this.sources.get(id)!.content_hash = hash; }
+  override async markIncomplete(id: string) { const row = this.sources.get(id); if (row) row.content_hash = null; }
   override async forgetResponse(id: string) { this.responses.delete(id); }
   override async forgetSource(id: string) {
     this.sources.delete(id);
@@ -171,12 +172,11 @@ void test("lookup failures preserve existing cards and retry the changed source 
 void test("retryable fallback replies keep the source unrendered until reconciliation restores the preview", async () => {
   const f = fixture();
   await f.tracker.onCreate(f.source);
-  const rendered = f.repository.sources.get("source")!.content_hash;
   f.source.content = "https://example.com/edited https://example.com/two";
   f.retryReplies(true);
   await f.tracker.onUpdate(f.source);
   assert.equal(f.edits.length, 2, "the fallback still replaces the stale cards");
-  assert.equal(f.repository.sources.get("source")!.content_hash, rendered, "the new content is not marked as rendered");
+  assert.equal(f.repository.sources.get("source")!.content_hash, null, "the incomplete render is retried by reconciliation");
   assert.equal(f.repository.responses.size, 2);
   f.retryReplies(false);
   await f.tracker.reconcile();
@@ -184,6 +184,21 @@ void test("retryable fallback replies keep the source unrendered until reconcili
   assert.equal(f.repository.sources.get("source")!.content_hash, createHash("sha256").update(f.source.content).digest("hex"));
   await f.tracker.reconcile();
   assert.equal(f.edits.length, 4, "a completed render is not rebuilt again");
+});
+
+void test("a quote edit with a current source hash still leaves retryable failures incomplete", async () => {
+  const f = fixture();
+  f.source.content = "https://discord.com/channels/1/2/3 https://example.com/other";
+  await f.tracker.onCreate(f.source);
+  const hash = f.repository.sources.get("source")!.content_hash;
+  assert.notEqual(hash, null);
+  f.quote.content = "編集された引用本文";
+  f.retryReplies(true);
+  await f.tracker.onUpdate(f.quote);
+  assert.equal(f.repository.sources.get("source")!.content_hash, null, "the unchanged source hash must not hide the pending retry");
+  f.retryReplies(false);
+  await f.tracker.reconcile();
+  assert.equal(f.repository.sources.get("source")!.content_hash, hash);
 });
 
 void test("deferred renders register the source without finishing so reconciliation retries them", async () => {

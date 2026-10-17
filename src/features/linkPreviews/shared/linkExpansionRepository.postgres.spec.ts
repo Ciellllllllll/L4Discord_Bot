@@ -43,6 +43,9 @@ void test("PostgreSQL keeps durable expansion mappings for seven days, upserts r
     await restarted.forgetSource("source-2");
     assert.equal((await restarted.register({ id: "source", guildId: "guild", channelId: "channel" }))?.expires_at.getTime(), first.expires_at.getTime());
     assert.equal((await restarted.source("source"))?.content_hash, "fingerprint-only-no-body");
+    await restarted.markIncomplete("source");
+    assert.equal((await restarted.source("source"))?.content_hash, null, "an incomplete render discards the stored hash");
+    await restarted.markRendered("source", "fingerprint-only-no-body");
     assert.equal((await restarted.page())[0]?.message_id, "source");
     assert.deepEqual(await restarted.page("source"), []);
     const debug = new LinkExpansionRepository(pool, () => "debug-bot");

@@ -105,6 +105,11 @@ export class LinkExpansionRepository {
     await this.pool.query("UPDATE link_expansion_sources SET content_hash = $2 WHERE message_id = $1 AND bot_id = $3", [sourceId, hash, this.botId()]);
   }
 
+  /** 次の定期確認で必ず再描画されるよう、処理済みハッシュを破棄する。 */
+  async markIncomplete(sourceId: string): Promise<void> {
+    await this.pool.query("UPDATE link_expansion_sources SET content_hash = NULL WHERE message_id = $1 AND bot_id = $2", [sourceId, this.botId()]);
+  }
+
   async forgetResponse(id: string): Promise<void> {
     await this.pool.query("DELETE FROM link_expansion_messages WHERE response_message_id = $1 AND bot_id = $2", [id, this.botId()]);
   }

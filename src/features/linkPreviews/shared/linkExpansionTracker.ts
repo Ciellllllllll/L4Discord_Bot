@@ -182,8 +182,10 @@ export class LinkExpansionTracker {
     this.sessions.set(message.id, session);
     try {
       await this.render(message);
-      if (!session.source || session.failures.size > 0 || session.deleted.size > 0
-        || new Date(session.source.expires_at).getTime() <= Date.now()) return;
+      if (!session.source) return;
+      // 引用だけが更新済みで本文のハッシュが最新でも、再試行が必要な失敗は未完了として残す。
+      if (session.failures.size > 0) { await this.repository.markIncomplete(message.id); return; }
+      if (session.deleted.size > 0 || new Date(session.source.expires_at).getTime() <= Date.now()) return;
       for (const record of session.records) {
         if (!session.seen.has(record.expansion_key)) await this.remove(record, session.source.channel_id);
       }
@@ -191,6 +193,7 @@ export class LinkExpansionTracker {
     } catch (error) {
       // 最初の取得で失敗した引用も、期限内の定期確認で再試行する。
       if (!session.source) await this.repository.register(message);
+      else if (session.failures.size > 0) await this.repository.markIncomplete(message.id).catch(() => undefined);
       throw error;
     } finally { this.sessions.delete(message.id); }
   }
