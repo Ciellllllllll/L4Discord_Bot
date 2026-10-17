@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { buildMessageLinkExpansionPayload, LeaveNotifierMessageHandler } from "./leaveNotifier.js";
+import type { ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
 
 function makeMessage(input: {
   content?: string;
@@ -14,6 +15,8 @@ function makeMessage(input: {
   attachments?: Array<{ url: string; name: string; contentType: string }>;
 } = {}): Message {
   return {
+    id: "400",
+    channelId: "200",
     content: input.content ?? "",
     url: "https://discord.com/channels/100/200/400",
     createdAt: new Date("2026-06-10T00:00:00.000Z"),
@@ -46,6 +49,7 @@ function handlerFixture(options: {
   content?: string;
   authorId?: string;
   authorBot?: boolean;
+  replyExpansion?: ExpansionReply;
 } = {}) {
   const sent: unknown[] = [];
   const warnings: unknown[] = [];
@@ -112,6 +116,7 @@ function handlerFixture(options: {
     author: { id: options.authorId ?? "reader", bot: options.authorBot ?? false },
     member: { id: "reader", guild: { id: options.postingGuildId ?? "100" } },
     guild: { id: options.postingGuildId ?? "100" },
+    guildId: options.postingGuildId ?? "100",
     channelId: "200",
     content: options.content ?? `https://discord.com/channels/100/${options.linkedChannelId ?? "200"}/400`,
     channel: {
@@ -121,10 +126,31 @@ function handlerFixture(options: {
     },
   } as unknown as Message;
   return {
-    handler: new LeaveNotifierMessageHandler(ctx), message, sent, warnings, fetchedMembers,
+    handler: new LeaveNotifierMessageHandler(ctx, options.replyExpansion), message, sent, warnings, fetchedMembers,
     messageFetches: () => messageFetches, settingsQueries: () => settingsQueries,
   };
 }
+
+void test("registers a quoted message through the shared tracker after checking human permissions", async () => {
+  const calls: Array<{ message: Message; key: string; quoted?: Message }> = [];
+  const fixture = handlerFixture({
+    postingGuildId: "999",
+    replyExpansion: async (message, key, _payload, quoted) => {
+      calls.push({ message, key, quoted });
+      return {} as Message;
+    },
+  });
+  assert.equal(fixture.handler.hasLinks(fixture.message), true);
+  await fixture.handler.onMessage(fixture.message);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.message, fixture.message);
+  assert.equal(calls[0]?.key, "discord:0");
+  assert.equal(calls[0]?.quoted?.id, "400");
+  assert.equal(calls[0]?.quoted?.channelId, "200");
+  assert.equal(calls[0]?.quoted?.author.bot, true);
+  assert.deepEqual(fixture.fetchedMembers, ["reader"]);
+  assert.equal(fixture.sent.length, 0, "must not bypass tracking with a direct send");
+});
 
 for (const authorId of ["bot", "other-bot"]) {
   void test(`does not expand bot-authored links using bot permissions: ${authorId}`, async () => {

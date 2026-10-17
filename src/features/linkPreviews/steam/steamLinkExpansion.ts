@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   MessageFlags,
   type APIMessageTopLevelComponent,
@@ -146,6 +147,7 @@ export async function buildSteamReplyPayloads(
 }
 
 export type SendSteamExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   mainPgPool?: BotContext["mainPgPool"];
   config: AppConfig;
@@ -168,11 +170,11 @@ export async function sendSteamLinkExpansion(
     aiRouter: deps.aiRouter,
     guildId: message.guildId ?? deps.config.GUILD_ID,
   });
-  for (const payload of payloads) {
+  for (const [index, payload] of payloads.entries()) {
     try {
       const previewState = payload.previewState;
       const { previewState: _previewState, ...replyPayload } = payload;
-      const reply = await message.reply(replyPayload);
+      const reply = await (deps.replyExpansion?.(message, `steam:${index}`, replyPayload) ?? message.reply(replyPayload));
       if (!previewState || !message.guildId) continue;
       try {
         await (deps.saveState ?? savePreviewTranslationState)(deps.db, {

@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   ButtonStyle,
   ComponentType,
@@ -167,6 +168,7 @@ export async function buildGithubReplyPayloads(
 }
 
 export type SendGithubExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   config: AppConfig;
   log: LoggerLike;
@@ -181,12 +183,12 @@ export async function sendGithubLinkExpansion(
   deps: SendGithubExpansionDeps,
   options: { includeFailures?: boolean } = {},
 ): Promise<void> {
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
     if (result.status === "error" && options.includeFailures !== true) continue;
     try {
       const previewState = result.status === "success" ? result.payload.previewState : undefined;
       const { previewState: _previewState, ...replyPayload } = result.payload;
-      const reply = await message.reply(replyPayload);
+      const reply = await (deps.replyExpansion?.(message, `github:${index}`, replyPayload) ?? message.reply(replyPayload));
       if (!previewState || !message.guildId) continue;
       try {
         await (deps.saveState ?? savePreviewTranslationState)(deps.db, {

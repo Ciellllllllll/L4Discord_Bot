@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   AttachmentBuilder,
   MessageFlags,
@@ -332,6 +333,7 @@ export async function prepareYouTubeLinkExpansion(
 }
 
 export type SendYouTubeExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   mainPgPool?: BotContext["mainPgPool"];
   config: AppConfig;
@@ -354,7 +356,7 @@ export async function sendYouTubeLinkExpansion(
   deps: SendYouTubeExpansionDeps,
 ): Promise<string[]> {
   const detectedSteamLinks: string[] = [];
-  for (const item of plan.items) {
+  for (const [index, item] of plan.items.entries()) {
     try {
       const useNative = item.nativeEmbed !== null;
       const usableCachedMedia = item.media?.mediaMode === "vps" || item.media?.mediaMode === "google"
@@ -460,14 +462,15 @@ export async function sendYouTubeLinkExpansion(
         ? { ...baseSendPayload, components: replaceYouTubePreviewMedia(baseSendPayload.components, undefined, { fallback: true }), files: [] }
         : baseSendPayload;
       let reply;
-      try { reply = await message.reply(sendPayload); }
+      const send = (payload: MessageCreateOptions) => deps.replyExpansion?.(message, `youtube:${index}`, payload) ?? message.reply(payload);
+      try { reply = await send(sendPayload); }
       catch (error) {
         if (!useNative) throw error;
         deps.log.warn({ error }, "youtube preview reply error; retrying without native media");
         const retryMedia = usableCachedMedia?.mediaMode === "vps"
           ? undefined
           : await resolveFinalFallback();
-        reply = await message.reply({
+        reply = await send({
           ...sendPayload,
           components: replaceYouTubePreviewMedia(
             sendPayload.components,

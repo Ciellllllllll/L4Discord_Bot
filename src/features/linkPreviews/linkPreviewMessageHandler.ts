@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "./shared/linkExpansionTracker.js";
 import type { Message } from "discord.js";
 import { URL } from "node:url";
 import type { BotContext } from "../../bot/context.js";
@@ -139,6 +140,7 @@ export async function suppressLateEmbeds(
 }
 
 type LinkPreviewMessageHandlerDeps = {
+  replyExpansion?: ExpansionReply;
   buildVxTwitterReplyPayloads?: typeof buildTwitterReplyPayloads;
   expandTwitterLinks?: typeof expandTwitterLinks;
   buildYouTubeReplyPayloads?: typeof buildYouTubeReplyPayloads;
@@ -252,9 +254,12 @@ function hasMessageUpdateEvents(client: unknown): client is MessageUpdateSource 
 
 export class LinkPreviewMessageHandler {
   private readonly deps: Required<LinkPreviewMessageHandlerDeps>;
+  private readonly tracked: boolean;
 
   constructor(private readonly ctx: BotContext, deps: LinkPreviewMessageHandlerDeps = {}) {
+    this.tracked = Boolean(deps.replyExpansion);
     this.deps = {
+      replyExpansion: deps.replyExpansion ?? ((message, _key, payload) => message.reply(payload)),
       buildVxTwitterReplyPayloads: deps.buildVxTwitterReplyPayloads ?? buildTwitterReplyPayloads,
       expandTwitterLinks: deps.expandTwitterLinks ?? expandTwitterLinks,
       buildYouTubeReplyPayloads: deps.buildYouTubeReplyPayloads ?? buildYouTubeReplyPayloads,
@@ -271,6 +276,14 @@ export class LinkPreviewMessageHandler {
         ? deps.lateEmbedWatcher
         : hasMessageUpdateEvents(ctx.client) ? new LateEmbedWatcher(ctx.client, ctx.log) : null,
     };
+  }
+
+  hasLinks(message: Message): boolean {
+    if (message.author?.bot || message.guildId !== this.ctx.config.GUILD_ID || looksLikePrefixCommandLine(message.content)) return false;
+    return extractSteamLinksFromMessage(message).length > 0 || extractGithubLinksFromMessage(message).length > 0
+      || extractXLinks(message.content).length > 0 || extractTikTokLinks(message.content).length > 0
+      || extractInstagramLinks(message.content).length > 0
+      || (this.ctx.config.YOUTUBE_PREVIEW_ENABLED && extractYouTubeLinks(message.content).length > 0);
   }
 
   async onMessage(message: Message): Promise<void> {
@@ -354,39 +367,44 @@ export class LinkPreviewMessageHandler {
     const nestedTwitterSteamLinks = twitterTargets.length > 0
       ? await this.deps.expandTwitterLinks(message, twitterTargets, {
         db: this.ctx.db,
+        replyExpansion: this.deps.replyExpansion,
         log: this.ctx.log,
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         buildReplyPayloads: this.deps.buildVxTwitterReplyPayloads,
       })
       : [];
+    const mediaTasks: Promise<void>[] = [];
     if (tiktokTargets.length > 0) {
       // 共有キューの待ちで後続処理（AutoMod など）を止めないよう、完了を待たずに実行する
-      void this.deps.expandTikTokLinks(message, tiktokTargets, {
+      mediaTasks.push(this.deps.expandTikTokLinks(message, tiktokTargets, {
         db: this.ctx.db,
+        replyExpansion: this.deps.replyExpansion,
         log: this.ctx.log,
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
       }).then(recheckLateEmbeds).catch((err: unknown) => {
         this.ctx.log.warn({ err: String(err), messageId: message.id }, "tiktok preview expansion failed");
-      });
+      }));
     }
     if (instagramTargets.length > 0) {
       // TikTok と同じ共有キューを使うため、待ちで後続処理を止めないよう完了を待たずに実行する
-      void this.deps.expandInstagramLinks(message, instagramTargets, {
+      mediaTasks.push(this.deps.expandInstagramLinks(message, instagramTargets, {
         db: this.ctx.db,
+        replyExpansion: this.deps.replyExpansion,
         log: this.ctx.log,
         config: this.ctx.config,
         aiRouter: this.ctx.aiRouter,
         attachmentSizeLimitBytes: attachmentSizeLimitForMessage(message),
       }).then(recheckLateEmbeds).catch((err: unknown) => {
         this.ctx.log.warn({ err: String(err), messageId: message.id }, "instagram preview expansion failed");
-      });
+      }));
     }
     const nestedYouTubeSteamLinks = youtubePlan
       ? await sendYouTubeLinkExpansion(message, youtubePlan, {
         db: this.ctx.db,
+        replyExpansion: this.deps.replyExpansion,
         mainPgPool: this.ctx.mainPgPool,
         config: this.ctx.config,
         log: this.ctx.log,
@@ -406,6 +424,7 @@ export class LinkPreviewMessageHandler {
     if (steamTargets.length > 0) {
       await sendSteamLinkExpansion(message, steamTargets, {
         db: this.ctx.db,
+        replyExpansion: this.deps.replyExpansion,
         mainPgPool: this.ctx.mainPgPool,
         config: this.ctx.config,
         log: this.ctx.log,
@@ -416,6 +435,7 @@ export class LinkPreviewMessageHandler {
     if (githubResults.length > 0 && (hasExistingPreview || hasGithubSuccess)) {
       await sendGithubLinkExpansion(message, githubResults, {
         db: this.ctx.db,
+        replyExpansion: this.deps.replyExpansion,
         config: this.ctx.config,
         log: this.ctx.log,
         aiRouter: this.ctx.aiRouter,
@@ -425,6 +445,7 @@ export class LinkPreviewMessageHandler {
     // TikTok・Instagram だけのときはまだカードを送っていないので、それぞれの展開完了後に確認する
     const sentCardsHere = twitterTargets.length > 0 || youtubeTargets.length > 0 || steamTargets.length > 0 || githubResults.length > 0;
     if (sentCardsHere) await recheckLateEmbeds();
+    if (this.tracked) await Promise.all(mediaTasks);
   }
 }
 

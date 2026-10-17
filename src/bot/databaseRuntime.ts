@@ -1,3 +1,4 @@
+import { ensurePostgresLinkExpansionSchema } from "../features/linkPreviews/shared/linkExpansionRepository.js";
 import { sql, type Kysely } from "kysely";
 import type { Pool } from "pg";
 import type pino from "pino";
@@ -141,6 +142,7 @@ async function createDatabaseRuntimeUnsafe(
     { version: 20, name: "anonymous_survey_feedback", apply: migratePostgresAnonymousSurveyFeedback },
     { version: 21, name: "instagram_link_preview", apply: migratePostgresInstagramPreviewSupport },
     { version: 22, name: "bokeru_initial", apply: ensurePostgresBokeruSchema },
+    { version: 23, name: "link_expansion_tracking", apply: ensurePostgresLinkExpansionSchema },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);

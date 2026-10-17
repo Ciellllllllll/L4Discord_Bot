@@ -110,12 +110,14 @@ export function shouldStartYouTubeVideoCacheMaintenance(config: Pick<BotContext[
 export function startPreviewStateCleanup(options: {
   deleteCommon(): Promise<unknown>;
   deleteLegacy(): Promise<unknown>;
+  reconcileExpansions?(): Promise<unknown>;
   logWarning(error: unknown, message: string): void;
   setInterval?: (callback: () => void, delay: number) => NodeJS.Timeout;
 }): NodeJS.Timeout {
   const run = () => {
     void options.deleteCommon().catch((error) => options.logWarning(error, "preview translation state cleanup failed"));
     void options.deleteLegacy().catch((error) => options.logWarning(error, "vxtwitter preview state cleanup failed"));
+    void options.reconcileExpansions?.().catch((error) => options.logWarning(error, "link expansion reconciliation failed"));
   };
   run();
   return (options.setInterval ?? setInterval)(run, 60 * 60 * 1_000);
@@ -316,7 +318,10 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
   const { config, log, client, db, messageLogPgPool, messageAttachmentPgPool, vcTimePgPool } = ctx;
   const utilitiesBundle = createUtilitiesMessageHandlers(ctx);
   const debounceMs = config.COMMAND_SYNC_DEBOUNCE_MS;
-  const lifecycle = createRuntimeResourceLifecycle({ vcTemp: ctx.vcTemp, client, shutdownModerationFlows: shutdownModerationFlowRuntimes });
+  const lifecycle = createRuntimeResourceLifecycle({ vcTemp: ctx.vcTemp, client, shutdownModerationFlows: async () => {
+    await utilitiesBundle.expansions.stop();
+    await shutdownModerationFlowRuntimes();
+  } });
 
   client.once("clientReady", async () => {
     const u = client.user;
@@ -380,6 +385,7 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
         return startPreviewStateCleanup({
           deleteCommon: () => deleteExpiredPreviewTranslationStates(ctx.db),
           deleteLegacy: () => deleteExpiredVxTwitterPreviewStates(ctx.db),
+          reconcileExpansions: () => utilitiesBundle.expansions.reconcile(),
           logWarning: (err, message) => log.warn({ err }, message),
         });
       },
@@ -503,6 +509,7 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
   });
 
   client.on("messageUpdate", async (_oldMessage, newMessage) => {
+    void utilitiesBundle.expansions.onUpdate(newMessage).catch((err) => log.warn({ err }, "link expansion update failed"));
     try {
       const message = newMessage;
       if (!message.guildId || message.author?.bot) return;
@@ -529,6 +536,7 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
   });
 
   client.on("messageDelete", async (message) => {
+    void utilitiesBundle.expansions.onDelete(message).catch((err) => log.warn({ err }, "link expansion delete failed"));
     try {
       if (!message.guildId || message.guildId !== config.GUILD_ID) return;
       const s = await getGuildSettingsData(db, message.guildId);
@@ -552,6 +560,11 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
     } catch (err) {
       log.error({ err }, "messageDelete");
     }
+  });
+
+  client.on("messageDeleteBulk", async (messages) => {
+    await Promise.all([...messages.values()].map((message) =>
+      utilitiesBundle.expansions.onDelete(message).catch((err) => log.warn({ err }, "link expansion bulk delete failed"))));
   });
 
   client.on("messageReactionAdd", async (reaction, user) => {
@@ -618,6 +631,7 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
         "messageCreate",
         "messageUpdate",
         "messageDelete",
+        "messageDeleteBulk",
         "messageReactionAdd",
         "voiceStateUpdate",
         "guildBanAdd",

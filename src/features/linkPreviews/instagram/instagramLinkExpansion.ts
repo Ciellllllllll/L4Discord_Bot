@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   AttachmentBuilder,
   MessageFlags,
@@ -222,6 +223,7 @@ export async function buildInstagramReplyPayloads(
 }
 
 type InstagramExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   log: LoggerLike;
   attachmentSizeLimitBytes: number;
@@ -251,6 +253,7 @@ export async function expandInstagramLinks(
     maxTargets: MAX_INSTAGRAM_TARGETS_PER_MESSAGE,
     build: async (target) => (await build([target], options))[0],
     db: deps.db,
+    replyExpansion: deps.replyExpansion,
     log: deps.log,
     ...(deps.saveState ? { saveState: deps.saveState } : {}),
     ...(deps.queue ? { queue: deps.queue } : {}),

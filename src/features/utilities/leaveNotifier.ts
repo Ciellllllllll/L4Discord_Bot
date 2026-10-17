@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
 import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../panels/componentCard.js";
 import {
   ChannelType,
@@ -260,7 +261,12 @@ export async function sendMemberLeaveEmbed(
 }
 
 export class LeaveNotifierMessageHandler {
-  constructor(private readonly ctx: BotContext) {}
+  constructor(private readonly ctx: BotContext, private readonly replyExpansion?: ExpansionReply) {}
+
+  hasLinks(message: Message): boolean {
+    return Boolean(message.guildId && !message.author?.bot && !looksLikePrefixCommandLine(message.content)
+      && message.content.match(MESSAGE_LINK_RE)?.length);
+  }
 
   async onMessage(message: Message): Promise<void> {
     if (message.author?.bot) {
@@ -280,7 +286,7 @@ export class LeaveNotifierMessageHandler {
       return;
     }
 
-    for (const m of matches) {
+    for (const [index, m] of matches.entries()) {
       const guildId = m[1]!;
       const channelId = m[2]!;
       const messageId = m[3]!;
@@ -317,7 +323,8 @@ export class LeaveNotifierMessageHandler {
         if (!replyCh.isTextBased() || replyCh.isDMBased()) {
           continue;
         }
-        await replyCh.send(payload);
+        if (this.replyExpansion) await this.replyExpansion(message, `discord:${index}`, payload, targetMessage);
+        else await replyCh.send(payload);
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "message link fetch failed");
       }

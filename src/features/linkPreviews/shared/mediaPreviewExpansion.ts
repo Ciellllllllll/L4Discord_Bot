@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "./linkExpansionTracker.js";
 import type {
   APIMessageTopLevelComponent,
   AttachmentBuilder,
@@ -64,6 +65,7 @@ export type MediaPreviewExpansionOptions<T extends { url: string }> = {
   /** 1メッセージで展開する件数の上限。動画をメモリに保持するため絞る */
   maxTargets: number;
   build: (target: T) => Promise<MediaPreviewPayload | MessageCreateOptions | undefined>;
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   log: LoggerLike;
   saveState?: typeof savePreviewTranslationState;
@@ -81,11 +83,11 @@ export async function expandQueuedMediaPreviews<T extends { url: string }>(
   options: MediaPreviewExpansionOptions<T>,
 ): Promise<void> {
   const { source, log } = options;
-  const buildAndReply = async (target: T): Promise<void> => {
+  const buildAndReply = async (target: T, index: number): Promise<void> => {
     const payload = await options.build(target);
     if (!payload) return;
     const { previewState, ...replyPayload } = payload as MediaPreviewPayload;
-    const reply = await message.reply(replyPayload);
+    const reply = await (options.replyExpansion?.(message, `${source}:${index}`, replyPayload) ?? message.reply(replyPayload));
     if (!previewState || !message.guildId) return;
     try {
       await (options.saveState ?? savePreviewTranslationState)(options.db, {
@@ -104,13 +106,14 @@ export async function expandQueuedMediaPreviews<T extends { url: string }>(
   for (const [index, target] of targets.slice(0, options.maxTargets).entries()) {
     try {
       // 同じメッセージに複数サービスのリンクがあっても重複扱いにならないよう、サービス名で区別する
-      const ticket = queue.enqueue({ userId: `${source}:${message.id}:${index}`, run: () => buildAndReply(target) });
+      const ticket = queue.enqueue({ userId: `${source}:${message.id}:${index}`, run: () => buildAndReply(target, index) });
       if (ticket.ok) {
         await ticket.promise;
         continue;
       }
       log.warn({ reason: ticket.reason, messageId: message.id }, `${source} preview queue full; replying original url`);
-      await message.reply(buildOriginalUrlReply(target.url));
+      const fallback = buildOriginalUrlReply(target.url);
+      await (options.replyExpansion?.(message, `${source}:${index}`, fallback) ?? message.reply(fallback));
     } catch (err) {
       log.warn({ err: String(err) }, `${source} preview reply error`);
     }
@@ -118,9 +121,10 @@ export async function expandQueuedMediaPreviews<T extends { url: string }>(
   // 上限を超えた分も元メッセージの埋め込みは非表示になっているため、元URLをまとめて返信する。
   // 正規化でURLが元より長くなりうるので、文字数上限に収まるよう複数通に分ける
   const overflowUrls = targets.slice(options.maxTargets).map((target) => target.url);
-  for (const urls of chunkUrlsForMessages(overflowUrls)) {
+  for (const [index, urls] of chunkUrlsForMessages(overflowUrls).entries()) {
     try {
-      await message.reply(buildOriginalUrlReply(urls));
+      const fallback = buildOriginalUrlReply(urls);
+      await (options.replyExpansion?.(message, `${source}:overflow:${index}`, fallback) ?? message.reply(fallback));
     } catch (err) {
       log.warn({ err: String(err) }, `${source} preview overflow reply error`);
     }
