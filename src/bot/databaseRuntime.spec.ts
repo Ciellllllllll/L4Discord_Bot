@@ -143,6 +143,7 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
       { version: 19, name: "tiktok_link_preview" },
       { version: 20, name: "anonymous_survey_feedback" },
       { version: 21, name: "instagram_link_preview" },
+      { version: 22, name: "bokeru_initial" },
     ]);
     await Promise.all([
       upsertGuildSettingsData(runtime.db, "guild", { ai_thinking_enabled: true }),
