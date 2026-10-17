@@ -14,8 +14,9 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
       .setName("q")
       .setDescription("BOTとおしゃべり")
       .addStringOption((o) =>
-        o.setName("text").setDescription("質問").setRequired(true).setMaxLength(2000),
+        o.setName("text").setDescription("質問（本文か添付のどちらかが必要です）").setMaxLength(2000),
       )
+      .addAttachmentOption((o) => o.setName("attachment").setDescription("画像8MiB以内、またはUTF-8テキスト1MiB・20,000文字以内"))
       .toJSON(),
     new SlashCommandBuilder().setName("ping").setDescription("応答時間計測用コマンド(DEBUG用です)").toJSON(),
     new SlashCommandBuilder()

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ApplicationCommandType, PermissionFlagsBits } from "discord.js";
+import { ApplicationCommandOptionType, ApplicationCommandType, PermissionFlagsBits } from "discord.js";
 import { buildSlashCommands } from "./buildSlashCommands.js";
 
 function chatInputCommand(name: string, botProfile?: Parameters<typeof buildSlashCommands>[0]) {
@@ -11,6 +11,13 @@ function chatInputCommand(name: string, botProfile?: Parameters<typeof buildSlas
 }
 
 async function run(): Promise<void> {
+  const q = chatInputCommand("q");
+  assert.ok(q);
+  assert.deepEqual(q.options?.map((option) => [option.name, option.type, option.required ?? false]), [
+    ["text", ApplicationCommandOptionType.String, false],
+    ["attachment", ApplicationCommandOptionType.Attachment, false],
+  ]);
+
   assert.equal(chatInputCommand("survey"), null);
   assert.equal(chatInputCommand("survey", "production"), null);
 

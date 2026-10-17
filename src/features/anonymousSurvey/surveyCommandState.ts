@@ -1,6 +1,7 @@
 import {
   ApplicationCommandOptionType,
   MessageFlags,
+  type Attachment,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type CommandInteractionOption,
@@ -13,6 +14,7 @@ export type StoredCommandOption = {
   name: string;
   type: number;
   value?: string | number | boolean;
+  attachment?: Pick<Attachment, "id" | "name" | "url" | "size" | "contentType">;
   user?: {
     id: string;
     username: string;
@@ -44,6 +46,10 @@ function storeOption(option: CommandInteractionOption): StoredCommandOption {
       tag: option.user.tag,
     };
     stored.value ??= option.user.id;
+  }
+  if (option.attachment) {
+    const { id, name, url, size, contentType } = option.attachment;
+    stored.attachment = { id, name, url, size, contentType };
   }
   if (option.options && option.options.length > 0) {
     stored.options = option.options.map(storeOption);
@@ -93,6 +99,9 @@ function createStoredOptionsResolver(options: StoredCommandOption[]) {
     getString(name: string, required?: boolean) {
       const value = findOption(options, name)?.value;
       return requireValue(typeof value === "string" ? value : null, required);
+    },
+    getAttachment(name: string, required?: boolean) {
+      return requireValue(findOption(options, name)?.attachment ?? null, required);
     },
     getInteger(name: string, required?: boolean) {
       const value = findOption(options, name)?.value;

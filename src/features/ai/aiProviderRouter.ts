@@ -6,7 +6,7 @@ import type {
 } from "./aiProviderRepository.js";
 import { AiRequestError } from "./aiRequestError.js";
 import type { ChatMessage } from "./chatTypes.js";
-import { deepseekChat, type DeepSeekRequestOptions, type DeepSeekResult } from "./deepseek.js";
+import { deepseekChat, type DeepSeekMessage, type DeepSeekRequestOptions, type DeepSeekResult } from "./deepseek.js";
 import { openAiResponsesChat, type OpenAiResponsesOptions, type OpenAiResponsesResult } from "./openaiResponses.js";
 import { OpenAiUsageClient, type OpenAiUsageSnapshot } from "./openaiUsage.js";
 import type { AiProvider, AiRoutePreference, OpenAiModelPreference } from "./providerTypes.js";
@@ -58,6 +58,7 @@ export type AiRouterStatus = {
 };
 
 export type AiRouterChatOptions = {
+  imageDataUrl?: string;
   signal?: AbortSignal;
   thinking: boolean;
   sanitizeOutput?: boolean;
@@ -92,7 +93,7 @@ export type AiProviderRouterDeps = {
     options: OpenAiResponsesOptions,
     model: string,
   ) => Promise<OpenAiResponsesResult>;
-  deepSeekChat?: (messages: ChatMessage[], options: DeepSeekRequestOptions) => Promise<DeepSeekResult>;
+  deepSeekChat?: (messages: DeepSeekMessage[], options: DeepSeekRequestOptions) => Promise<DeepSeekResult>;
   reservationId?: () => string;
 };
 
@@ -261,6 +262,10 @@ export class AiProviderRouter {
     if (options.signal?.aborted) {
       throw new AiRequestError("caller_abort", "AI request was cancelled before dispatch.");
     }
+    if (options.imageDataUrl) {
+      if (task !== "answer") throw new AiRequestError("configuration", "Images are only supported for answers.");
+      return this.callDeepSeek(task, messages, options, "task_policy_deepseek");
+    }
     if (task === "prompt_generator") {
       return this.callDeepSeek(task, messages, options, "task_policy_deepseek");
     }
@@ -365,14 +370,23 @@ export class AiProviderRouter {
     options: AiRouterChatOptions,
     fallbackReason: AiFallbackReason,
   ): Promise<AiChatResult> {
-    const result = await this.deepSeekChat(messages, {
+    let input: DeepSeekMessage[] = messages;
+    if (options.imageDataUrl) {
+      const last = messages.at(-1);
+      if (last?.role !== "user") throw new AiRequestError("configuration", "Image input requires a final user message.");
+      input = [...messages.slice(0, -1), { role: "user", content: [
+        { type: "text", text: last.content },
+        { type: "image_url", image_url: { url: options.imageDataUrl } },
+      ] }];
+    }
+    const result = await this.deepSeekChat(input, {
       signal: options.signal,
       thinking: options.thinking,
       sanitizeOutput: options.sanitizeOutput,
       temperature: options.temperature,
       timeoutMs: options.timeoutMs,
       maxRetries: options.maxRetries,
-      model: deepSeekModel(this.config, task),
+      model: options.imageDataUrl ? "deepseek-flash" : deepSeekModel(this.config, task),
     });
     return { ...result, provider: "deepseek", fallbackReason };
   }
