@@ -74,6 +74,7 @@ function fixture() {
   let renders = 0;
   let gate: ReturnType<typeof deferred> | undefined;
   let overridePayload: MessageCreateOptions | undefined;
+  let lookupFailure = false;
   const entered = deferred();
   const channel = {
     isTextBased: () => true, isDMBased: () => false,
@@ -110,6 +111,7 @@ function fixture() {
     renders++;
     entered.resolve();
     if (gate) await gate.promise;
+    if (lookupFailure) throw new Error("temporary lookup failure before reply");
     const urls = message.content.match(/https:\/\/\S+/g) ?? [];
     for (const [index, url] of urls.entries()) {
       const quoteId = url.includes("/self") ? "response-1" : "quote";
@@ -130,9 +132,38 @@ function fixture() {
     restart() { tracker = new LinkExpansionTracker(ctx, repository, render); },
     block() { gate = deferred(); return gate; },
     payload(value: MessageCreateOptions) { overridePayload = value; },
+    failLookup(value: boolean) { lookupFailure = value; },
     renders: () => renders, sent: () => count,
   };
 }
+
+void test("initial lookup failures leave a retryable source without saving its content hash", async () => {
+  const f = fixture();
+  f.failLookup(true);
+  await assert.rejects(f.tracker.onCreate(f.source), /temporary lookup/);
+  assert.equal(f.repository.sources.size, 1);
+  assert.equal(f.repository.sources.get("source")?.content_hash, null);
+  assert.equal(f.sent(), 0);
+  f.failLookup(false);
+  await f.tracker.reconcile();
+  assert.equal(f.repository.responses.size, 2);
+});
+
+void test("lookup failures preserve existing cards and retry the changed source on reconciliation", async () => {
+  const f = fixture();
+  await f.tracker.onCreate(f.source);
+  const hash = f.repository.sources.get("source")!.content_hash;
+  f.source.content = "https://example.com/edited";
+  f.failLookup(true);
+  await assert.rejects(f.tracker.onUpdate(f.source), /temporary lookup/);
+  assert.equal(f.repository.sources.get("source")!.content_hash, hash);
+  assert.deepEqual(f.deleted, []);
+  assert.equal(f.repository.responses.size, 2);
+  f.failLookup(false);
+  await f.tracker.reconcile();
+  assert.equal(f.edits[0]?.id, "response-1");
+  assert.deepEqual(f.deleted, ["response-2"]);
+});
 
 void test("updates registered responses in place and deletes removed links without extending expiry", async () => {
   const f = fixture();

@@ -6,7 +6,7 @@ import {
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { buildMessageLinkExpansionPayload, LeaveNotifierMessageHandler } from "./leaveNotifier.js";
-import type { ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
+import { CyclicQuoteError, type ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
 
 function makeMessage(input: {
   content?: string;
@@ -50,7 +50,11 @@ function handlerFixture(options: {
   authorId?: string;
   authorBot?: boolean;
   replyExpansion?: ExpansionReply;
+  lookupError?: { stage: "channel" | "member" | "threadMember" | "botMember" | "message"; code: number };
 } = {}) {
+  const fail = (stage: NonNullable<typeof options.lookupError>["stage"]) => {
+    if (options.lookupError?.stage === stage) throw Object.assign(new Error("lookup failed"), { code: options.lookupError.code });
+  };
   const sent: unknown[] = [];
   const warnings: unknown[] = [];
   const fetchedMembers: string[] = [];
@@ -61,8 +65,10 @@ function handlerFixture(options: {
   const guild = {
     id: "100",
     members: {
-      me: bot,
+      me: options.lookupError?.stage === "botMember" ? undefined : bot,
+      fetchMe: async () => { fail("botMember"); return bot; },
       fetch: async (id: string) => {
+        fail("member");
         fetchedMembers.push(id);
         return options.sourceMemberExists === false ? null : id === bot.id ? bot : reader;
       },
@@ -85,10 +91,11 @@ function handlerFixture(options: {
         },
       };
     },
-    members: { fetch: async () => options.threadMemberExists === false ? null : { id: "reader" } },
+    members: { fetch: async () => { fail("threadMember"); return options.threadMemberExists === false ? null : { id: "reader" }; } },
     messages: {
       fetch: async () => {
         messageFetches++;
+        fail("message");
         if (options.fetchFails) throw new Error("Unknown Message");
         return makeMessage({ content: "引用本文" });
       },
@@ -108,7 +115,7 @@ function handlerFixture(options: {
     client: {
       user: bot,
       guilds: { cache: new Map(options.botJoined === false ? [] : [["100", guild]]) },
-      channels: { fetch: async () => source },
+      channels: { fetch: async () => { fail("channel"); return source; } },
     },
     log: { warn: (entry: unknown) => warnings.push(entry) },
   } as unknown as BotContext;
@@ -130,6 +137,37 @@ function handlerFixture(options: {
     messageFetches: () => messageFetches, settingsQueries: () => settingsQueries,
   };
 }
+
+for (const stage of ["channel", "member", "threadMember", "botMember", "message"] as const) {
+  void test(`propagates temporary ${stage} lookup errors so tracked quotes can be retried`, async () => {
+    for (const code of [503, 50001, 50013]) {
+      const fixture = handlerFixture({
+        privateThread: true, lookupError: { stage, code },
+        replyExpansion: async () => { throw new Error("must not send"); },
+      });
+      await assert.rejects(fixture.handler.onMessage(fixture.message), /lookup failed/);
+      assert.equal(fixture.sent.length, 0);
+    }
+  });
+}
+
+for (const [stage, code] of [["channel", 10003], ["member", 10007], ["threadMember", 10007], ["message", 10008]] as const) {
+  void test(`ignores definitively missing ${stage} resources`, async () => {
+    const fixture = handlerFixture({
+      privateThread: true, lookupError: { stage, code },
+      replyExpansion: async () => { throw new Error("must not send"); },
+    });
+    await fixture.handler.onMessage(fixture.message);
+    assert.equal(fixture.sent.length, 0);
+  });
+}
+
+void test("a rejected cyclic quote does not turn into a retryable lookup failure", async () => {
+  const fixture = handlerFixture({ replyExpansion: async () => { throw new CyclicQuoteError("cyclic quote"); } });
+  await fixture.handler.onMessage(fixture.message);
+  assert.equal(fixture.warnings.length, 1);
+  assert.equal(fixture.sent.length, 0);
+});
 
 void test("registers a quoted message through the shared tracker after checking human permissions", async () => {
   const calls: Array<{ message: Message; key: string; quoted?: Message }> = [];

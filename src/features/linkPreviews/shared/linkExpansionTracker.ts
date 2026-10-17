@@ -31,7 +31,7 @@ type RenderSession = {
   failures: Set<string>;
 };
 
-class CyclicQuoteError extends Error {}
+export class CyclicQuoteError extends Error {}
 
 export class LinkExpansionTracker {
   // shortcut: 更新の直列化は1プロセス内。同一BOTの複数稼働に対応する場合はDBロックへ移す。
@@ -116,7 +116,7 @@ export class LinkExpansionTracker {
         const v2 = components.length > 0;
         response = await response.edit({
           content: v2 ? null : payload.content ?? null,
-          embeds: payload.embeds ?? [], components,
+          embeds: [], components,
           files: payload.files, attachments: [],
           flags: v2 ? MessageFlags.IsComponentsV2 : undefined,
           allowedMentions: { parse: [], repliedUser: false },
@@ -171,6 +171,10 @@ export class LinkExpansionTracker {
         if (!session.seen.has(record.expansion_key)) await this.remove(record, session.source.channel_id);
       }
       await this.repository.markRendered(message.id, session.hash);
+    } catch (error) {
+      // 最初の取得で失敗した引用も、期限内の定期確認で再試行する。
+      if (!session.source) await this.repository.register(message);
+      throw error;
     } finally { this.sessions.delete(message.id); }
   }
 

@@ -1,4 +1,4 @@
-import type { ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
+import { CyclicQuoteError, type ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
 import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../panels/componentCard.js";
 import {
   ChannelType,
@@ -19,6 +19,15 @@ import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
 const MESSAGE_LINK_RE =
   /https?:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/(\d+)\/(\d+)\/(\d+)/g;
 const MAX_EXPANDED_EMBEDS = 10;
+
+function isMissingQuoteResource(error: unknown): boolean {
+  return [10003, 10004, 10007, 10008, 10013].includes(Number((error as { code?: unknown })?.code));
+}
+
+function ignoreMissingQuoteResource(error: unknown): null {
+  if (isMissingQuoteResource(error)) return null;
+  throw error;
+}
 
 // メンバー退出通知は `MOD_LOG_CHANNEL_ID`（.env）のみへ送信
 
@@ -297,14 +306,14 @@ export class LeaveNotifierMessageHandler {
         if (!fetchedChannel?.isTextBased() || fetchedChannel.isDMBased() || fetchedChannel.guildId !== guildId) {
           continue;
         }
-        const sourceMember = await sourceGuild.members.fetch(message.author.id).catch(() => null);
+        const sourceMember = await sourceGuild.members.fetch(message.author.id).catch(ignoreMissingQuoteResource);
         if (!sourceMember) continue;
         const sourcePerms = fetchedChannel.permissionsFor(sourceMember);
         if (!sourcePerms?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory])) {
           continue;
         }
         if (fetchedChannel.type === ChannelType.PrivateThread && !sourcePerms.has(PermissionFlagsBits.ManageThreads)) {
-          const threadMember = await fetchedChannel.members.fetch(sourceMember.id).catch(() => null);
+          const threadMember = await fetchedChannel.members.fetch(sourceMember.id).catch(ignoreMissingQuoteResource);
           if (!threadMember) continue;
         }
         const botMember = sourceGuild.members.me ?? await sourceGuild.members.fetchMe();
@@ -327,6 +336,7 @@ export class LeaveNotifierMessageHandler {
         else await replyCh.send(payload);
       } catch (err) {
         this.ctx.log.warn({ err: String(err) }, "message link fetch failed");
+        if (this.replyExpansion && !(err instanceof CyclicQuoteError) && !isMissingQuoteResource(err)) throw err;
       }
     }
   }
