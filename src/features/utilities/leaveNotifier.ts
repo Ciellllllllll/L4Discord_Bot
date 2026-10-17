@@ -263,8 +263,7 @@ export class LeaveNotifierMessageHandler {
   constructor(private readonly ctx: BotContext) {}
 
   async onMessage(message: Message): Promise<void> {
-    const isOwnBotMessage = message.author?.id === this.ctx.client.user?.id;
-    if (message.author?.bot && !isOwnBotMessage) {
+    if (message.author?.bot) {
       return;
     }
     if (!message.guild) {

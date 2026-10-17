@@ -19,6 +19,7 @@ function makeMessage(input: {
     createdAt: new Date("2026-06-10T00:00:00.000Z"),
     member: { displayName: "Bot Name" },
     author: {
+      bot: true,
       username: "bot-user",
       displayAvatarURL: () => "https://cdn.example.com/avatar.png",
     },
@@ -43,6 +44,8 @@ function handlerFixture(options: {
   threadMemberExists?: boolean;
   fetchFails?: boolean;
   content?: string;
+  authorId?: string;
+  authorBot?: boolean;
 } = {}) {
   const sent: unknown[] = [];
   const warnings: unknown[] = [];
@@ -57,7 +60,7 @@ function handlerFixture(options: {
       me: bot,
       fetch: async (id: string) => {
         fetchedMembers.push(id);
-        return options.sourceMemberExists === false ? null : reader;
+        return options.sourceMemberExists === false ? null : id === bot.id ? bot : reader;
       },
     },
   };
@@ -106,7 +109,7 @@ function handlerFixture(options: {
     log: { warn: (entry: unknown) => warnings.push(entry) },
   } as unknown as BotContext;
   const message = {
-    author: { id: "reader", bot: false },
+    author: { id: options.authorId ?? "reader", bot: options.authorBot ?? false },
     member: { id: "reader", guild: { id: options.postingGuildId ?? "100" } },
     guild: { id: options.postingGuildId ?? "100" },
     channelId: "200",
@@ -121,6 +124,17 @@ function handlerFixture(options: {
     handler: new LeaveNotifierMessageHandler(ctx), message, sent, warnings, fetchedMembers,
     messageFetches: () => messageFetches, settingsQueries: () => settingsQueries,
   };
+}
+
+for (const authorId of ["bot", "other-bot"]) {
+  void test(`does not expand bot-authored links using bot permissions: ${authorId}`, async () => {
+    const fixture = handlerFixture({ authorId, authorBot: true, readerAllowed: false, botAllowed: true });
+    await fixture.handler.onMessage(fixture.message);
+    assert.equal(fixture.sent.length, 0);
+    assert.equal(fixture.settingsQueries(), 0);
+    assert.deepEqual(fixture.fetchedMembers, []);
+    assert.equal(fixture.messageFetches(), 0);
+  });
 }
 
 for (const content of ["普通の会話です", "", "https://example.com/article"]) {
