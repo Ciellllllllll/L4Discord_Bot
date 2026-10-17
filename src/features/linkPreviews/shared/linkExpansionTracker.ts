@@ -83,6 +83,14 @@ export class LinkExpansionTracker {
     ? this.serial("quoted-replies", () => this.sendReply(message, key, payload, quoted, options))
     : this.sendReply(message, key, payload, undefined, options);
 
+  /** 送信はせず未完了として扱う。失敗カードを出さない投稿も、定期確認で再試行できるようにする。 */
+  readonly defer = async (message: Message, key: string): Promise<void> => {
+    const session = this.sessions.get(message.id);
+    if (!session) throw new Error("Expansion defer outside render session");
+    session.failures.add(key);
+    session.source ??= await this.repository.register(message);
+  };
+
   private async sendReply(
     message: Message, key: string, payload: MessageCreateOptions, quoted?: Message, options?: ExpansionReplyOptions,
   ): Promise<Message> {

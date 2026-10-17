@@ -30,6 +30,7 @@ import { collectYouTubeReplyTargets, parseYouTubeUrl } from "./youtube/youtubePr
 import { collectGithubReplyTargets, extractGithubLinks as extractGithubLinksFromContent, parseGithubUrl } from "./github/githubPreviewSource.js";
 import {
   buildGithubReplyPayloads,
+  isTransientGithubFailure,
   sendGithubLinkExpansion,
   type GithubPreviewBuildResult,
 } from "./github/githubLinkExpansion.js";
@@ -141,6 +142,8 @@ export async function suppressLateEmbeds(
 
 type LinkPreviewMessageHandlerDeps = {
   replyExpansion?: ExpansionReply;
+  /** カードを送らない一時的な失敗を、追跡中の投稿の再試行対象として記録する */
+  deferExpansion?: (message: Message, key: string) => Promise<void>;
   buildVxTwitterReplyPayloads?: typeof buildTwitterReplyPayloads;
   expandTwitterLinks?: typeof expandTwitterLinks;
   buildYouTubeReplyPayloads?: typeof buildYouTubeReplyPayloads;
@@ -260,6 +263,7 @@ export class LinkPreviewMessageHandler {
     this.tracked = Boolean(deps.replyExpansion);
     this.deps = {
       replyExpansion: deps.replyExpansion ?? ((message, _key, payload) => message.reply(payload)),
+      deferExpansion: deps.deferExpansion ?? (async () => undefined),
       buildVxTwitterReplyPayloads: deps.buildVxTwitterReplyPayloads ?? buildTwitterReplyPayloads,
       expandTwitterLinks: deps.expandTwitterLinks ?? expandTwitterLinks,
       buildYouTubeReplyPayloads: deps.buildYouTubeReplyPayloads ?? buildYouTubeReplyPayloads,
@@ -440,6 +444,8 @@ export class LinkPreviewMessageHandler {
         log: this.ctx.log,
         aiRouter: this.ctx.aiRouter,
       }, { includeFailures: true });
+    } else if (githubResults.some((result) => result.status === "error" && isTransientGithubFailure(result.reason))) {
+      await this.deps.deferExpansion(message, "github:retry");
     }
     // カードを送り終えた後に、遅れて付いた公式 Embed が残っていないか確認する。
     // TikTok・Instagram だけのときはまだカードを送っていないので、それぞれの展開完了後に確認する

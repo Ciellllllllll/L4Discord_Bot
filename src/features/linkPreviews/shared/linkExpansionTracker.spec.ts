@@ -186,6 +186,22 @@ void test("retryable fallback replies keep the source unrendered until reconcili
   assert.equal(f.edits.length, 4, "a completed render is not rebuilt again");
 });
 
+void test("deferred renders register the source without finishing so reconciliation retries them", async () => {
+  const f = fixture();
+  // 描画が何も送らずに defer だけを呼ぶ追跡を用意する
+  const deferring = new LinkExpansionTracker(
+    { client: { channels: { fetch: async () => ({}) } }, log: { warn: () => undefined } } as never,
+    f.repository,
+    async (message) => { await deferring.defer(message, "github:retry"); },
+  );
+  await deferring.onCreate(f.source);
+  assert.equal(f.repository.sources.get("source")?.content_hash, null, "the source is registered but not marked rendered");
+  assert.equal(f.repository.responses.size, 0);
+  await f.tracker.reconcile();
+  assert.equal(f.sent(), 2, "reconciliation renders the deferred source again");
+  assert.notEqual(f.repository.sources.get("source")?.content_hash, null);
+});
+
 void test("edits that add links to untracked recent messages render once and ignore expired or plain ones", async () => {
   const f = fixture();
   Object.assign(f.source, { createdTimestamp: Date.now() - 1_000 });

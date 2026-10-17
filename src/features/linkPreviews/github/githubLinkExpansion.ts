@@ -58,6 +58,10 @@ const TRANSIENT_GITHUB_FAILURES: ReadonlySet<GithubApiErrorReason> = new Set([
   "rate_limited", "timeout", "invalid_json", "request_failed", "api_error",
 ]);
 
+export function isTransientGithubFailure(reason: GithubApiErrorReason): boolean {
+  return TRANSIENT_GITHUB_FAILURES.has(reason);
+}
+
 function reasonLabel(reason: GithubApiErrorReason): string {
   switch (reason) {
     case "private_repository": return "非公開リポジトリのため表示できません。";
@@ -193,7 +197,7 @@ export async function sendGithubLinkExpansion(
     try {
       const previewState = result.status === "success" ? result.payload.previewState : undefined;
       const { previewState: _previewState, ...replyPayload } = result.payload;
-      const retry = result.status === "error" && TRANSIENT_GITHUB_FAILURES.has(result.reason);
+      const retry = result.status === "error" && isTransientGithubFailure(result.reason);
       const reply = await (deps.replyExpansion?.(
         message, `github:${index}`, replyPayload, undefined, { retry },
       ) ?? message.reply(replyPayload));

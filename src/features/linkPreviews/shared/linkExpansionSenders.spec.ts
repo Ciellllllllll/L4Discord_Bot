@@ -4,7 +4,7 @@ import { ComponentType, MessageFlags, type Message } from "discord.js";
 import { buildTwitterReplyPayloads, expandTwitterLinks } from "../twitter/twitterLinkExpansion.js";
 import { buildSteamReplyPayloads, sendSteamLinkExpansion } from "../steam/steamLinkExpansion.js";
 import { buildGithubFailurePayload, sendGithubLinkExpansion } from "../github/githubLinkExpansion.js";
-import { sendYouTubeLinkExpansion } from "../youtube/youtubeLinkExpansion.js";
+import { buildYouTubeReplyPayloads, sendYouTubeLinkExpansion } from "../youtube/youtubeLinkExpansion.js";
 import { expandTikTokLinks } from "../tiktok/tiktokLinkExpansion.js";
 import { expandInstagramLinks } from "../instagram/instagramLinkExpansion.js";
 import { LocalLlmQueue } from "../../ai/localLlmQueue.js";
@@ -102,4 +102,26 @@ void test("transient Twitter, Steam and GitHub failures are reported as retryabl
   });
   await sendGithubLinkExpansion(source, [failure("rate_limited"), failure("not_found")], deps(githubRetries), { includeFailures: true });
   assert.deepEqual(githubRetries, [true, false]);
+});
+
+void test("transient YouTube fetch failures are reported as retryable component fallbacks", async () => {
+  const source = { id: "source", guildId: "guild", channelId: "channel" } as unknown as Message;
+  const run = async (status: number) => {
+    const retries: Array<boolean | undefined> = [];
+    await sendYouTubeLinkExpansion(source, { items: [{
+      target: { kind: "video", id: `retry${status}`, canonicalUrl: `https://youtu.be/retry${status}`, originalUrl: `https://youtu.be/retry${status}` }, nativeEmbed: null,
+    }] }, {
+      db: {} as never, config: { YOUTUBE_REQUEST_TIMEOUT_MS: 1_000 } as never, log: { warn: () => undefined }, mediaResolver: async () => ({ status: "fallback", reason: "test" }) as never,
+      replyExpansion: (async (_message, _key, _payload, _quoted, options) => {
+        retries.push(options?.retry);
+        return { id: "reply" } as Message;
+      }) as ExpansionReply,
+      buildReplyPayloads: (targets, options) => buildYouTubeReplyPayloads(targets, {
+        ...options, fetcher: async () => new Response(null, { status }),
+      }),
+    });
+    return retries;
+  };
+  assert.deepEqual(await run(503), [true]);
+  assert.deepEqual(await run(404), [false]);
 });

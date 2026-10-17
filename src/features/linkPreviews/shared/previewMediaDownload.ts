@@ -56,6 +56,7 @@ export function isRetryablePreview(payload: object): boolean {
 /** 投稿の削除・非公開や、取得結果の形式不一致を示す理由。再試行しても結果は変わらない。 */
 const PERMANENT_PREVIEW_FAILURES: ReadonlySet<string> = new Set([
   "post_unavailable", "invalid_data", "missing_tweet", "invalid_tweet", "NOT_FOUND", "PRIVATE_TWEET",
+  "empty_items", "missing_title", "missing_api_key", "missing_channel_identifier", "unsupported_target",
 ]);
 
 /** 取得失敗の理由が再試行で回復しうるか。投稿の削除・非公開・形式不一致（4xx 等）は再試行しない。 */

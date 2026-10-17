@@ -615,6 +615,21 @@ const githubFailureResult = {
   assert.equal(githubOnlySuppressCalls, 0);
   assert.equal(githubOnlyReplies.length, 0);
 
+  // 一時的な失敗だけの GitHub 単独投稿は、カードを出さずに再試行対象として追跡側へ伝える
+  const deferred: string[][] = [];
+  for (const reason of ["rate_limited", "not_found"] as const) {
+    await new LinkPreviewMessageHandler(createCtx() as never, {
+      buildGithubReplyPayloads: async () => [{
+        target: githubTarget, status: "error" as const, reason, payload: buildGithubFailurePayload(githubTarget, reason),
+      }],
+      deferExpansion: async (_message, key) => { deferred.push([reason, key]); },
+    }).onMessage({
+      ...message, content: githubTarget.canonicalUrl, embeds: [],
+      suppressEmbeds: async () => undefined, reply: async () => undefined,
+    } as never);
+  }
+  assert.deepEqual(deferred, [["rate_limited", "github:retry"]]);
+
   let githubMixedSuppressCalls = 0;
   const githubMixedReplies: unknown[] = [];
   const githubRepositoryTarget = parseGithubUrl("https://github.com/octo/hello")!;

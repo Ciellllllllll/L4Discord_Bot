@@ -36,7 +36,7 @@ export function createUtilitiesMessageHandlers(ctx: BotContext): UtilitiesMessag
     log: ctx.log,
     expansions,
     coldLaugh: new ColdLaughHandler(ctx),
-    linkPreview: new LinkPreviewMessageHandler(ctx, { replyExpansion: expansions.reply }),
+    linkPreview: new LinkPreviewMessageHandler(ctx, { replyExpansion: expansions.reply, deferExpansion: expansions.defer }),
     catApiResponder: new CatApiResponder(ctx),
     dogApiResponder: new DogApiResponder(ctx),
     keywordResponder: new KeywordResponder(ctx),
