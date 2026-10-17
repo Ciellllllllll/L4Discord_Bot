@@ -11,6 +11,7 @@ import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import { SteamExchangeRateRepository } from "../../steam/steamExchangeRateRepository.js";
 import { SteamStoreClient, type SteamPagePreview, type SteamStoreFetchOptions } from "../../steam/steamStoreClient.js";
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
+import { isRetryablePreview, markRetryablePreview } from "../shared/previewMediaDownload.js";
 import { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
   collectPreviewTranslationSegments,
@@ -123,6 +124,7 @@ export async function buildSteamReplyPayloads(
   const exchangeRate = await resolveExchangeRate(options);
   return await Promise.all(targets.slice(0, 5).map(async (target) => {
     let preview: SteamPagePreview;
+    let fetchFailed = false;
     try {
       preview = await client.fetchPagePreview(target.canonicalUrl, {
         signal: options.signal,
@@ -131,18 +133,21 @@ export async function buildSteamReplyPayloads(
     } catch (error) {
       options.log?.warn({ error: String(error), url: target.canonicalUrl }, "steam page preview fetch failed");
       preview = fallbackPreview(target);
+      fetchFailed = true;
     }
     const document = steamPreviewToDocument(preview, exchangeRate);
     const built = await buildTranslatedPreview(document, {
       translate: async () => await translateDocument(document, options),
     });
-    return {
+    const payload = {
       embeds: [],
       flags: MessageFlags.IsComponentsV2,
       components: built.components,
       allowedMentions: { parse: [], repliedUser: false },
       ...(built.state ? { previewState: built.state } : {}),
     } satisfies SteamPreviewPayload;
+    // 取得に失敗した仮のカードは、追跡中の展開では定期確認で作り直す。
+    return fetchFailed ? markRetryablePreview(payload) : payload;
   }));
 }
 
@@ -174,7 +179,9 @@ export async function sendSteamLinkExpansion(
     try {
       const previewState = payload.previewState;
       const { previewState: _previewState, ...replyPayload } = payload;
-      const reply = await (deps.replyExpansion?.(message, `steam:${index}`, replyPayload) ?? message.reply(replyPayload));
+      const reply = await (deps.replyExpansion?.(
+        message, `steam:${index}`, replyPayload, undefined, { retry: isRetryablePreview(payload) },
+      ) ?? message.reply(replyPayload));
       if (!previewState || !message.guildId) continue;
       try {
         await (deps.saveState ?? savePreviewTranslationState)(deps.db, {

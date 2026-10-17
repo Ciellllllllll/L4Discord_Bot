@@ -53,6 +53,11 @@ export type GithubPreviewBuildOptions = GithubApiClientOptions & {
   translate?: (document: ReturnType<typeof githubPreviewToDocument>) => Promise<PreviewDocumentTranslations>;
 };
 
+/** 再試行で回復しうる失敗。非公開・未検出・権限なし・応答過大は再試行しても変わらない。 */
+const TRANSIENT_GITHUB_FAILURES: ReadonlySet<GithubApiErrorReason> = new Set([
+  "rate_limited", "timeout", "invalid_json", "request_failed", "api_error",
+]);
+
 function reasonLabel(reason: GithubApiErrorReason): string {
   switch (reason) {
     case "private_repository": return "非公開リポジトリのため表示できません。";
@@ -188,7 +193,10 @@ export async function sendGithubLinkExpansion(
     try {
       const previewState = result.status === "success" ? result.payload.previewState : undefined;
       const { previewState: _previewState, ...replyPayload } = result.payload;
-      const reply = await (deps.replyExpansion?.(message, `github:${index}`, replyPayload) ?? message.reply(replyPayload));
+      const retry = result.status === "error" && TRANSIENT_GITHUB_FAILURES.has(result.reason);
+      const reply = await (deps.replyExpansion?.(
+        message, `github:${index}`, replyPayload, undefined, { retry },
+      ) ?? message.reply(replyPayload));
       if (!previewState || !message.guildId) continue;
       try {
         await (deps.saveState ?? savePreviewTranslationState)(deps.db, {

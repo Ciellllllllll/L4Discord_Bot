@@ -53,11 +53,16 @@ export function isRetryablePreview(payload: object): boolean {
   return retryablePreviews.has(payload);
 }
 
+/** 投稿の削除・非公開や、取得結果の形式不一致を示す理由。再試行しても結果は変わらない。 */
+const PERMANENT_PREVIEW_FAILURES: ReadonlySet<string> = new Set([
+  "post_unavailable", "invalid_data", "missing_tweet", "invalid_tweet", "NOT_FOUND", "PRIVATE_TWEET",
+]);
+
 /** 取得失敗の理由が再試行で回復しうるか。投稿の削除・非公開・形式不一致（4xx 等）は再試行しない。 */
 export function isTransientPreviewFailure(reason: string): boolean {
   const status = /^http_(\d+)$/.exec(reason)?.[1];
   if (status) return Number(status) >= 500 || status === "408" || status === "429";
-  return reason !== "post_unavailable" && reason !== "invalid_data";
+  return !PERMANENT_PREVIEW_FAILURES.has(reason);
 }
 
 /** URLを改行区切りで、1通あたり Discord の文字数上限に収まるよう分割する。 */

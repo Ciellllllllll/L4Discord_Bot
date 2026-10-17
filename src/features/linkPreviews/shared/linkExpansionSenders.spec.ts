@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ComponentType, MessageFlags, type Message } from "discord.js";
-import { expandTwitterLinks } from "../twitter/twitterLinkExpansion.js";
-import { sendSteamLinkExpansion } from "../steam/steamLinkExpansion.js";
-import { sendGithubLinkExpansion } from "../github/githubLinkExpansion.js";
+import { buildTwitterReplyPayloads, expandTwitterLinks } from "../twitter/twitterLinkExpansion.js";
+import { buildSteamReplyPayloads, sendSteamLinkExpansion } from "../steam/steamLinkExpansion.js";
+import { buildGithubFailurePayload, sendGithubLinkExpansion } from "../github/githubLinkExpansion.js";
 import { sendYouTubeLinkExpansion } from "../youtube/youtubeLinkExpansion.js";
 import { expandTikTokLinks } from "../tiktok/tiktokLinkExpansion.js";
 import { expandInstagramLinks } from "../instagram/instagramLinkExpansion.js";
@@ -48,4 +48,58 @@ void test("all six preview senders register their responses through the shared e
   await expandInstagramLinks(source, [{ url: "https://www.instagram.com/p/abc/", shortcode: "abc", kind: "p" }], deps);
   assert.deepEqual(calls, ["twitter:0", "steam:0", "github:0", "youtube:0", "tiktok:0", "instagram:0"]);
   assert.deepEqual(warnings, []);
+});
+
+void test("transient Twitter, Steam and GitHub failures are reported as retryable fallbacks", async () => {
+  const source = { id: "source", guildId: "guild", channelId: "channel" } as unknown as Message;
+  const deps = (retries: Array<boolean | undefined>) => ({
+    db: {} as never, config: {} as never, log: { warn: () => undefined },
+    replyExpansion: (async (_message, _key, _payload, _quoted, options) => {
+      retries.push(options?.retry);
+      return { id: "reply" } as Message;
+    }) as ExpansionReply,
+  });
+  const target = { id: "1", screenName: "user", originalUrl: "https://x.com/user/status/1", vxUrl: "https://vxtwitter.com/user/status/1" };
+  const twitter = async (status: number) => {
+    const retries: Array<boolean | undefined> = [];
+    await expandTwitterLinks(source, [{ ...target, statusId: "1" }], {
+      ...deps(retries),
+      buildReplyPayloads: (targets, options) => buildTwitterReplyPayloads(targets, {
+        ...options, fetcher: async () => new Response(null, { status }),
+      }),
+    });
+    return retries;
+  };
+  assert.deepEqual(await twitter(503), [true]);
+  assert.deepEqual(await twitter(404), [false]);
+
+  const steamRetries: Array<boolean | undefined> = [];
+  const steamTarget = { canonicalUrl: "https://store.steampowered.com/app/10/", appid: "10" } as never;
+  const steamDeps = deps(steamRetries);
+  await sendSteamLinkExpansion(source, [steamTarget], {
+    ...steamDeps,
+    buildReplyPayloads: (targets, options) => buildSteamReplyPayloads(targets, {
+      ...options, exchangeRate: null,
+      client: { fetchPagePreview: async () => { throw new Error("steam unavailable"); } } as never,
+    }),
+  });
+  await sendSteamLinkExpansion(source, [steamTarget], {
+    ...steamDeps,
+    buildReplyPayloads: (targets, options) => buildSteamReplyPayloads(targets, {
+      ...options, exchangeRate: null,
+      client: { fetchPagePreview: async () => ({
+        canonicalUrl: "https://store.steampowered.com/app/10/", title: "Game", body: "",
+        price: { kind: "unknown" }, rating: {},
+      }) } as never,
+    }),
+  });
+  assert.deepEqual(steamRetries, [true, false]);
+
+  const githubRetries: Array<boolean | undefined> = [];
+  const githubTarget = { canonicalUrl: "https://github.com/o/r" } as never;
+  const failure = (reason: "rate_limited" | "not_found") => ({
+    target: githubTarget, status: "error" as const, reason, payload: buildGithubFailurePayload(githubTarget, reason),
+  });
+  await sendGithubLinkExpansion(source, [failure("rate_limited"), failure("not_found")], deps(githubRetries), { includeFailures: true });
+  assert.deepEqual(githubRetries, [true, false]);
 });
