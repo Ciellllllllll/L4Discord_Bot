@@ -31,7 +31,7 @@ export function createUtilitiesMessageHandlers(ctx: BotContext): UtilitiesMessag
     ]);
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
-  });
+  }, (message) => bundle.linkPreview.releaseEmbeds(message));
   const bundle: UtilitiesMessageBundle = {
     log: ctx.log,
     expansions,

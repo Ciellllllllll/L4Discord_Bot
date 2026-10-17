@@ -128,11 +128,13 @@ function fixture() {
       else await sent;
     }
   };
-  let tracker = new LinkExpansionTracker(ctx, repository, render);
+  const released: string[] = [];
+  const release = async (message: Message) => { released.push(message.id); };
+  let tracker = new LinkExpansionTracker(ctx, repository, render, release);
   return {
-    source, quote, repository, messages, edits, deleted, warnings, fetchErrors, entered,
+    source, quote, repository, messages, edits, deleted, warnings, fetchErrors, entered, released,
     get tracker() { return tracker; },
-    restart() { tracker = new LinkExpansionTracker(ctx, repository, render); },
+    restart() { tracker = new LinkExpansionTracker(ctx, repository, render, release); },
     block() { gate = deferred(); return gate; },
     payload(value: MessageCreateOptions) { overridePayload = value; },
     failLookup(value: boolean) { lookupFailure = value; },
@@ -199,6 +201,26 @@ void test("a quote edit with a current source hash still leaves retryable failur
   f.retryReplies(false);
   await f.tracker.reconcile();
   assert.equal(f.repository.sources.get("source")!.content_hash, hash);
+});
+
+void test("removing the last external expansion restores the suppressed embeds exactly once", async () => {
+  const f = fixture();
+  await f.tracker.onCreate(f.source);
+  f.source.content = "https://example.com/changed https://example.com/two";
+  await f.tracker.onUpdate(f.source);
+  assert.deepEqual(f.released, [], "cards remain, so the embeds stay suppressed");
+  f.source.content = "リンクを取り消しました";
+  await f.tracker.onUpdate(f.source);
+  assert.deepEqual(f.released, ["source"]);
+  assert.equal(f.repository.responses.size, 0);
+
+  const quoteOnly = fixture();
+  quoteOnly.source.content = "https://discord.com/channels/1/2/3";
+  await quoteOnly.tracker.onCreate(quoteOnly.source);
+  quoteOnly.source.content = "引用を取り消しました";
+  await quoteOnly.tracker.onUpdate(quoteOnly.source);
+  assert.equal(quoteOnly.repository.responses.size, 0);
+  assert.deepEqual(quoteOnly.released, [], "a quote card never suppressed the native embeds");
 });
 
 void test("deferred renders register the source without finishing so reconciliation retries them", async () => {

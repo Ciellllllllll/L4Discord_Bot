@@ -50,6 +50,8 @@ export class LinkExpansionTracker {
     private readonly ctx: Pick<BotContext, "client" | "log">,
     private readonly repository: LinkExpansionRepository,
     private readonly render: (message: Message) => Promise<void>,
+    /** 外部リンクの展開がすべて無くなったときに、抑制していた元投稿の Embed を戻す */
+    private readonly releaseEmbeds?: (message: Message) => Promise<void>,
   ) {}
 
   private async serial<T>(id: string, operation: () => Promise<T>): Promise<T> {
@@ -189,6 +191,7 @@ export class LinkExpansionTracker {
       for (const record of session.records) {
         if (!session.seen.has(record.expansion_key)) await this.remove(record, session.source.channel_id);
       }
+      await this.releaseEmbedsIfExternalRemoved(message, session);
       await this.repository.markRendered(message.id, session.hash);
     } catch (error) {
       // 最初の取得で失敗した引用も、期限内の定期確認で再試行する。
@@ -196,6 +199,15 @@ export class LinkExpansionTracker {
       else if (session.failures.size > 0) await this.repository.markIncomplete(message.id).catch(() => undefined);
       throw error;
     } finally { this.sessions.delete(message.id); }
+  }
+
+  /** 外部リンクのカードを全て消した投稿は、抑制した公式 Embed を戻す（引用カードだけの場合は抑制していない）。 */
+  private async releaseEmbedsIfExternalRemoved(message: Message, session: RenderSession): Promise<void> {
+    const external = (key: string) => !key.startsWith("discord:");
+    if (!this.releaseEmbeds || ![...session.records].some((record) => external(record.expansion_key))
+      || [...session.seen].some(external)) return;
+    try { await this.releaseEmbeds(message); }
+    catch (error) { this.ctx.log.warn({ err: String(error), messageId: message.id }, "expansion embed restore failed"); }
   }
 
   private async refresh(source: ExpansionSource): Promise<void> {

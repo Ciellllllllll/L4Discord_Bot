@@ -1,5 +1,5 @@
 import type { ExpansionReply } from "./shared/linkExpansionTracker.js";
-import type { Message } from "discord.js";
+import { MessageFlags, type Message } from "discord.js";
 import { URL } from "node:url";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
@@ -280,6 +280,12 @@ export class LinkPreviewMessageHandler {
         ? deps.lateEmbedWatcher
         : hasMessageUpdateEvents(ctx.client) ? new LateEmbedWatcher(ctx.client, ctx.log) : null,
     };
+  }
+
+  /** 展開が無くなった投稿の公式 Embed を戻す。抑制していなければ何もしない。 */
+  async releaseEmbeds(message: Message): Promise<void> {
+    this.deps.lateEmbedWatcher?.unwatch(message.id);
+    if (message.flags?.has(MessageFlags.SuppressEmbeds)) await message.suppressEmbeds(false);
   }
 
   hasLinks(message: Message): boolean {

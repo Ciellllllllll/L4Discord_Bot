@@ -1046,6 +1046,23 @@ const githubFailureResult = {
   }
 }
 
+// 展開が無くなった投稿は、監視を止め、抑制していた場合だけ公式 Embed を戻す
+{
+  const unwatched: string[] = [];
+  const suppressions: boolean[] = [];
+  const handler = new LinkPreviewMessageHandler(createCtx() as never, {
+    lateEmbedWatcher: { watch: () => undefined, unwatch: (id: string) => { unwatched.push(id); } },
+  });
+  const messageWith = (suppressed: boolean) => ({
+    id: "m", flags: { has: (flag: number) => suppressed && flag === MessageFlags.SuppressEmbeds },
+    suppressEmbeds: async (value: boolean) => { suppressions.push(value); },
+  });
+  await handler.releaseEmbeds(messageWith(true) as never);
+  await handler.releaseEmbeds(messageWith(false) as never);
+  assert.deepEqual(unwatched, ["m", "m"]);
+  assert.deepEqual(suppressions, [false]);
+}
+
 try {
   await run();
   console.log("linkPreviewMessageHandler.spec.ts: all assertions passed");
