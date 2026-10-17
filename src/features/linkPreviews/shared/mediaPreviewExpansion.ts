@@ -11,7 +11,9 @@ import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { LocalLlmQueue } from "../../ai/localLlmQueue.js";
 import type { PreviewDocument } from "./previewDocument.js";
-import { buildOriginalUrlReply, chunkUrlsForMessages, mediaPreviewBuildQueue } from "./previewMediaDownload.js";
+import {
+  buildOriginalUrlReply, chunkUrlsForMessages, isRetryablePreview, mediaPreviewBuildQueue,
+} from "./previewMediaDownload.js";
 import type { PreviewPipelineState } from "./previewPipeline.js";
 import { savePreviewTranslationState } from "./previewState.repository.js";
 import { translatePreviewDocument, type PreviewDocumentTranslations } from "./previewTranslationGate.js";
@@ -87,7 +89,9 @@ export async function expandQueuedMediaPreviews<T extends { url: string }>(
     const payload = await options.build(target);
     if (!payload) return;
     const { previewState, ...replyPayload } = payload as MediaPreviewPayload;
-    const reply = await (options.replyExpansion?.(message, `${source}:${index}`, replyPayload) ?? message.reply(replyPayload));
+    const reply = await (options.replyExpansion?.(
+      message, `${source}:${index}`, replyPayload, undefined, { retry: isRetryablePreview(payload) },
+    ) ?? message.reply(replyPayload));
     if (!previewState || !message.guildId) return;
     try {
       await (options.saveState ?? savePreviewTranslationState)(options.db, {
@@ -113,7 +117,8 @@ export async function expandQueuedMediaPreviews<T extends { url: string }>(
       }
       log.warn({ reason: ticket.reason, messageId: message.id }, `${source} preview queue full; replying original url`);
       const fallback = buildOriginalUrlReply(target.url);
-      await (options.replyExpansion?.(message, `${source}:${index}`, fallback) ?? message.reply(fallback));
+      // キューの混雑は一時的なので、追跡中の展開は定期確認で構築し直す。
+      await (options.replyExpansion?.(message, `${source}:${index}`, fallback, undefined, { retry: true }) ?? message.reply(fallback));
     } catch (err) {
       log.warn({ err: String(err) }, `${source} preview reply error`);
     }

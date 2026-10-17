@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { ComponentType, MessageFlags, type Message, type MessageCreateOptions, type MessageEditOptions } from "discord.js";
 import type { BotContext } from "../../../bot/context.js";
@@ -75,6 +76,7 @@ function fixture() {
   let gate: ReturnType<typeof deferred> | undefined;
   let overridePayload: MessageCreateOptions | undefined;
   let lookupFailure = false;
+  let retryReplies = false;
   const entered = deferred();
   const channel = {
     isTextBased: () => true, isDMBased: () => false,
@@ -120,7 +122,7 @@ function fixture() {
       const sent = tracker.reply(message, `${quoted ? "discord" : "web"}:${index}`, overridePayload ?? {
         components: [{ type: ComponentType.TextDisplay, content: quoted?.content ?? url }],
         flags: MessageFlags.IsComponentsV2,
-      }, quoted);
+      }, quoted, { retry: retryReplies });
       if (url.includes("/self")) await sent.catch(() => undefined);
       else await sent;
     }
@@ -133,6 +135,7 @@ function fixture() {
     block() { gate = deferred(); return gate; },
     payload(value: MessageCreateOptions) { overridePayload = value; },
     failLookup(value: boolean) { lookupFailure = value; },
+    retryReplies(value: boolean) { retryReplies = value; },
     renders: () => renders, sent: () => count,
   };
 }
@@ -163,6 +166,24 @@ void test("lookup failures preserve existing cards and retry the changed source 
   await f.tracker.reconcile();
   assert.equal(f.edits[0]?.id, "response-1");
   assert.deepEqual(f.deleted, ["response-2"]);
+});
+
+void test("retryable fallback replies keep the source unrendered until reconciliation restores the preview", async () => {
+  const f = fixture();
+  await f.tracker.onCreate(f.source);
+  const rendered = f.repository.sources.get("source")!.content_hash;
+  f.source.content = "https://example.com/edited https://example.com/two";
+  f.retryReplies(true);
+  await f.tracker.onUpdate(f.source);
+  assert.equal(f.edits.length, 2, "the fallback still replaces the stale cards");
+  assert.equal(f.repository.sources.get("source")!.content_hash, rendered, "the new content is not marked as rendered");
+  assert.equal(f.repository.responses.size, 2);
+  f.retryReplies(false);
+  await f.tracker.reconcile();
+  assert.equal(f.edits.length, 4, "reconciliation rebuilds the cards after the upstream recovers");
+  assert.equal(f.repository.sources.get("source")!.content_hash, createHash("sha256").update(f.source.content).digest("hex"));
+  await f.tracker.reconcile();
+  assert.equal(f.edits.length, 4, "a completed render is not rebuilt again");
 });
 
 void test("updates registered responses in place and deletes removed links without extending expiry", async () => {

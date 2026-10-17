@@ -41,6 +41,25 @@ export function buildOriginalUrlReply(urls: string | readonly string[]): Message
   };
 }
 
+const retryablePreviews = new WeakSet<object>();
+
+/** 一時的な失敗で元URLに落とした返信を示す。追跡中の展開は定期確認で再構築する。 */
+export function markRetryablePreview<T extends object>(payload: T): T {
+  retryablePreviews.add(payload);
+  return payload;
+}
+
+export function isRetryablePreview(payload: object): boolean {
+  return retryablePreviews.has(payload);
+}
+
+/** 取得失敗の理由が再試行で回復しうるか。投稿の削除・非公開・形式不一致（4xx 等）は再試行しない。 */
+export function isTransientPreviewFailure(reason: string): boolean {
+  const status = /^http_(\d+)$/.exec(reason)?.[1];
+  if (status) return Number(status) >= 500 || status === "408" || status === "429";
+  return reason !== "post_unavailable" && reason !== "invalid_data";
+}
+
 /** URLを改行区切りで、1通あたり Discord の文字数上限に収まるよう分割する。 */
 export function chunkUrlsForMessages(urls: readonly string[], maxLength = MAX_MESSAGE_CONTENT_LENGTH): string[][] {
   const chunks: string[][] = [];

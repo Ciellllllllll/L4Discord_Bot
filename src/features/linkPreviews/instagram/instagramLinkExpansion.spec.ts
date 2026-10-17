@@ -624,6 +624,27 @@ const dashCdn = "https://scontent-nrt6-1.cdninstagram.com/dash";
   );
 }
 
+// 一時的な取得失敗の元URL返信だけを再試行対象として追跡側へ伝える
+{
+  const retries: Record<string, unknown> = {};
+  for (const status of [500, 429, 404]) {
+    await expandInstagramLinks({ id: "m", guildId: null, channelId: "c" } as never, [target], {
+      db: {} as never,
+      log: { warn: () => undefined },
+      attachmentSizeLimitBytes: 1024,
+      queue: new LocalLlmQueue({ maxConcurrent: 1, maxQueue: 1 }),
+      buildReplyPayloads: (batch, options) => buildInstagramReplyPayloads(batch, {
+        ...options, fetcher: async () => new Response(null, { status }),
+      }),
+      replyExpansion: async (_message, _key, _payload, _quoted, replyOptions) => {
+        retries[status] = replyOptions?.retry;
+        return { id: "r" } as never;
+      },
+    });
+  }
+  assert.deepEqual(retries, { 500: true, 429: true, 404: false });
+}
+
 // 翻訳が必要な投稿は返信後に状態を保存する
 {
   const saved: unknown[] = [];

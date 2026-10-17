@@ -3,8 +3,11 @@ import { ComponentType, MessageFlags, type Message, type MessageCreateOptions } 
 import type { BotContext } from "../../../bot/context.js";
 import { LinkExpansionRepository, type ExpansionRecord, type ExpansionSource } from "./linkExpansionRepository.js";
 
+/** retry: 一時的な失敗による代替表示。送信後も未完了として扱い、定期確認で再構築する。 */
+export type ExpansionReplyOptions = { retry?: boolean };
+
 export type ExpansionReply = (
-  message: Message, key: string, payload: MessageCreateOptions, quoted?: Message,
+  message: Message, key: string, payload: MessageCreateOptions, quoted?: Message, options?: ExpansionReplyOptions,
 ) => Promise<Message>;
 
 function sourceHash(message: Pick<Message, "content">): string {
@@ -73,11 +76,13 @@ export class LinkExpansionTracker {
     await this.repository.forgetSource(source.message_id);
   }
 
-  readonly reply: ExpansionReply = (message, key, payload, quoted) => quoted
-    ? this.serial("quoted-replies", () => this.sendReply(message, key, payload, quoted))
-    : this.sendReply(message, key, payload);
+  readonly reply: ExpansionReply = (message, key, payload, quoted, options) => quoted
+    ? this.serial("quoted-replies", () => this.sendReply(message, key, payload, quoted, options))
+    : this.sendReply(message, key, payload, undefined, options);
 
-  private async sendReply(message: Message, key: string, payload: MessageCreateOptions, quoted?: Message): Promise<Message> {
+  private async sendReply(
+    message: Message, key: string, payload: MessageCreateOptions, quoted?: Message, options?: ExpansionReplyOptions,
+  ): Promise<Message> {
     const session = this.sessions.get(message.id);
     if (!session) throw new Error("Expansion reply outside render session");
     session.seen.add(key);
@@ -134,7 +139,8 @@ export class LinkExpansionTracker {
         quoted_channel_id: quoted?.channelId ?? null, quoted_message_id: quoted?.id ?? null,
         quoted_hash: quoted ? quotedHash(quoted) : null,
       });
-      session.failures.delete(key);
+      if (options?.retry) session.failures.add(key);
+      else session.failures.delete(key);
       return response;
     } catch (error) {
       if (error instanceof CyclicQuoteError) { session.seen.delete(key); throw error; }
