@@ -15,10 +15,10 @@ import {
   resolveYouTubeVideoMediaWithRetry,
 } from "../utilities/youtubeVideoMedia.js";
 import { fetchYouTubeChannelFeed, type YouTubeFeedEntry } from "./youtubeRss.js";
-import { fetchYouTubeChannelVideos, resolveYouTubeWatcherEntries } from "./youtubeWatcherFallback.js";
+import { fetchYouTubeChannelVideos, isYouTubeVideoPubliclyPlayable, resolveYouTubeWatcherEntries } from "./youtubeWatcherFallback.js";
 import { cacheYouTubeVideoForPost, createYouTubeVideoCacheMaintenanceForContext, saveYouTubeVideoCacheReferenceForPost, YouTubeVideoCacheReferenceRecoveryError } from "./youtubeVideoCache.service.js";
 import { persistYouTubeVideo, youtubeVideoPublicUrl } from "./youtubeWatcher.videoStore.js";
-import { PostgresYouTubeWatcherRepository, youtubeGoogleVideoPendingError, type YouTubeVideoCacheReferenceRecoveryCandidate, type YouTubeWatchSubscription } from "./youtubeWatcher.repository.js";
+import { PostgresYouTubeWatcherRepository, toUnnotifiedEntries, youtubeGoogleVideoPendingError, type YouTubeVideoCacheReferenceRecoveryCandidate, type YouTubeWatchSubscription } from "./youtubeWatcher.repository.js";
 
 export type YouTubeWatcherController = { scanNow(): Promise<void>; stop(): void };
 export const YOUTUBE_VIDEO_CACHE_REFERENCE_RECOVERY_PENDING = "youtube_video_cache_reference_recovery_pending";
@@ -219,7 +219,12 @@ export async function recoverYouTubeWatcherVideoCacheReferenceCandidate(
   }
 }
 
-export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
+export async function scanYouTubeWatcher(ctx: BotContext, deps: {
+  fetchFeed?: typeof fetchYouTubeChannelFeed;
+  fetchFallback?: typeof fetchYouTubeChannelVideos;
+  isPlayable?: typeof isYouTubeVideoPubliclyPlayable;
+  sendNotification?: typeof sendYouTubeWatcherNotification;
+} = {}): Promise<void> {
   const client = await ctx.mainPgPool.connect();
   let locked = false;
   try {
@@ -240,18 +245,19 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
    }
   for (const subscription of await repo.list(ctx.config.GUILD_ID, true)) {
     const history = await repo.notificationHistory(subscription.id);
+    const retryable = await repo.listRetryablePosts(subscription.id);
     // RSS を優先し、RSS が取れないときだけ代替手段（youtubei.js の動画一覧）で補う
     const feed = await resolveYouTubeWatcherEntries(subscription.youtubeChannelId, history.sent, {
       failedVideoIds: history.failed,
-      fetchFeed: (channelId) => fetchYouTubeChannelFeed(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
-      fetchFallback: (channelId) => fetchYouTubeChannelVideos(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
+      fetchFeed: (channelId) => (deps.fetchFeed ?? fetchYouTubeChannelFeed)(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
+      fetchFallback: (channelId) => (deps.fetchFallback ?? fetchYouTubeChannelVideos)(channelId, { timeoutMs: ctx.config.ADHD_RSS_REQUEST_TIMEOUT_MS }),
     });
     if (!feed.ok) {
       await repo.setError(subscription.id, feed.error);
       ctx.log.warn({ subscriptionId: subscription.id, error: feed.error }, "youtube watcher RSS scan failed");
-      continue;
+      if (!retryable.length) continue;
     }
-    if (feed.usedFallback) {
+    if (feed.ok && feed.usedFallback) {
       ctx.log.warn({ subscriptionId: subscription.id, notice: feed.notice, entries: feed.entries.length }, "youtube watcher RSS failed; used fallback");
     }
     const target = await fetchTarget(ctx.client, subscription.discordChannelId);
@@ -262,12 +268,26 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
       continue;
     }
     let lastPostError: string | null = null;
-    for (const entry of feed.entries) {
+    // RSS から消えた公開待ち・送信失敗の動画も再確認し、RSS に残っていれば新しい情報を使う。
+    const entries = toUnnotifiedEntries([...new Map([...retryable, ...(feed.ok ? feed.entries : [])]
+      .map((entry) => [entry.videoId, entry])).values()], history.sent);
+    for (const entry of entries) {
       let sentToDiscord = false;
       let notification: YouTubeWatcherNotificationResult | undefined;
       try {
+        // 確認途中の障害でも、次回のスキャンで再確認できるよう先に保留を保存する。
+        await repo.savePost(subscription.id, entry, { status: "deferred" });
+        let playable: boolean;
+        try {
+          playable = await (deps.isPlayable ?? isYouTubeVideoPubliclyPlayable)(entry.videoId, { timeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS });
+        } catch (error) {
+          lastPostError = "動画の一般公開・再生状態を確認できなかったため、通知を保留しました。";
+          ctx.log.warn({ err: error, videoId: entry.videoId }, "youtube watcher availability check failed");
+          continue;
+        }
+        if (!playable) continue;
         await repo.savePost(subscription.id, entry, { status: "pending" });
-        notification = await sendYouTubeWatcherNotification(ctx, target, entry, {
+        notification = await (deps.sendNotification ?? sendYouTubeWatcherNotification)(ctx, target, entry, {
           cacheForPost: cacheMaintenance
             ? (candidate, mediaResolver) => cacheYouTubeWatcherVideo(ctx, candidate, cacheRepo, {
               maintenance: cacheMaintenance,
@@ -292,7 +312,7 @@ export async function scanYouTubeWatcher(ctx: BotContext): Promise<void> {
       }
     }
     // 代替手段を使ったときは、投稿に失敗していなくても RSS の失敗を「最終エラー」に残す
-    await repo.setError(subscription.id, lastPostError ?? feed.notice ?? null);
+    await repo.setError(subscription.id, lastPostError ?? (feed.ok ? feed.notice ?? null : feed.error));
   }
   } finally {
     if (locked) {

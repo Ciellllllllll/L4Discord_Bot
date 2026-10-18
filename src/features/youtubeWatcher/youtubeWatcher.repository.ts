@@ -171,7 +171,20 @@ export class PostgresYouTubeWatcherRepository {
     return { sent, failed };
   }
 
-  async savePost(subscriptionId: string, entry: YouTubeFeedEntry, input: { status: "pending" | "sent" | "failed"; messageId?: string | null; error?: string | null; durableMediaUrl?: string | null }): Promise<void> {
+  async listRetryablePosts(subscriptionId: string): Promise<YouTubeFeedEntry[]> {
+    const result = await this.pool.query(`SELECT video_id, title, channel_title, published_at, video_url, thumbnail_url
+      FROM youtube_watch_posts WHERE subscription_id = $1 AND status IN ('deferred', 'failed') ORDER BY published_at ASC`, [subscriptionId]);
+    return result.rows.map((row) => ({
+      videoId: row.video_id as string,
+      title: row.title as string,
+      channelTitle: row.channel_title as string,
+      publishedAt: new Date(row.published_at).toISOString(),
+      videoUrl: row.video_url as string,
+      thumbnailUrl: row.thumbnail_url as string | null,
+    }));
+  }
+
+  async savePost(subscriptionId: string, entry: YouTubeFeedEntry, input: { status: "pending" | "sent" | "failed" | "deferred"; messageId?: string | null; error?: string | null; durableMediaUrl?: string | null }): Promise<void> {
     await this.pool.query(`INSERT INTO youtube_watch_posts (subscription_id, video_id, title, channel_title, published_at, video_url, thumbnail_url, discord_message_id, status, error_message, durable_media_url, media_finalized_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
       ON CONFLICT (subscription_id, video_id) DO UPDATE SET title = EXCLUDED.title, channel_title = EXCLUDED.channel_title, published_at = EXCLUDED.published_at, video_url = EXCLUDED.video_url, thumbnail_url = EXCLUDED.thumbnail_url, discord_message_id = COALESCE(EXCLUDED.discord_message_id, youtube_watch_posts.discord_message_id), status = EXCLUDED.status, error_message = EXCLUDED.error_message, durable_media_url = COALESCE(EXCLUDED.durable_media_url, youtube_watch_posts.durable_media_url), media_finalized_at = COALESCE(EXCLUDED.media_finalized_at, youtube_watch_posts.media_finalized_at), updated_at = CURRENT_TIMESTAMP`,
