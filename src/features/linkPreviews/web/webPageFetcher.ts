@@ -9,6 +9,11 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** OGP は head にあり本文も冒頭で足りるので、上限を超えた分は読まずに打ち切る */
 const MAX_BODY_BYTES = 1_500_000;
 const MAX_REDIRECTS = 5;
+export function isHtmlContentType(contentType: string): boolean {
+  const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  return type === "" || type === "text/html" || type === "application/xhtml+xml";
+}
+
 const USER_AGENT = "Mozilla/5.0 (compatible; L4DiscordBot/0.1; +https://discord.com) LinkPreview";
 
 export type WebFetchErrorReason =
@@ -131,18 +136,25 @@ function requestOnce(url: URL, signal: AbortSignal): Promise<SingleResponse> {
       const location = response.headers.location;
       if (status >= 300 && status < 400 && location) {
         response.destroy();
-        resolve({ kind: "redirect", location: new URL(location, url).toString() });
+        // 不正な Location でもコールバック内で例外を投げない（投げるとプロセスごと落ちる）
+        try { resolve({ kind: "redirect", location: new URL(location, url).toString() }); }
+        catch (error) { reject(error); }
         return;
       }
-      readLimited(decodedStream(response), MAX_BODY_BYTES).finally(() => response.destroy()).then((body) => resolve({
+      const contentType = String(response.headers["content-type"] ?? "");
+      const page = (body: Buffer): SingleResponse => ({
         kind: "page",
-        response: {
-          status,
-          finalUrl: url.toString(),
-          contentType: String(response.headers["content-type"] ?? ""),
-          body,
-        },
-      }), reject);
+        response: { status, finalUrl: url.toString(), contentType, body },
+      });
+      // エラー応答や HTML 以外（動画・アーカイブなど）は使わないので、本文を読まずに切る
+      if (status < 200 || status >= 300 || !isHtmlContentType(contentType)) {
+        response.destroy();
+        resolve(page(Buffer.alloc(0)));
+        return;
+      }
+      readLimited(decodedStream(response), MAX_BODY_BYTES)
+        .finally(() => response.destroy())
+        .then((body) => resolve(page(body)), reject);
     });
     req.on("error", reject);
     req.end();

@@ -14,10 +14,9 @@ import {
   translatePreviewDocument,
   type PreviewDocumentTranslations,
 } from "../shared/previewTranslationGate.js";
-import { fetchWebPage, type WebFetchErrorReason, type WebPageFetcher } from "./webPageFetcher.js";
+import { fetchWebPage, isHtmlContentType, type WebFetchErrorReason, type WebPageFetcher } from "./webPageFetcher.js";
 import {
   decodeHtml,
-  isHtmlContentType,
   parseWebPageHtml,
   webPreviewToDocument,
   type WebPagePreview,

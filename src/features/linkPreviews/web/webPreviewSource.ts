@@ -114,11 +114,6 @@ export function decodeHtml(body: Buffer, contentType: string): string {
   }
 }
 
-export function isHtmlContentType(contentType: string): boolean {
-  const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  return type === "" || type === "text/html" || type === "application/xhtml+xml";
-}
-
 function compactText(text: string, maxLength: number): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length <= maxLength

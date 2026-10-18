@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { isHtmlContentType } from "./webPageFetcher.js";
 import {
   collectWebReplyTargets,
   decodeHtml,
   extractWebLinks,
-  isHtmlContentType,
   parseWebPageHtml,
   parseWebUrl,
   webPreviewToDocument,
