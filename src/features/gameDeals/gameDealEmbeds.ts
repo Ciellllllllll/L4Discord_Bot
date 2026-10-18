@@ -96,7 +96,7 @@ export function buildSteamFreeEventEmbed(event: SteamFreeEvent): ComponentCardBu
       { name: "検証根拠", value: steamEvidenceText(event.evidenceJson), inline: false },
     );
   if (event.imageUrl) embed.setImage(event.imageUrl);
-  return embed.addActionRows(buildSteamLinkButtons(event));
+  return embed.addBottomActionRows(buildSteamLinkButtons(event));
 }
 
 export function buildSteamLinkButtons(event: Pick<SteamFreeEvent, "appid" | "steamUrl">): ActionRowBuilder<ButtonBuilder> {

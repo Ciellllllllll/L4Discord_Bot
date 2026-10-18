@@ -43,7 +43,7 @@ export function buildEpicFreeEmbed(candidate: EpicFreeCandidate): ComponentCardB
       { name: "現在価格", value: priceText(candidate.discountPrice, candidate.currencyCode), inline: true },
     );
   if (candidate.imageUrl) embed.setImage(candidate.imageUrl);
-  return embed.addActionRows(buildEpicLinkButtons(candidate));
+  return embed.addBottomActionRows(buildEpicLinkButtons(candidate));
 }
 
 export function buildEpicLinkButtons(candidate: EpicFreeCandidate): ActionRowBuilder<ButtonBuilder> {

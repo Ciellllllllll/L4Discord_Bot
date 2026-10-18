@@ -15,7 +15,7 @@ const event: SteamFreeEvent = {
   discountPercent: 100,
   evidenceJson: "[]",
   steamUrl: "https://store.steampowered.com/app/123/Free_Steam_Game/",
-  imageUrl: null,
+  imageUrl: "https://cdn.example.com/steam-free.png",
   freeUntilUnix: 1783468800,
 };
 
@@ -58,6 +58,16 @@ assert.deepEqual(
     "https://s.team/a/123",
   ],
 );
+
+const mediaIndex = container.components.findIndex((component) => component.type === ComponentType.MediaGallery);
+const actionRowIndex = container.components.findIndex((component) => component.type === ComponentType.ActionRow);
+const media = container.components[mediaIndex];
+assert.equal(media?.type, ComponentType.MediaGallery);
+assert.deepEqual(
+  media?.type === ComponentType.MediaGallery ? media.items.map((item) => item.media.url) : [],
+  ["https://cdn.example.com/steam-free.png"],
+);
+assert.ok(actionRowIndex > mediaIndex, "link buttons must be placed below the image");
 
 const payload = componentCardsPayload([card]);
 assert.equal(payload.components.length, 1);
