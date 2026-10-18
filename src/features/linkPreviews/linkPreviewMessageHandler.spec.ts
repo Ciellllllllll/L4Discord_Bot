@@ -789,12 +789,56 @@ const githubFailureResult = {
   assert.equal(refreshedGithub?.document.source, "github");
   assert.equal(refreshedGithub?.messageId, "message-2");
   assert.equal(refreshedGithubImageOptions?.get(githubTarget.canonicalUrl), githubEmbedImageUrl);
+  // 専用の展開に当てはまらないリンクは汎用の展開として作り直す
+  const refreshedWebUrls: string[] = [];
   assert.equal(await refreshPreviewTranslationState(
     refreshMessage("https://example.com") as never,
     {} as never,
     "guild-1",
     "channel-1",
+    {
+      buildWeb: async (targets) => {
+        refreshedWebUrls.push(...targets.map((target) => target.url));
+        return targets.map((target) => ({ target, status: "error" as const, reason: "http_error" as const }));
+      },
+    },
   ), null);
+  assert.deepEqual(refreshedWebUrls, ["https://example.com/"]);
+  const refreshedWeb = await refreshPreviewTranslationState(
+    refreshMessage("https://example.com/article") as never,
+    {} as never,
+    "guild-1",
+    "channel-1",
+    {
+      buildWeb: async (targets) => targets.map((target) => ({
+        target,
+        status: "success" as const,
+        payload: {
+          embeds: [],
+          flags: MessageFlags.IsComponentsV2,
+          components: [],
+          allowedMentions: { parse: [], repliedUser: false },
+          previewState: {
+            document: {
+              version: 1 as const,
+              source: "web" as const,
+              url: target.url,
+              openLabel: "リンクを開く",
+              summaryAction: true,
+              blocks: [],
+            },
+            translations: {
+              translations: {
+                title: { shouldTranslate: true, sourceLanguage: "en", confidence: 1, translatedText: "記事" },
+              },
+            },
+          },
+        },
+      })),
+    },
+  );
+  assert.equal(refreshedWeb?.document.source, "web");
+  assert.equal(refreshedWeb?.sourceUrl, "https://example.com/article");
 
   // TikTok の展開はキュー待ちがあるため、完了を待たずに onMessage を返す（後続の AutoMod 等を止めない）
   {

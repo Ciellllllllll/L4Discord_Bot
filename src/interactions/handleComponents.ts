@@ -63,6 +63,7 @@ import { handleBokeruButton, handleBokeruModal } from "../features/bokeru/bokeru
 import { handleVxTwitterPreviewButton } from "../features/utilities/vxtwitterPreviewInteractions.js";
 import { handlePreviewInteraction } from "../features/linkPreviews/shared/previewInteractions.js";
 import { refreshPreviewTranslationState } from "../features/linkPreviews/linkPreviewMessageHandler.js";
+import { handleWebSummaryInteraction } from "../features/linkPreviews/web/webSummaryInteractions.js";
 import { handleYouTubeMediaRefresh } from "../features/linkPreviews/youtube/youtubeMediaRefresh.js";
 
 export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
@@ -133,6 +134,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
       channelId,
     ),
   })) return;
+  if (await handleWebSummaryInteraction(interaction, ctx)) return;
   if (await handleYouTubeMediaRefresh(interaction, ctx)) return;
   if (await handleVxTwitterPreviewButton(interaction, ctx)) return;
   if (await handleAnonymousSurveyViewButton(interaction, ctx)) return;

@@ -20,7 +20,8 @@ import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
 import { dropPostgresSteamAppListTables, ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
 import { migratePostgresAnonymousSurveyFeedback } from "../features/anonymousSurvey/surveySchema.js";
-import { migratePostgresGithubPreviewSupport, migratePostgresInstagramPreviewSupport, migratePostgresPreviewTranslationStates, migratePostgresSteamPreviewSupport, migratePostgresTikTokPreviewSupport } from "../features/linkPreviews/shared/previewState.repository.js";
+import { migratePostgresGithubPreviewSupport, migratePostgresInstagramPreviewSupport, migratePostgresPreviewTranslationStates, migratePostgresSteamPreviewSupport, migratePostgresTikTokPreviewSupport, migratePostgresWebPreviewSupport } from "../features/linkPreviews/shared/previewState.repository.js";
+import { ensurePostgresPreviewSummarySchema } from "../features/linkPreviews/shared/previewSummary.repository.js";
 import {
   ensurePostgresSteamExchangeRateSchema,
 } from "../features/steam/steamExchangeRateRepository.js";
@@ -143,6 +144,10 @@ async function createDatabaseRuntimeUnsafe(
     { version: 21, name: "instagram_link_preview", apply: migratePostgresInstagramPreviewSupport },
     { version: 22, name: "bokeru_initial", apply: ensurePostgresBokeruSchema },
     { version: 23, name: "link_expansion_tracking", apply: ensurePostgresLinkExpansionSchema },
+    { version: 24, name: "web_link_preview", apply: async (pool) => {
+      await migratePostgresWebPreviewSupport(pool);
+      await ensurePostgresPreviewSummarySchema(pool);
+    } },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);

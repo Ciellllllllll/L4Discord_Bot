@@ -21,6 +21,7 @@ import type { PreviewDocumentTranslations, TranslationDecision } from "./preview
 
 export const PREVIEW_SHOW_ORIGINAL_ID = "preview:show-original";
 export const PREVIEW_SHOW_TRANSLATION_ID = "preview:show-translation";
+export const PREVIEW_SUMMARY_ID = "preview:summary";
 
 const PREVIEW_TEXT_COMPONENT_ID_BASE = 2_140_000_000;
 const PREVIEW_ATTRIBUTION_COMPONENT_ID = 2_140_000_100;
@@ -187,7 +188,9 @@ function buildActionRow(
             ? "TikTokで開く"
             : document.source === "instagram"
               ? "Instagramで開く"
-              : "YouTubeで開く"
+              : document.source === "web"
+                ? "リンクを開く"
+                : "YouTubeで開く"
   );
   const components: APIButtonComponent[] = [{
     type: ComponentType.Button,
@@ -210,6 +213,15 @@ function buildActionRow(
       style: ButtonStyle.Secondary,
       label: mode === "translation" ? "原文を表示" : "翻訳を表示",
       custom_id: mode === "translation" ? PREVIEW_SHOW_ORIGINAL_ID : PREVIEW_SHOW_TRANSLATION_ID,
+    });
+  }
+  // 要約するページは押されたときに開くボタン（先頭のボタン）の URL から決めるので、custom_id は固定でよい
+  if (document.summaryAction) {
+    components.push({
+      type: ComponentType.Button,
+      style: ButtonStyle.Primary,
+      label: "AI要約",
+      custom_id: PREVIEW_SUMMARY_ID,
     });
   }
   return { type: ComponentType.ActionRow, components };

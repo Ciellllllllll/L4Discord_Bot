@@ -1,4 +1,4 @@
-export type PreviewSource = "x" | "youtube" | "steam" | "github" | "tiktok" | "instagram";
+export type PreviewSource = "x" | "youtube" | "steam" | "github" | "tiktok" | "instagram" | "web";
 
 export type PreviewAction = {
   label: string;
@@ -46,5 +46,7 @@ export type PreviewDocument = {
   url: string;
   openLabel: string;
   secondaryAction?: PreviewAction;
+  /** 開くボタンの URL のページを AI で要約する「AI要約」ボタンを付ける */
+  summaryAction?: boolean;
   blocks: PreviewBlock[];
 };
