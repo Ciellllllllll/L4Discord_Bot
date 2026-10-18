@@ -20,6 +20,7 @@ export type AiTask =
   | "pacchi_final_check"
   | "vx_translation"
   | "preview_translation"
+  | "preview_summary"
   | "ping";
 
 export type AiFallbackReason =
@@ -106,6 +107,7 @@ const TASK_MAX_OUTPUT: Record<AiTask, number> = {
   pacchi_final_check: 512,
   vx_translation: 512,
   preview_translation: 4_096,
+  preview_summary: 2_048,
   ping: 1_024,
 };
 

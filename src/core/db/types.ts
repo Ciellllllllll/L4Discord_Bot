@@ -312,10 +312,20 @@ export interface PreviewTranslationStatesRow {
   message_id: string;
   guild_id: string;
   channel_id: string;
-  source_kind: "x" | "youtube" | "steam" | "github" | "tiktok" | "instagram";
+  source_kind: "x" | "youtube" | "steam" | "github" | "tiktok" | "instagram" | "web";
   source_url: string;
   document: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
   translations: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  expires_at: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface PreviewSummariesRow {
+  source_url: string;
+  should_summarize: boolean;
+  summary: string;
+  model: string | null;
   expires_at: Date;
   created_at: Date;
   updated_at: Date;
@@ -402,5 +412,6 @@ export interface Database {
   anonymous_survey_user_state: AnonymousSurveyUserStateRow;
   vx_twitter_preview_states: VxTwitterPreviewStatesRow;
   preview_translation_states: PreviewTranslationStatesRow;
+  preview_summaries: PreviewSummariesRow;
   steam_exchange_rates: SteamExchangeRatesRow;
 }

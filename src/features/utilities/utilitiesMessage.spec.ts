@@ -20,6 +20,7 @@ void test("only supported links enter persistent expansion tracking, including s
   } as unknown as UtilitiesMessageBundle;
   for (const [content, bot] of [
     ["通常の会話", false], ["https://example.com/article", false],
+    ["<https://example.com/suppressed>", false], ["https://example.com/image.png", false],
     ["https://discord.com/channels/100/200/300", true],
     ["x.com/user/status/123", false], ["youtu.be/dQw4w9WgXcQ", false],
     ["github.com/octo/hello", false], ["https://discord.com/channels/100/200/300", false],
@@ -29,6 +30,7 @@ void test("only supported links enter persistent expansion tracking, including s
     } as unknown as Message);
   }
   assert.deepEqual(calls, [
+    "https://example.com/article",
     "x.com/user/status/123", "youtu.be/dQw4w9WgXcQ", "github.com/octo/hello",
     "https://discord.com/channels/100/200/300",
   ]);

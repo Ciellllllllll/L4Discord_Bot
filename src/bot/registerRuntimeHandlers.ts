@@ -38,6 +38,7 @@ import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDele
 import { scheduleArchiveMessageAttachmentsPostgres } from "../features/messageLog/messageAttachmentArchive.js";
 import { deleteExpiredVxTwitterPreviewStates } from "../features/utilities/vxtwitterPreviewState.js";
 import { deleteExpiredPreviewTranslationStates } from "../features/linkPreviews/shared/previewState.repository.js";
+import { deleteExpiredPreviewSummaries } from "../features/linkPreviews/shared/previewSummary.repository.js";
 import { SteamExchangeRateRepository } from "../features/steam/steamExchangeRateRepository.js";
 import { startSteamExchangeRateUpdater, type SteamExchangeRateUpdaterController } from "../features/steam/steamExchangeRateUpdater.js";
 
@@ -383,7 +384,10 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
       startReminder: () => startReminderScheduler(ctx),
       startVxTwitterPreviewCleanup: () => {
         return startPreviewStateCleanup({
-          deleteCommon: () => deleteExpiredPreviewTranslationStates(ctx.db),
+          deleteCommon: () => Promise.all([
+            deleteExpiredPreviewTranslationStates(ctx.db),
+            deleteExpiredPreviewSummaries(ctx.db),
+          ]),
           deleteLegacy: () => deleteExpiredVxTwitterPreviewStates(ctx.db),
           reconcileExpansions: () => utilitiesBundle.expansions.reconcile(),
           logWarning: (err, message) => log.warn({ err }, message),

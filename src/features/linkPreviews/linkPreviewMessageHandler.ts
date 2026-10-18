@@ -38,6 +38,8 @@ import { buildTikTokReplyPayloads, expandTikTokLinks } from "./tiktok/tiktokLink
 import { collectTikTokReplyTargets, parseTikTokUrl, TIKTOK_DOMAINS } from "./tiktok/tiktokPreviewSource.js";
 import { buildInstagramReplyPayloads, expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
 import { collectInstagramReplyTargets, INSTAGRAM_DOMAINS, parseInstagramUrl } from "./instagram/instagramPreviewSource.js";
+import { buildWebReplyPayloads, sendWebLinkExpansion, type WebPreviewBuildResult } from "./web/webLinkExpansion.js";
+import { collectWebReplyTargets, extractWebLinks, parseWebUrl } from "./web/webPreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
 import { LateEmbedWatcher } from "./shared/lateEmbedWatcher.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
@@ -155,6 +157,7 @@ type LinkPreviewMessageHandlerDeps = {
   buildGithubReplyPayloads?: typeof buildGithubReplyPayloads;
   expandTikTokLinks?: typeof expandTikTokLinks;
   expandInstagramLinks?: typeof expandInstagramLinks;
+  buildWebReplyPayloads?: typeof buildWebReplyPayloads;
   suppressLateEmbeds?: (message: Message) => Promise<void>;
   /** 抑制した後に遅れて付く公式 Embed を messageUpdate で監視する。null なら監視しない */
   lateEmbedWatcher?: Pick<LateEmbedWatcher, "watch" | "unwatch"> | null;
@@ -275,6 +278,7 @@ export class LinkPreviewMessageHandler {
       buildGithubReplyPayloads: deps.buildGithubReplyPayloads ?? buildGithubReplyPayloads,
       expandTikTokLinks: deps.expandTikTokLinks ?? expandTikTokLinks,
       expandInstagramLinks: deps.expandInstagramLinks ?? expandInstagramLinks,
+      buildWebReplyPayloads: deps.buildWebReplyPayloads ?? buildWebReplyPayloads,
       suppressLateEmbeds: deps.suppressLateEmbeds ?? ((message) => suppressLateEmbeds(message, this.ctx.log)),
       lateEmbedWatcher: deps.lateEmbedWatcher !== undefined
         ? deps.lateEmbedWatcher
@@ -293,6 +297,7 @@ export class LinkPreviewMessageHandler {
     return extractSteamLinksFromMessage(message).length > 0 || extractGithubLinksFromMessage(message).length > 0
       || extractXLinks(message.content).length > 0 || extractTikTokLinks(message.content).length > 0
       || extractInstagramLinks(message.content).length > 0
+      || collectWebReplyTargets(extractWebLinks(message.content)).length > 0
       || (this.ctx.config.YOUTUBE_PREVIEW_ENABLED && extractYouTubeLinks(message.content).length > 0);
   }
 
@@ -312,6 +317,7 @@ export class LinkPreviewMessageHandler {
       : [];
     const tiktokTargets = collectTikTokReplyTargets(extractTikTokLinks(content));
     const instagramTargets = collectInstagramReplyTargets(extractInstagramLinks(content));
+    const webTargets = collectWebReplyTargets(extractWebLinks(content));
     if (
       directSteamLinks.length === 0
       && twitterTargets.length === 0
@@ -319,6 +325,7 @@ export class LinkPreviewMessageHandler {
       && githubTargets.length === 0
       && tiktokTargets.length === 0
       && instagramTargets.length === 0
+      && webTargets.length === 0
     ) return;
 
     const youtubePlan = youtubeTargets.length > 0
@@ -337,21 +344,33 @@ export class LinkPreviewMessageHandler {
       })
       : null;
 
-    let githubResults: GithubPreviewBuildResult[] = [];
-    if (githubTargets.length > 0) {
-      try {
-        githubResults = await this.deps.buildGithubReplyPayloads(githubTargets, {
+    // GitHub と汎用のリンクは、取得できたときだけ公式 Embed を抑制するので、抑制の前にカードを作る
+    const [githubResults, webResults] = await Promise.all([
+      githubTargets.length > 0
+        ? this.deps.buildGithubReplyPayloads(githubTargets, {
           token: this.ctx.config.GITHUB_API_TOKEN,
           config: this.ctx.config,
           log: this.ctx.log,
           aiRouter: this.ctx.aiRouter,
           guildId: message.guildId ?? this.ctx.config.GUILD_ID,
           imageUrlByCanonicalUrl: githubImageUrls,
-        });
-      } catch (error) {
-        this.ctx.log.warn({ error: String(error) }, "github preview build failed");
-      }
-    }
+        }).catch((error: unknown): GithubPreviewBuildResult[] => {
+          this.ctx.log.warn({ error: String(error) }, "github preview build failed");
+          return [];
+        })
+        : Promise.resolve([]),
+      webTargets.length > 0
+        ? this.deps.buildWebReplyPayloads(webTargets, {
+          config: this.ctx.config,
+          log: this.ctx.log,
+          aiRouter: this.ctx.aiRouter,
+          guildId: message.guildId ?? this.ctx.config.GUILD_ID,
+        }).catch((error: unknown): WebPreviewBuildResult[] => {
+          this.ctx.log.warn({ error: String(error) }, "web preview build failed");
+          return [];
+        })
+        : Promise.resolve([]),
+    ]);
 
     const hasExistingPreview = directSteamLinks.length > 0
       || twitterTargets.length > 0
@@ -359,10 +378,11 @@ export class LinkPreviewMessageHandler {
       || tiktokTargets.length > 0
       || instagramTargets.length > 0;
     const hasGithubSuccess = githubResults.some((result) => result.status === "success");
+    const hasWebSuccess = webResults.some((result) => result.status === "success");
     // 最初の抑制に成功したときだけ、カードを送った後に遅れて付いた公式 Embed を確認する
     // （権限不足などで失敗したチャンネルでは、確認しても抑制できない）
     let suppressed = false;
-    if (hasExistingPreview || hasGithubSuccess) {
+    if (hasExistingPreview || hasGithubSuccess || hasWebSuccess) {
       // 抑制との間に付いた Embed も取りこぼさないよう、抑制の前に messageUpdate の監視を始める
       this.deps.lateEmbedWatcher?.watch(message);
       try {
@@ -442,7 +462,7 @@ export class LinkPreviewMessageHandler {
         buildReplyPayloads: this.deps.buildSteamReplyPayloads,
       });
     }
-    if (githubResults.length > 0 && (hasExistingPreview || hasGithubSuccess)) {
+    if (githubResults.length > 0 && (hasExistingPreview || hasGithubSuccess || hasWebSuccess)) {
       await sendGithubLinkExpansion(message, githubResults, {
         db: this.ctx.db,
         replyExpansion: this.deps.replyExpansion,
@@ -453,9 +473,17 @@ export class LinkPreviewMessageHandler {
     } else if (githubResults.some((result) => result.status === "error" && isTransientGithubFailure(result.reason))) {
       await this.deps.deferExpansion(message, "github:retry");
     }
+    if (hasWebSuccess) {
+      await sendWebLinkExpansion(message, webResults, {
+        db: this.ctx.db,
+        replyExpansion: this.deps.replyExpansion,
+        log: this.ctx.log,
+      });
+    }
     // カードを送り終えた後に、遅れて付いた公式 Embed が残っていないか確認する。
     // TikTok・Instagram だけのときはまだカードを送っていないので、それぞれの展開完了後に確認する
-    const sentCardsHere = twitterTargets.length > 0 || youtubeTargets.length > 0 || steamTargets.length > 0 || githubResults.length > 0;
+    const sentCardsHere = twitterTargets.length > 0 || youtubeTargets.length > 0 || steamTargets.length > 0
+      || githubResults.length > 0 || hasWebSuccess;
     if (sentCardsHere) await recheckLateEmbeds();
     if (this.tracked) await Promise.all(mediaTasks);
   }
@@ -468,6 +496,7 @@ type RefreshDeps = {
   buildGithub?: typeof buildGithubReplyPayloads;
   buildTikTok?: typeof buildTikTokReplyPayloads;
   buildInstagram?: typeof buildInstagramReplyPayloads;
+  buildWeb?: typeof buildWebReplyPayloads;
 };
 
 function componentUrls(components: readonly unknown[]): string[] {
@@ -621,6 +650,23 @@ export async function refreshPreviewTranslationState(
       aiRouter: ctx.aiRouter,
       guildId,
       ...(mediaUrl ? { imageUrlByCanonicalUrl: new Map([[github.canonicalUrl, mediaUrl]]) } : {}),
+    });
+    if (!result || result.status !== "success" || !result.payload.previewState) return null;
+    return {
+      version: 1, messageId: message.id, guildId, channelId,
+      sourceUrl: result.payload.previewState.document.url,
+      ...result.payload.previewState,
+    };
+  }
+  // 専用の展開に当てはまらないリンクは汎用の展開として作り直す（parseWebUrl は専用の展開のホストを除く）
+  for (const url of urls) {
+    const web = parseWebUrl(url);
+    if (!web) continue;
+    const [result] = await (deps.buildWeb ?? buildWebReplyPayloads)([web], {
+      config: ctx.config,
+      log: ctx.log,
+      aiRouter: ctx.aiRouter,
+      guildId,
     });
     if (!result || result.status !== "success" || !result.payload.previewState) return null;
     return {
