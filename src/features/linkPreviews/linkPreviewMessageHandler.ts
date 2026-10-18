@@ -473,17 +473,19 @@ export class LinkPreviewMessageHandler {
     } else if (githubResults.some((result) => result.status === "error" && isTransientGithubFailure(result.reason))) {
       await this.deps.deferExpansion(message, "github:retry");
     }
-    if (hasWebSuccess) {
+    // 抑制した投稿では、取得できなかったリンクも Embed の代わりのカードを出す
+    // （抑制していなければカードを出さず、公式の Embed を残す）
+    if (webResults.length > 0 && (hasExistingPreview || hasGithubSuccess || hasWebSuccess)) {
       await sendWebLinkExpansion(message, webResults, {
         db: this.ctx.db,
         replyExpansion: this.deps.replyExpansion,
         log: this.ctx.log,
-      });
+      }, { includeFailures: true });
     }
     // カードを送り終えた後に、遅れて付いた公式 Embed が残っていないか確認する。
     // TikTok・Instagram だけのときはまだカードを送っていないので、それぞれの展開完了後に確認する
     const sentCardsHere = twitterTargets.length > 0 || youtubeTargets.length > 0 || steamTargets.length > 0
-      || githubResults.length > 0 || hasWebSuccess;
+      || githubResults.length > 0 || webResults.length > 0;
     if (sentCardsHere) await recheckLateEmbeds();
     if (this.tracked) await Promise.all(mediaTasks);
   }

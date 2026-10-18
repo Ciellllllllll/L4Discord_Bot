@@ -1,5 +1,7 @@
 import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
+  ButtonStyle,
+  ComponentType,
   MessageFlags,
   type APIMessageTopLevelComponent,
   type Message,
@@ -67,6 +69,32 @@ export async function loadWebPage(
   return page ? { status: "ok", page } : { status: "error", reason: "no_title" };
 }
 
+/**
+ * 取得できなかったリンクの代わりのカード。他のリンクの展開で元投稿の Embed を抑制したときに、
+ * このリンクの Embed だけが何も無いまま消えないようにする。
+ */
+export function buildWebFailurePayload(target: WebReplyTarget): WebPreviewPayload {
+  return {
+    embeds: [],
+    flags: MessageFlags.IsComponentsV2,
+    components: [{
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: `🔗 **${new URL(target.url).hostname}**
+-# ページの情報を取得できませんでした`,
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [{ type: ComponentType.Button, style: ButtonStyle.Link, label: "リンクを開く", url: target.url }],
+        },
+      ],
+    }],
+    allowedMentions: { parse: [], repliedUser: false },
+  };
+}
+
 async function translateDocument(
   document: ReturnType<typeof webPreviewToDocument>,
   options: WebPreviewBuildOptions,
@@ -124,16 +152,19 @@ export type SendWebExpansionDeps = {
   saveState?: typeof savePreviewTranslationState;
 };
 
+/** includeFailures: 元投稿の Embed を抑制したときは、取得できなかったリンクにも代わりのカードを出す */
 export async function sendWebLinkExpansion(
   message: Message,
   results: readonly WebPreviewBuildResult[],
   deps: SendWebExpansionDeps,
+  options: { includeFailures?: boolean } = {},
 ): Promise<void> {
   for (const [index, result] of results.entries()) {
-    // 取得できなかったリンクはカードを出さない（他に展開が無ければ公式の Embed が残る）
-    if (result.status !== "success") continue;
+    if (result.status !== "success" && options.includeFailures !== true) continue;
     try {
-      const { previewState, ...replyPayload } = result.payload;
+      const { previewState, ...replyPayload } = result.status === "success"
+        ? result.payload
+        : buildWebFailurePayload(result.target);
       const reply = await (deps.replyExpansion?.(message, `web:${index}`, replyPayload) ?? message.reply(replyPayload));
       if (!previewState || !message.guildId) continue;
       try {

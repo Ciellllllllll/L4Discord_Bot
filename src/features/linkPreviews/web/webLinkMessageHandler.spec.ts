@@ -71,6 +71,21 @@ void test("keeps Discord's own embed when the page could not be loaded", async (
   assert.equal(calls.replies.length, 0);
 });
 
+void test("replaces the suppressed embed of a failed link with a fallback card in mixed messages", async () => {
+  const { value, calls } = message("https://news.example/post https://down.example/");
+  await new LinkPreviewMessageHandler(createCtx() as never, {
+    replyExpansion: async (_message, key, payload) => { calls.replies.push({ key, payload }); return { id: "reply-1" } as never; },
+    buildWebReplyPayloads: async (targets) => targets.map((target, index) => (
+      index === 0 ? success(target.url) : { target, status: "error", reason: "timeout" }
+    )),
+    suppressLateEmbeds: async () => undefined,
+    lateEmbedWatcher: null,
+  }).onMessage(value as never);
+  assert.equal(calls.suppressed, 1);
+  assert.deepEqual(calls.replies.map((reply) => reply.key), ["web:0", "web:1"]);
+  assert.match(JSON.stringify(calls.replies[1]!.payload), /ページの情報を取得できませんでした/);
+});
+
 void test("does not treat suppressed or dedicated links as generic web links", () => {
   const handler = new LinkPreviewMessageHandler(createCtx() as never, { lateEmbedWatcher: null });
   assert.equal(handler.hasLinks(message("<https://quiet.example/>").value as never), false);

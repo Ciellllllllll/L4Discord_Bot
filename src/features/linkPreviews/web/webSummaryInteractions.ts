@@ -153,9 +153,18 @@ export async function handleWebSummaryInteraction(
     });
   } catch (error) {
     ctx.log.warn({ err: String(error), messageId: interaction.message.id }, "web summary failed");
-    const payload = { content: "要約の表示に失敗しました。しばらくしてからお試しください。", flags: MessageFlags.Ephemeral } as const;
-    if (interaction.deferred || interaction.replied) await interaction.followUp(payload).catch(() => undefined);
-    else await interaction.reply(payload).catch(() => undefined);
+    const content = "要約の表示に失敗しました。しばらくしてからお試しください。";
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+      return true;
+    }
+    // 保留中の応答を書き換え、読み込み中の表示を残さない。書き換えられなければ別の応答で伝える
+    const edited = await interaction.editReply({
+      flags: MessageFlags.IsComponentsV2,
+      components: summaryComponents(content),
+      allowedMentions: { parse: [] },
+    }).then(() => true, () => false);
+    if (!edited) await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
   }
   return true;
 }

@@ -102,3 +102,21 @@ void test("sends only successful cards under stable web keys and saves translate
   assert.equal("previewState" in sent[0]!.payload, false);
   assert.equal((saved[0] as { messageId: string }).messageId, "reply-1");
 });
+
+void test("sends an open-link fallback card for failed links when failures are included", async () => {
+  const sent: Array<{ key: string; payload: unknown }> = [];
+  await sendWebLinkExpansion({ guildId: "guild", channelId: "channel" } as never, [
+    { target: { url: "https://down.example/page" }, status: "error", reason: "timeout" },
+  ], {
+    db: {} as never,
+    log: { warn() {} },
+    replyExpansion: async (_message, key, payload) => { sent.push({ key, payload }); return { id: "reply-1" } as never; },
+    saveState: async () => { throw new Error("failure cards have no state"); },
+  }, { includeFailures: true });
+  assert.deepEqual(sent.map((entry) => entry.key), ["web:0"]);
+  const payload = sent[0]!.payload as { components: unknown };
+  assert.match(JSON.stringify(payload.components), /down\.example/);
+  assert.deepEqual(buttons(payload.components).map((button) => [button.label, button.url]), [
+    ["リンクを開く", "https://down.example/page"],
+  ]);
+});

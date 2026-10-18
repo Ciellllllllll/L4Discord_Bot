@@ -133,3 +133,18 @@ void test("tells the user when the card has no summarizable link", async () => {
   assert.equal(await handleWebSummaryInteraction(value as never, ctx), true);
   assert.deepEqual(calls.map((call) => call.method), ["reply"]);
 });
+
+void test("resolves the deferred response when an unexpected error happens", async () => {
+  const { value, calls } = interaction();
+  await handleWebSummaryInteraction(value as never, ctx, {
+    getSummary: async () => { throw new Error("database down"); },
+  });
+  assert.deepEqual(calls.map((call) => call.method), ["deferReply", "editReply"]);
+  assert.match(editedText(calls), /要約の表示に失敗しました/);
+
+  const fallback = interaction({ async editReply() { throw new Error("edit failed"); } });
+  await handleWebSummaryInteraction(fallback.value as never, ctx, {
+    getSummary: async () => { throw new Error("database down"); },
+  });
+  assert.deepEqual(fallback.calls.map((call) => call.method), ["deferReply", "followUp"]);
+});
