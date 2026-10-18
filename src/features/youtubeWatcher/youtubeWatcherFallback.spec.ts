@@ -3,6 +3,7 @@ import test from "node:test";
 import type { YouTubeFeedEntry } from "./youtubeRss.js";
 import {
   fallbackEntriesSinceLastNotified,
+  isYouTubeVideoPubliclyPlayable,
   normalizeYouTubeChannelVideos,
   parseRelativePublishedText,
   resolveYouTubeWatcherEntries,
@@ -12,6 +13,32 @@ import {
 
 const NOW = Date.parse("2026-09-24T07:00:00.000Z");
 const HOUR = 60 * 60 * 1000;
+
+await test("only publicly playable videos pass the notification gate", async () => {
+  const publicInfo = {
+    playability_status: { status: "OK" },
+    basic_info: { is_private: false, is_unlisted: false, is_upcoming: false },
+  };
+  for (const [label, info, expected] of [
+    ["public upload", publicInfo, true],
+    ["members only / paid", { ...publicInfo, playability_status: { status: "UNPLAYABLE" } }, false],
+    ["login required", { ...publicInfo, playability_status: { status: "LOGIN_REQUIRED" } }, false],
+    ["scheduled premiere", { ...publicInfo, playability_status: { status: "LIVE_STREAM_OFFLINE" } }, false],
+    ["upcoming with a playable trailer", { ...publicInfo, basic_info: { ...publicInfo.basic_info, is_upcoming: true } }, false],
+    ["private", { ...publicInfo, basic_info: { ...publicInfo.basic_info, is_private: true } }, false],
+    ["unlisted", { ...publicInfo, basic_info: { ...publicInfo.basic_info, is_unlisted: true } }, false],
+    ["unknown metadata", { playability_status: { status: "OK" }, basic_info: {} }, false],
+    ["unknown playability", { basic_info: publicInfo.basic_info }, false],
+    ["public livestream", { ...publicInfo, basic_info: { ...publicInfo.basic_info, is_live: true } }, true],
+  ] as const) {
+    assert.equal(await isYouTubeVideoPubliclyPlayable("video-1", {
+      getInfo: async () => info as never,
+    }), expected, label);
+  }
+  await assert.rejects(isYouTubeVideoPubliclyPlayable("video-1", {
+    getInfo: async () => { throw new Error("timeout"); },
+  }), /timeout/);
+});
 
 function video(videoId: string, publishedText?: string): YouTubeChannelVideo {
   return {

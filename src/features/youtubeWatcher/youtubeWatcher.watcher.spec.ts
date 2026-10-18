@@ -4,12 +4,14 @@ import {
   cacheYouTubeWatcherVideo,
   recoverYouTubeWatcherVideoCacheReferenceCandidate,
   repairOneYouTubeWatcherMessage,
+  scanYouTubeWatcher,
   saveYouTubeWatcherVideoCacheReference,
   saveYouTubeWatcherReferenceRecoveryPending,
   shouldMarkYouTubeWatcherPostFailed,
   startYouTubeWatcher,
 } from "./youtubeWatcher.watcher.js";
 import { YouTubeVideoCacheReferenceRecoveryError } from "./youtubeVideoCache.service.js";
+import type { YouTubeFeedEntry } from "./youtubeRss.js";
 
 const entry = {
   videoId: "video-1",
@@ -19,6 +21,87 @@ const entry = {
   videoUrl: "https://www.youtube.com/watch?v=video-1",
   thumbnailUrl: "https://i.ytimg.com/vi/video-1/maxresdefault.jpg",
 };
+
+// 実際のスキャンを通し、Discord送信前の保留と、RSSから消えた後の再確認を検証する。
+{
+  const posts = new Map<string, { entry: typeof entry; status: string }>();
+  const sent: string[] = [];
+  let releases = 0;
+  const subscription = {
+    id: "availability-sub", guild_id: "guild-1", youtube_channel_id: "availability-channel",
+    source_url: "https://www.youtube.com/channel/availability-channel", discord_channel_id: "channel-1",
+    enabled: true, last_error: null, updated_at: new Date(),
+  };
+  const query = async (sql: string, params: unknown[] = []) => {
+    if (sql.includes("pg_try_advisory_lock")) return { rows: [{ locked: true }] };
+    if (sql.includes("pg_advisory_unlock")) return { rows: [{ unlocked: true }] };
+    if (sql.includes("SELECT * FROM youtube_watch_subscriptions")) return { rows: [subscription] };
+    if (sql.includes("SELECT video_id, status")) return { rows: [...posts].map(([video_id, post]) => ({ video_id, status: post.status })) };
+    if (sql.includes("status IN ('deferred', 'failed')")) return { rows: [...posts.values()].filter((post) => post.status === "deferred" || post.status === "failed").map(({ entry: video }) => ({
+      video_id: video.videoId, title: video.title, channel_title: video.channelTitle,
+      published_at: video.publishedAt, video_url: video.videoUrl, thumbnail_url: video.thumbnailUrl,
+    })) };
+    if (sql.startsWith("INSERT INTO youtube_watch_posts")) {
+      posts.set(params[1] as string, {
+        entry: { videoId: params[1], title: params[2], channelTitle: params[3], publishedAt: params[4], videoUrl: params[5], thumbnailUrl: params[6] } as typeof entry,
+        status: params[8] as string,
+      });
+      return { rows: [] };
+    }
+    if (sql.startsWith("UPDATE youtube_watch_subscriptions SET last_error")) return { rows: [] };
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+  const ctx = {
+    config: { BOT_PROFILE: "debug", GUILD_ID: "guild-1", YOUTUBE_REQUEST_TIMEOUT_MS: 1000, ADHD_RSS_REQUEST_TIMEOUT_MS: 1000 },
+    mainPgPool: { connect: async () => ({ query, release: () => { releases += 1; } }) },
+    log: { warn: () => undefined },
+    client: { channels: { fetch: async () => ({
+      id: "channel-1", guildId: "guild-1", isTextBased: () => true,
+      isDMBased: () => false, isSendable: () => true, isThread: () => false,
+    }) } },
+  };
+  const makeEntry = (videoId: string) => ({ ...entry, videoId, videoUrl: `https://www.youtube.com/watch?v=${videoId}` });
+  let entries = ["members", "premiere", "public", "check-error"].map(makeEntry);
+  let feedFails = false;
+  const playable = new Set(["public"]);
+  let checkFails = true;
+  let sendFails = false;
+  const deps = {
+    fetchFeed: async () => feedFails ? { ok: false as const, error: "RSS unavailable" } : { ok: true as const, entries },
+    fetchFallback: async () => ({ ok: false as const, error: "fallback unavailable" }),
+    isPlayable: async (videoId: string) => {
+      if (videoId === "check-error" && checkFails) throw new Error("timeout");
+      return playable.has(videoId);
+    },
+    sendNotification: async (_ctx: unknown, _target: unknown, video: YouTubeFeedEntry) => {
+      assert.equal(posts.get(video.videoId)?.status, "pending");
+      if (sendFails && video.videoId === "premiere") throw new Error("Discord unavailable");
+      sent.push(video.videoId);
+      return { message: { id: `message-${video.videoId}` } } as never;
+    },
+  };
+  await scanYouTubeWatcher(ctx as never, deps);
+  assert.deepEqual(sent, ["public"]);
+  for (const id of ["members", "premiere", "check-error"]) assert.equal(posts.get(id)?.status, "deferred");
+  entries = [];
+  checkFails = false;
+  playable.add("check-error");
+  await scanYouTubeWatcher(ctx as never, deps);
+  assert.deepEqual(sent, ["public", "check-error"]);
+  feedFails = true;
+  playable.add("members");
+  playable.add("premiere");
+  sendFails = true;
+  await scanYouTubeWatcher(ctx as never, deps);
+  assert.deepEqual(sent, ["public", "check-error", "members"]);
+  assert.equal(posts.get("premiere")?.status, "failed");
+  sendFails = false;
+  await scanYouTubeWatcher(ctx as never, deps);
+  assert.deepEqual(sent, ["public", "check-error", "members", "premiere"]);
+  await scanYouTubeWatcher(ctx as never, deps);
+  assert.equal(sent.length, 4);
+  assert.equal(releases, 5);
+}
 
 const noPublicWatcher = startYouTubeWatcher({
   config: {

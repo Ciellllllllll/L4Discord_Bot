@@ -115,6 +115,7 @@ test("notification history separates notified videos from ones that failed to po
         { video_id: "sent-1", status: "sent" },
         { video_id: "pending-1", status: "pending" },
         { video_id: "failed-1", status: "failed" },
+        { video_id: "deferred-1", status: "deferred" },
       ], rowCount: 3 };
     },
   };
@@ -125,6 +126,30 @@ test("notification history separates notified videos from ones that failed to po
   assert.deepEqual([...history.failed], ["failed-1"]);
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0]!.params, ["subscription-1"]);
+});
+
+await test("deferred and failed posts retain feed metadata for retrying after they leave RSS", async () => {
+  const calls: Array<{ sql: string; params?: unknown[] }> = [];
+  const repo = new PostgresYouTubeWatcherRepository({
+    query: async (sql: string, params?: unknown[]) => {
+      calls.push({ sql, params });
+      return { rows: [{
+        video_id: "early-access", title: "先行公開", channel_title: "チャンネル",
+        published_at: new Date("2026-10-18T00:00:00Z"),
+        video_url: "https://www.youtube.com/watch?v=early-access", thumbnail_url: null,
+      }] };
+    },
+  } as never);
+  const entries = await repo.listRetryablePosts("subscription-1");
+  assert.deepEqual(entries, [{
+    videoId: "early-access", title: "先行公開", channelTitle: "チャンネル",
+    publishedAt: "2026-10-18T00:00:00.000Z",
+    videoUrl: "https://www.youtube.com/watch?v=early-access", thumbnailUrl: null,
+  }]);
+  assert.match(calls[0]!.sql, /status IN \('deferred', 'failed'\)/);
+  assert.deepEqual(calls[0]!.params, ["subscription-1"]);
+  await repo.savePost("subscription-1", entries[0]!, { status: "deferred" });
+  assert.equal(calls[1]!.params?.[8], "deferred");
 });
 
 test("due GoogleVideo retries select only pending none references older than the cutoff", async () => {

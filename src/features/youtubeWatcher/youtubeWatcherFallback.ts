@@ -225,6 +225,18 @@ function getClient(timeoutMs: number): Promise<Innertube> {
   return promise;
 }
 
+/** ログインしていない視聴者が、一般公開された本編を今再生できる場合だけ通知する。 */
+export async function isYouTubeVideoPubliclyPlayable(
+  videoId: string,
+  options: { timeoutMs?: number; getInfo?: Innertube["getBasicInfo"] } = {},
+): Promise<boolean> {
+  const info = await (options.getInfo ?? (async (id) => (await getClient(options.timeoutMs ?? 10_000)).getBasicInfo(id)))(videoId);
+  return info.playability_status?.status === "OK"
+    && info.basic_info.is_private === false
+    && info.basic_info.is_unlisted === false
+    && !info.basic_info.is_upcoming;
+}
+
 /** 代替手段：youtubei.js でチャンネルの「動画」タブの一覧を新しい順に取得する。 */
 export async function fetchYouTubeChannelVideos(
   channelId: string,
