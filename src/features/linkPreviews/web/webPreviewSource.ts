@@ -5,7 +5,10 @@ import { extractSteamLinks } from "../steam/steamPreviewSource.js";
 
 const WEB_URL_PATTERN = /https:\/\/[^\s<>\u3000]+/giu;
 const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）*_~`|";
-const MAX_WEB_TARGETS = 3;
+/** 1投稿でページを取得してカードにするリンクの数。超えた分は取得せず「ほかのリンク」カードにまとめる */
+export const MAX_WEB_PREVIEWS = 3;
+/** 「ほかのリンク」カードに並べるリンクの上限 */
+const MAX_WEB_TARGETS = 20;
 const MAX_LINK_BUTTON_URL_LENGTH = 512;
 const MAX_TITLE_CHARS = 200;
 const MAX_DESCRIPTION_CHARS = 300;

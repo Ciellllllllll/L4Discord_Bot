@@ -120,3 +120,39 @@ void test("sends an open-link fallback card for failed links when failures are i
     ["リンクを開く", "https://down.example/page"],
   ]);
 });
+
+void test("marks only transient failure cards as retryable", async () => {
+  const retries: Array<[string, boolean | undefined]> = [];
+  await sendWebLinkExpansion({ guildId: "guild", channelId: "channel" } as never, [
+    { target: { url: "https://slow.example/" }, status: "error", reason: "timeout" },
+    { target: { url: "https://busy.example/" }, status: "error", reason: "http_error", statusCode: 503 },
+    { target: { url: "https://gone.example/" }, status: "error", reason: "http_error", statusCode: 404 },
+    { target: { url: "https://file.example/" }, status: "error", reason: "not_html" },
+  ], {
+    db: {} as never,
+    log: { warn() {} },
+    replyExpansion: async (_message, key, _payload, _quoted, options) => {
+      retries.push([key, options?.retry]);
+      return { id: key } as never;
+    },
+  }, { includeFailures: true });
+  assert.deepEqual(retries, [["web:0", true], ["web:1", true], ["web:2", false], ["web:3", false]]);
+});
+
+void test("collects links beyond the fetch cap into one overflow card only when failures are included", async () => {
+  const sent: Array<{ key: string; payload: unknown }> = [];
+  const deps = {
+    db: {} as never,
+    log: { warn() {} },
+    replyExpansion: async (_message: unknown, key: string, payload: unknown) => { sent.push({ key, payload }); return { id: key } as never; },
+  };
+  const overflow = [{ url: "https://d.example/x" }, { url: "https://e.example/y" }];
+  await sendWebLinkExpansion({ guildId: "guild" } as never, [], deps, { overflow });
+  assert.equal(sent.length, 0);
+  await sendWebLinkExpansion({ guildId: "guild" } as never, [], deps, { includeFailures: true, overflow });
+  assert.deepEqual(sent.map((entry) => entry.key), ["web:overflow"]);
+  const text = JSON.stringify(sent[0]!.payload);
+  assert.match(text, /ほかのリンク/);
+  assert.match(text, /\[d\.example\]\(<https:\/\/d\.example\/x>\)/);
+  assert.match(text, /e\.example/);
+});

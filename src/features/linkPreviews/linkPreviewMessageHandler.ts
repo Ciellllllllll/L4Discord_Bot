@@ -39,7 +39,7 @@ import { collectTikTokReplyTargets, parseTikTokUrl, TIKTOK_DOMAINS } from "./tik
 import { buildInstagramReplyPayloads, expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
 import { collectInstagramReplyTargets, INSTAGRAM_DOMAINS, parseInstagramUrl } from "./instagram/instagramPreviewSource.js";
 import { buildWebReplyPayloads, sendWebLinkExpansion, type WebPreviewBuildResult } from "./web/webLinkExpansion.js";
-import { collectWebReplyTargets, extractWebLinks, parseWebUrl } from "./web/webPreviewSource.js";
+import { collectWebReplyTargets, extractWebLinks, MAX_WEB_PREVIEWS, parseWebUrl } from "./web/webPreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
 import { LateEmbedWatcher } from "./shared/lateEmbedWatcher.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
@@ -317,7 +317,9 @@ export class LinkPreviewMessageHandler {
       : [];
     const tiktokTargets = collectTikTokReplyTargets(extractTikTokLinks(content));
     const instagramTargets = collectInstagramReplyTargets(extractInstagramLinks(content));
-    const webTargets = collectWebReplyTargets(extractWebLinks(content));
+    const allWebTargets = collectWebReplyTargets(extractWebLinks(content));
+    const webTargets = allWebTargets.slice(0, MAX_WEB_PREVIEWS);
+    const overflowWebTargets = allWebTargets.slice(MAX_WEB_PREVIEWS);
     if (
       directSteamLinks.length === 0
       && twitterTargets.length === 0
@@ -480,7 +482,7 @@ export class LinkPreviewMessageHandler {
         db: this.ctx.db,
         replyExpansion: this.deps.replyExpansion,
         log: this.ctx.log,
-      }, { includeFailures: true });
+      }, { includeFailures: true, overflow: overflowWebTargets });
     }
     // カードを送り終えた後に、遅れて付いた公式 Embed が残っていないか確認する。
     // TikTok・Instagram だけのときはまだカードを送っていないので、それぞれの展開完了後に確認する

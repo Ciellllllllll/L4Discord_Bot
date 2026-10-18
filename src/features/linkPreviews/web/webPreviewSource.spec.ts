@@ -49,10 +49,11 @@ void test("leaves links with dedicated or native expansions to their own handler
   assert.deepEqual(parseWebUrl("https://notgithub.com/octo"), { url: "https://notgithub.com/octo" });
 });
 
-void test("deduplicates targets and caps them at three per message", () => {
+void test("deduplicates targets and keeps up to twenty of them", () => {
   assert.deepEqual(collectWebReplyTargets([
     "https://a.example/1", "https://a.example/1#x", "https://b.example/", "https://c.example/", "https://d.example/",
-  ]).map((target) => target.url), ["https://a.example/1", "https://b.example/", "https://c.example/"]);
+  ]).map((target) => target.url), ["https://a.example/1", "https://b.example/", "https://c.example/", "https://d.example/"]);
+  assert.equal(collectWebReplyTargets(Array.from({ length: 30 }, (_, i) => `https://s${i}.example/`)).length, 20);
 });
 
 void test("decodes Shift_JIS pages using the meta charset", () => {

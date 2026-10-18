@@ -86,6 +86,24 @@ void test("replaces the suppressed embed of a failed link with a fallback card i
   assert.match(JSON.stringify(calls.replies[1]!.payload), /ページの情報を取得できませんでした/);
 });
 
+void test("fetches only the first three generic links and lists the rest in an overflow card", async () => {
+  const urls = ["https://a.example/", "https://b.example/", "https://c.example/", "https://d.example/", "https://e.example/"];
+  const { value, calls } = message(urls.join(" "));
+  const requested: string[] = [];
+  await new LinkPreviewMessageHandler(createCtx() as never, {
+    replyExpansion: async (_message, key, payload) => { calls.replies.push({ key, payload }); return { id: key } as never; },
+    buildWebReplyPayloads: async (targets) => {
+      requested.push(...targets.map((target) => target.url));
+      return targets.map((target) => success(target.url));
+    },
+    suppressLateEmbeds: async () => undefined,
+    lateEmbedWatcher: null,
+  }).onMessage(value as never);
+  assert.deepEqual(requested, urls.slice(0, 3));
+  assert.deepEqual(calls.replies.map((reply) => reply.key), ["web:0", "web:1", "web:2", "web:overflow"]);
+  assert.match(JSON.stringify(calls.replies[3]!.payload), /d\.example[\s\S]*e\.example/);
+});
+
 void test("does not treat suppressed or dedicated links as generic web links", () => {
   const handler = new LinkPreviewMessageHandler(createCtx() as never, { lateEmbedWatcher: null });
   assert.equal(handler.hasLinks(message("<https://quiet.example/>").value as never), false);
