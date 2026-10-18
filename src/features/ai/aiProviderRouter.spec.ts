@@ -52,6 +52,31 @@ function repositories(
 
 async function main() {
   {
+    const repo = repositories();
+    const messages = [{ role: "user" as const, content: "画像の説明をして" }];
+    const original = JSON.stringify(messages);
+    const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
+      usageClient: { async getTodaySnapshot() { throw new Error("images must not inspect OpenAI usage"); } },
+      async openAiChat() { throw new Error("images must not go to a text-only route"); },
+      async deepSeekChat(input, options) {
+        assert.equal(options.model, "deepseek-flash");
+        assert.deepEqual(input.at(-1), {
+          role: "user", content: [
+            { type: "text", text: "画像の説明をして" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,aW1hZ2U=" } },
+          ],
+        });
+        return { content: "画像の回答", ms: 1, model: "deepseek-flash" };
+      },
+    });
+    const result = await router.chat("guild", "answer", messages, { thinking: false, imageDataUrl: "data:image/png;base64,aW1hZ2U=" });
+    assert.equal(result.provider, "deepseek");
+    assert.equal(JSON.stringify(messages), original);
+    assert.deepEqual(repo.calls, []);
+    await assert.rejects(router.chat("guild", "answer", [], { thinking: false, imageDataUrl: "data:image/png;base64,aW1hZ2U=" }));
+  }
+
+  {
     const previewTranslationTask: AiTask = "preview_translation";
     const repo = repositories({ provider: "openai", openAiModel: "gpt54_mini" });
     let maxOutputTokens: number | undefined;

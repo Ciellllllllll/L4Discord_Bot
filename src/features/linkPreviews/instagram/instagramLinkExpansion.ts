@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   AttachmentBuilder,
   MessageFlags,
@@ -17,6 +18,8 @@ import {
 } from "../shared/mediaPreviewExpansion.js";
 import {
   buildOriginalUrlReply,
+  isTransientPreviewFailure,
+  markRetryablePreview,
   downloadMedia,
   IMAGE_EXTENSIONS,
   IMAGE_MAX_BYTES,
@@ -187,7 +190,8 @@ async function buildInstagramReplyPayload(
   const result = await fetchInstagramPreview(target, options.fetcher);
   if (result.status !== "ok") {
     options.log?.warn({ reason: result.reason, url: target.url }, "instagram preview fallback");
-    return buildOriginalUrlReply(target.url);
+    const fallback = buildOriginalUrlReply(target.url);
+    return isTransientPreviewFailure(result.reason) ? markRetryablePreview(fallback) : fallback;
   }
   // 翻訳はメディアに依存しないため先に行い、ダウンロードしたバッファを保持する時間を短くする。
   // 保存スキーマは https URL のみ許可するため、状態には attachment:// を含まないこの文書を保存する
@@ -222,6 +226,7 @@ export async function buildInstagramReplyPayloads(
 }
 
 type InstagramExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   log: LoggerLike;
   attachmentSizeLimitBytes: number;
@@ -251,6 +256,7 @@ export async function expandInstagramLinks(
     maxTargets: MAX_INSTAGRAM_TARGETS_PER_MESSAGE,
     build: async (target) => (await build([target], options))[0],
     db: deps.db,
+    replyExpansion: deps.replyExpansion,
     log: deps.log,
     ...(deps.saveState ? { saveState: deps.saveState } : {}),
     ...(deps.queue ? { queue: deps.queue } : {}),

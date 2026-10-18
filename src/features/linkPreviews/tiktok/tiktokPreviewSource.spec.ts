@@ -194,6 +194,28 @@ assert.equal(normalizeTikwmResponse({ code: -1, msg: "not found" }).status, "fal
   );
 }
 
+// 一時的な取得失敗の元URL返信だけを再試行対象として追跡側へ伝える
+{
+  const target = { url: "https://www.tiktok.com/@user/video/1", videoId: "1" };
+  const retries: Record<string, unknown> = {};
+  for (const status of [503, 429, 404]) {
+    await expandTikTokLinks({ id: "m", guildId: null, channelId: "c" } as never, [target], {
+      db: {} as never,
+      log: { warn: () => undefined },
+      attachmentSizeLimitBytes: 1024,
+      queue: new LocalLlmQueue({ maxConcurrent: 1, maxQueue: 1 }),
+      buildReplyPayloads: (batch, options) => buildTikTokReplyPayloads(batch, {
+        ...options, fetcher: async () => new Response(null, { status }),
+      }),
+      replyExpansion: async (_message, _key, _payload, _quoted, replyOptions) => {
+        retries[status] = replyOptions?.retry;
+        return { id: "r" } as never;
+      },
+    });
+  }
+  assert.deepEqual(retries, { 503: true, 429: true, 404: false });
+}
+
 // URLの分割：各チャンクは上限以内、順序と件数を保つ
 {
   assert.deepEqual(chunkUrlsForMessages([], 10), []);

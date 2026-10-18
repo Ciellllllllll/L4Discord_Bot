@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   AttachmentBuilder,
   MessageFlags,
@@ -22,6 +23,7 @@ import {
 import type { PreviewDocument } from "../shared/previewDocument.js";
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
 import { buildPreviewComponents, replacePreviewMedia } from "../shared/previewRenderer.js";
+import { isRetryablePreview, isTransientPreviewFailure, markRetryablePreview } from "../shared/previewMediaDownload.js";
 import { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
   translatePreviewDocument,
@@ -242,9 +244,12 @@ export async function buildYouTubeReplyPayloads(
       ? buildYouTubeComponentsOnlyFallbackPayload(target.canonicalUrl)
       : buildYouTubeFallbackReply([target.canonicalUrl]);
     const result = await fetchYouTubePreview(target, options);
-    if (result.status !== "ok") return options.componentsOnly
-      ? buildYouTubeComponentsOnlyFallbackPayload(target.canonicalUrl)
-      : buildYouTubeFallbackReply([target.canonicalUrl]);
+    if (result.status !== "ok") {
+      const fallback = options.componentsOnly
+        ? buildYouTubeComponentsOnlyFallbackPayload(target.canonicalUrl)
+        : buildYouTubeFallbackReply([target.canonicalUrl]);
+      return isTransientPreviewFailure(result.reason) ? markRetryablePreview(fallback) : fallback;
+    }
     const document = youTubePreviewToDocument(result.preview);
     const resolution = options.mediaMode || !["video", "oembed"].includes(result.preview.kind)
       ? {}
@@ -332,6 +337,7 @@ export async function prepareYouTubeLinkExpansion(
 }
 
 export type SendYouTubeExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   mainPgPool?: BotContext["mainPgPool"];
   config: AppConfig;
@@ -354,7 +360,7 @@ export async function sendYouTubeLinkExpansion(
   deps: SendYouTubeExpansionDeps,
 ): Promise<string[]> {
   const detectedSteamLinks: string[] = [];
-  for (const item of plan.items) {
+  for (const [index, item] of plan.items.entries()) {
     try {
       const useNative = item.nativeEmbed !== null;
       const usableCachedMedia = item.media?.mediaMode === "vps" || item.media?.mediaMode === "google"
@@ -378,6 +384,8 @@ export async function sendYouTubeLinkExpansion(
         return finalFallbackMedia;
       };
       let payload: YouTubePreviewPayload;
+      // 取得失敗の代替表示は、追跡中の展開では定期確認で作り直す。
+      let retry = false;
       if (item.media?.mediaMode === "none" && item.media.lastError?.startsWith(YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX)) {
         finalFallbackAttempted = true;
         finalFallbackReason = item.media.lastError.slice(YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX.length);
@@ -413,6 +421,7 @@ export async function sendYouTubeLinkExpansion(
             ? { mediaMode: usableCachedMedia.mediaMode, mediaUrlOverride: usableCachedMedia.mediaUrl }
             : finalFallbackAttempted ? { mediaMode: "none" as const } : {}),
         });
+        retry = built !== undefined && isRetryablePreview(built);
         payload = built && (built as { flags?: number }).flags === MessageFlags.IsComponentsV2
           ? built as YouTubePreviewPayload
           : buildYouTubeComponentsOnlyFallbackPayload(item.target.canonicalUrl);
@@ -460,14 +469,15 @@ export async function sendYouTubeLinkExpansion(
         ? { ...baseSendPayload, components: replaceYouTubePreviewMedia(baseSendPayload.components, undefined, { fallback: true }), files: [] }
         : baseSendPayload;
       let reply;
-      try { reply = await message.reply(sendPayload); }
+      const send = (payload: MessageCreateOptions) => deps.replyExpansion?.(message, `youtube:${index}`, payload, undefined, { retry }) ?? message.reply(payload);
+      try { reply = await send(sendPayload); }
       catch (error) {
         if (!useNative) throw error;
         deps.log.warn({ error }, "youtube preview reply error; retrying without native media");
         const retryMedia = usableCachedMedia?.mediaMode === "vps"
           ? undefined
           : await resolveFinalFallback();
-        reply = await message.reply({
+        reply = await send({
           ...sendPayload,
           components: replaceYouTubePreviewMedia(
             sendPayload.components,

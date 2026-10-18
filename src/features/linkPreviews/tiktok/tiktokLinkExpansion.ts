@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   AttachmentBuilder,
   MessageFlags,
@@ -16,6 +17,8 @@ import {
 } from "../shared/mediaPreviewExpansion.js";
 import {
   buildOriginalUrlReply,
+  isTransientPreviewFailure,
+  markRetryablePreview,
   chunkUrlsForMessages,
   downloadMedia,
   IMAGE_EXTENSIONS,
@@ -99,7 +102,10 @@ async function buildTikTokReplyPayload(
   options: TikTokReplyBuildOptions,
 ): Promise<TikTokPreviewPayload | MessageCreateOptions> {
   const result = await fetchTikTokPreview(target, options.fetcher);
-  if (result.status !== "ok") return buildTikTokFallbackReply(target.url);
+  if (result.status !== "ok") {
+    const fallback = buildTikTokFallbackReply(target.url);
+    return isTransientPreviewFailure(result.reason) ? markRetryablePreview(fallback) : fallback;
+  }
   // 翻訳はメディアに依存しないため先に行い、ダウンロードしたバッファを保持する時間を短くする。
   // 保存スキーマは https URL のみ許可するため、状態には attachment:// を含まないこの文書を保存する
   // （表示切り替えは本文テキストのみ差し替えるので、メディア部分の違いは影響しない）。
@@ -132,6 +138,7 @@ export async function buildTikTokReplyPayloads(
 }
 
 type TikTokExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   log: LoggerLike;
   attachmentSizeLimitBytes: number;
@@ -161,6 +168,7 @@ export async function expandTikTokLinks(
     maxTargets: MAX_TIKTOK_TARGETS_PER_MESSAGE,
     build: async (target) => (await build([target], options))[0],
     db: deps.db,
+    replyExpansion: deps.replyExpansion,
     log: deps.log,
     ...(deps.saveState ? { saveState: deps.saveState } : {}),
     ...(deps.queue ? { queue: deps.queue } : {}),

@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import ts from "typescript";
 
 const repoRoot = process.cwd();
-const sourceFiles = execFileSync("git", ["ls-files", "src/**/*.ts"], {
+const sourceFiles = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "src/**/*.ts"], {
   cwd: repoRoot,
   encoding: "utf8",
 })

@@ -28,6 +28,14 @@ function parseStoredOption(value: unknown, depth: number): StoredSlashCommand["o
     if (!isRecord(value.user) || typeof value.user.id !== "string" || typeof value.user.username !== "string" || typeof value.user.tag !== "string") return null;
     user = { id: value.user.id, username: value.user.username, tag: value.user.tag };
   }
+  let attachment: StoredSlashCommand["options"][number]["attachment"];
+  if (value.attachment !== undefined) {
+    const file = value.attachment;
+    if (!isRecord(file) || typeof file.id !== "string" || typeof file.name !== "string" ||
+        typeof file.url !== "string" || typeof file.size !== "number" || !Number.isSafeInteger(file.size) || file.size < 0 ||
+        (file.contentType !== null && typeof file.contentType !== "string")) return null;
+    attachment = { id: file.id, name: file.name, url: file.url, size: file.size, contentType: file.contentType };
+  }
   let options: StoredSlashCommand["options"] | undefined;
   if (value.options !== undefined) {
     if (!Array.isArray(value.options)) return null;
@@ -43,6 +51,7 @@ function parseStoredOption(value: unknown, depth: number): StoredSlashCommand["o
     type: value.type,
     ...(value.value !== undefined ? { value: value.value as string | number | boolean } : {}),
     ...(user ? { user } : {}),
+    ...(attachment ? { attachment } : {}),
     ...(options ? { options } : {}),
   };
 }

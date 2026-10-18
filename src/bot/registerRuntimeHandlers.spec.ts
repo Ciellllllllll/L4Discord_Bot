@@ -23,6 +23,23 @@ test("preview state cleanup runs common and legacy cleanup immediately and every
   assert.equal((timer as unknown as { marker: string }).marker, "cleanup");
 });
 
+void test("expansion reconciliation runs at startup and hourly even when translation cleanup fails", async () => {
+  const calls: string[] = [];
+  let scheduled!: () => void;
+  startPreviewStateCleanup({
+    deleteCommon: async () => { throw new Error("translation cleanup failed"); },
+    deleteLegacy: async () => { calls.push("legacy"); },
+    reconcileExpansions: async () => { calls.push("expansions"); },
+    logWarning: () => { calls.push("warning"); },
+    setInterval: (callback) => { scheduled = callback; return {} as NodeJS.Timeout; },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["legacy", "expansions", "warning"]);
+  scheduled();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["legacy", "expansions", "warning", "legacy", "expansions", "warning"]);
+});
+
 test("interaction errors reply, edit deferred replies, and fall back to follow-up", async () => {
   const calls: string[] = [];
   await respondToInteractionError({

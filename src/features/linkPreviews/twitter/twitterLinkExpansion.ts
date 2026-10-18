@@ -1,3 +1,4 @@
+import type { ExpansionReply } from "../shared/linkExpansionTracker.js";
 import {
   MessageFlags,
   type APIMessageTopLevelComponent,
@@ -9,6 +10,7 @@ import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { PreviewDocument } from "../shared/previewDocument.js";
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
+import { isRetryablePreview, isTransientPreviewFailure, markRetryablePreview } from "../shared/previewMediaDownload.js";
 import { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
   translatePreviewDocument,
@@ -112,7 +114,10 @@ export async function buildTwitterReplyPayloads(
       { id: target.statusId, screenName: target.screenName },
       options.fetcher,
     );
-    if (result.status !== "ok") return buildTwitterFallbackReply([target.vxUrl]);
+    if (result.status !== "ok") {
+      const fallback = buildTwitterFallbackReply([target.vxUrl]);
+      return isTransientPreviewFailure(result.reason) ? markRetryablePreview(fallback) : fallback;
+    }
     const document = tweetPreviewToDocument(result.tweet);
     const built = await buildTranslatedPreview(document, {
       translate: async () => await translateForTwitter(document, result.tweet, options),
@@ -133,6 +138,7 @@ export async function buildTwitterReplyPayloads(
 }
 
 type TwitterExpansionDeps = {
+  replyExpansion?: ExpansionReply;
   db: BotContext["db"];
   log: LoggerLike;
   config?: AppConfig;
@@ -154,12 +160,14 @@ export async function expandTwitterLinks(
     guildId: message.guildId ?? deps.config?.GUILD_ID,
   });
   const detectedSteamLinks: string[] = [];
-  for (const payload of payloads) {
+  for (const [index, payload] of payloads.entries()) {
     try {
       const previewState = (payload as TwitterPreviewPayload).previewState;
       detectedSteamLinks.push(...((payload as TwitterPreviewPayload).detectedSteamLinks ?? []));
       const { previewState: _previewState, detectedSteamLinks: _detectedSteamLinks, ...replyPayload } = payload as TwitterPreviewPayload;
-      const reply = await message.reply(replyPayload);
+      const reply = await (deps.replyExpansion?.(
+        message, `twitter:${index}`, replyPayload, undefined, { retry: isRetryablePreview(payload) },
+      ) ?? message.reply(replyPayload));
       if (!previewState || !message.guildId) continue;
       try {
         await (deps.saveState ?? savePreviewTranslationState)(deps.db, {

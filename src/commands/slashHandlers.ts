@@ -16,6 +16,7 @@ import { isAdmin } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { SLASH_META } from "./slashMeta.js";
 import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
+import { QAttachmentError } from "../features/ai/qAttachment.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { showCreatePromptModal } from "../features/ai/createPrompt.js";
 import { canUseAi, markAiUse } from "../features/ai/userCooldown.js";
@@ -323,9 +324,9 @@ async function handleShowPrompt(interaction: ChatInputCommandInteraction, ctx: B
 }
 
 async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
-  const raw = interaction.options.getString("text", true).trim();
-  if (!raw) {
-    await interaction.reply({ content: "質問内容が空です。", flags: MessageFlags.Ephemeral });
+  const raw = interaction.options.getString("text")?.trim() ?? "";
+  if (!raw && !interaction.options.getAttachment("attachment")) {
+    await interaction.reply({ content: "質問の本文か添付ファイルを指定してください。", flags: MessageFlags.Ephemeral });
     return;
   }
   if (!canUseAi(interaction.user.id, Q_COOLDOWN_MS)) {
@@ -339,9 +340,9 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
     await svc.routeSlashInteraction(interaction, { r18 });
     markAiUse(interaction.user.id);
   } catch (e) {
-    ctx.log.error({ err: e }, "AI question failed");
+    if (!(e instanceof QAttachmentError)) ctx.log.error({ err: e }, "AI question failed");
     await interaction.editReply({
-      content: Q_FAILED_MESSAGE,
+      content: e instanceof QAttachmentError ? e.message : Q_FAILED_MESSAGE,
       embeds: [],
       components: [],
       allowedMentions: { parse: [] },
