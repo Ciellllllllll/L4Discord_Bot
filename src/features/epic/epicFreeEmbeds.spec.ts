@@ -12,7 +12,7 @@ const candidate: EpicFreeCandidate = {
   detectedType: "current_free_game",
   productSlug: "free-epic-game",
   url: "https://store.epicgames.com/p/free-epic-game",
-  imageUrl: null,
+  imageUrl: "https://cdn.example.com/epic-free.png",
   originalPrice: 1980,
   discountPrice: 0,
   currencyCode: "JPY",
@@ -62,6 +62,16 @@ assert.deepEqual(
     "https://launcher.store.epicgames.com/p/free-epic-game",
   ],
 );
+
+const mediaIndex = container.components.findIndex((component) => component.type === ComponentType.MediaGallery);
+const actionRowIndex = container.components.findIndex((component) => component.type === ComponentType.ActionRow);
+const media = container.components[mediaIndex];
+assert.equal(media?.type, ComponentType.MediaGallery);
+assert.deepEqual(
+  media?.type === ComponentType.MediaGallery ? media.items.map((item) => item.media.url) : [],
+  ["https://cdn.example.com/epic-free.png"],
+);
+assert.ok(actionRowIndex > mediaIndex, "link buttons must be placed below the image");
 
 const payload = componentCardsPayload([card]);
 assert.equal(payload.components.length, 1);
