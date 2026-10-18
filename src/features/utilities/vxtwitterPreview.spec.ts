@@ -198,6 +198,84 @@ async function run(): Promise<void> {
   assert.equal(extraMedia.tweet.media[0]?.kind, "video");
   assert.equal(extraMedia.tweet.media[1]?.kind, "photo");
 
+  // 個別の写真が1枚以上あるとき、複数枚を1枚に統合した mosaic 画像は埋め込まない
+  const photosWithMosaic = normalizeFixTweetResponse({
+    code: 200,
+    message: "OK",
+    tweet: {
+      id: "322",
+      text: "photos are already listed individually",
+      author: { screen_name: "media" },
+      media: {
+        all: [
+          { type: "photo", url: "https://pbs.twimg.com/media/photo1.jpg" },
+          { type: "photo", url: "https://pbs.twimg.com/media/photo2.jpg" },
+        ],
+        mosaic: {
+          type: "mosaic_photo",
+          formats: {
+            webp: "https://pbs.twimg.com/media/mosaic.webp",
+          },
+        },
+      },
+    },
+  });
+  assert.equal(photosWithMosaic.status, "ok");
+  assert.equal(photosWithMosaic.tweet.media.length, 2);
+  assert.equal(photosWithMosaic.tweet.media.every((media) => media.kind === "photo"), true);
+  assert.equal(
+    photosWithMosaic.tweet.media.some((media) => media.url === "https://pbs.twimg.com/media/mosaic.webp"),
+    false,
+  );
+
+  // 個別の写真が1枚もない場合はフォールバックとして mosaic 画像を利用する
+  const mosaicOnly = normalizeFixTweetResponse({
+    code: 200,
+    message: "OK",
+    tweet: {
+      id: "323",
+      text: "no individual photos available",
+      author: { screen_name: "media" },
+      media: {
+        mosaic: {
+          type: "mosaic_photo",
+          formats: {
+            webp: "https://pbs.twimg.com/media/mosaic.webp",
+          },
+        },
+      },
+    },
+  });
+  assert.equal(mosaicOnly.status, "ok");
+  assert.equal(mosaicOnly.tweet.media.length, 1);
+  assert.equal(mosaicOnly.tweet.media[0]?.kind, "photo");
+  assert.equal(mosaicOnly.tweet.media[0]?.url, "https://pbs.twimg.com/media/mosaic.webp");
+
+  // media.all 内に mosaic_photo が紛れていても、個別写真があれば統合画像は使わない
+  const allWithMosaicEntry = normalizeFixTweetResponse({
+    code: 200,
+    message: "OK",
+    tweet: {
+      id: "324",
+      text: "mosaic entry inside media.all",
+      author: { screen_name: "media" },
+      media: {
+        all: [
+          { type: "photo", url: "https://pbs.twimg.com/media/photo1.jpg" },
+          {
+            type: "mosaic_photo",
+            formats: {
+              webp: "https://pbs.twimg.com/media/mosaic.webp",
+            },
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(allWithMosaicEntry.status, "ok");
+  assert.equal(allWithMosaicEntry.tweet.media.length, 1);
+  assert.equal(allWithMosaicEntry.tweet.media[0]?.url, "https://pbs.twimg.com/media/photo1.jpg");
+
   const mediaOnlyQuote = normalizeFixTweetResponse({
     code: 200,
     message: "OK",

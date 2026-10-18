@@ -219,19 +219,30 @@ function normalizeMedia(rawTweet: Record<string, unknown>, tweetSensitive: boole
     ...all,
     ...(all.length === 0 ? [...arrayValue(media?.photos), ...arrayValue(media?.videos)] : []),
     ...(media?.external ? [media.external] : []),
-    ...(media?.mosaic ? [media.mosaic] : []),
     ...arrayValue(rawTweet.media_extended),
   ];
   const seen = new Set<string>();
   const result: TweetMedia[] = [];
+  let mosaicRaw: unknown = media?.mosaic ?? null;
+  let hasPhoto = false;
   for (const item of ordered) {
-    const normalized = stringValue(asRecord(item)?.type) === "mosaic_photo"
-      ? normalizeMosaic(item, tweetSensitive)
-      : normalizeMediaItem(item, tweetSensitive);
+    const type = stringValue(asRecord(item)?.type);
+    if (type === "mosaic_photo") {
+      if (!mosaicRaw) mosaicRaw = item;
+      continue;
+    }
+    const normalized = normalizeMediaItem(item, tweetSensitive);
     if (normalized && !seen.has(normalized.url)) {
       seen.add(normalized.url);
       result.push(normalized);
+      if (normalized.kind === "photo") hasPhoto = true;
     }
+  }
+  // 複数枚の写真を1枚に統合した mosaic 画像は個別画像と重複するため、
+  // 個別の写真が1枚も取れなかった場合のフォールバックとしてのみ採用する。
+  if (!hasPhoto && mosaicRaw) {
+    const mosaic = normalizeMosaic(mosaicRaw, tweetSensitive);
+    if (mosaic && !seen.has(mosaic.url)) result.push(mosaic);
   }
   return result.slice(0, 10);
 }
