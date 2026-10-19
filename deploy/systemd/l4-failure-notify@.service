@@ -1,0 +1,13 @@
+[Unit]
+Description=Notify Discord that %i failed
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/l4discord/failure-notify.env
+ExecStart=/usr/local/sbin/l4-failure-notify %i
+DynamicUser=true
+SupplementaryGroups=systemd-journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

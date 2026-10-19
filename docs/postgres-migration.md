@@ -199,6 +199,7 @@ Dockerの操作には`sudo /usr/bin/docker`を使い、実行中の`GITHUB_TOKEN
 別環境での復元確認を行ってください。
 VPS内だけに保存しても、VPSの消失やディスク故障には備えられません。
 添付ファイルなどは、このスクリプトの対象外です。
+`.env`と`data`は[アプリデータのバックアップ](#アプリデータのバックアップ)で保存します。
 
 ### 配置と接続先
 
@@ -243,6 +244,139 @@ systemctl list-timers l4-postgresql-backup.timer --no-pager
 [timer定義](../deploy/systemd/l4-postgresql-backup.timer)では、バックアップを毎日06:00 JSTに実行するよう設定しています。
 `Persistent=true`のため、停止中に予定時刻を過ぎた場合は、timerの再開時に未実行分が実行されます。
 バックアップの終了状態に加え、保持世代の削除に関する警告もログで確認してください。
+保持世代の削除に失敗しても終了状態は成功のままのため、[失敗時の通知](#失敗時の通知)は送られません。
+
+## アプリデータのバックアップ
+
+### 保存内容と保持期間
+
+[scripts/app-data-backup.sh](../scripts/app-data-backup.sh)は、`/opt/L4_DiscordBot`の`.env`と`data`をtar.gz形式で保存します。
+既定の保存先は`/opt/backups/l4-discordbot`です。
+添付ファイルは容量が大きいため、全体の保存は日曜だけに行います。
+
+| ファイル | 実行日 | 内容 | 保持数 |
+| --- | --- | --- | --- |
+| `backup-text-YYYYMMDD-HHMMSS.tar.gz` | 月曜から土曜 | `.env`と、`message_log_attachments`を除く`data` | 最新7世代 |
+| `backup-full-YYYYMMDD-HHMMSS.tar.gz` | 日曜 | `.env`と`data`のすべて | 最新2世代 |
+
+保存中のファイルが書き換わらないよう、起動中のBotコンテナを止めてから保存し、保存後に起動し直します。
+保存に失敗した場合もBotは起動し直し、作成途中のファイルと古い世代は削除しません。
+保存前から止まっていたBotは起動しません。
+日付と曜日は、ホストのタイムゾーン設定に関係なく`Asia/Tokyo`で決めます。
+同時に実行された場合は、後から始めた方が何もせずに失敗します。
+ファイルは権限`0600`で作成します。
+`.env`を暗号化せずに含むため、保存先を他のユーザーへ公開しないでください。
+
+Botコンテナは、Composeのプロジェクト名`l4discord`とサービス名`bot`のラベルから探します。
+[デプロイ](#releaseブランチからのデプロイ)は`docker compose -p l4discord`で起動するため、ホストを移してもコンテナ名を設定し直す必要はありません。
+該当するコンテナが1件でない場合は、Botを止めずに失敗します。
+
+### 配置と設定
+
+ホストにDocker、systemd、`flock`があることを確認し、リポジトリのルートから配置します。
+
+```bash
+sudo install -d -m 0700 -o root -g root /opt/backups/l4-discordbot
+sudo install -m 0750 -o root -g root scripts/app-data-backup.sh /usr/local/sbin/l4-app-data-backup
+sudo install -m 0644 deploy/systemd/l4-app-data-backup.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/l4-app-data-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemd-analyze verify /etc/systemd/system/l4-app-data-backup.service /etc/systemd/system/l4-app-data-backup.timer
+```
+
+既定値と異なる環境では、`/etc/l4discord/app-data-backup.env`で上書きします。
+使わない項目は省略できます。
+
+```dotenv
+APP_DIR=/opt/L4_DiscordBot
+BACKUP_ROOT=/opt/backups/l4-discordbot
+BOT_COMPOSE_PROJECT=l4discord
+BOT_COMPOSE_SERVICE=bot
+BACKUP_TZ=Asia/Tokyo
+# BOT_CONTAINERを指定すると、ラベルによる検索を行わずにこのコンテナを使います。
+# BOT_CONTAINER=l4discord-bot-1
+```
+
+### 実行結果と定期実行の確認
+
+引数に`text`か`full`を渡すと、曜日に関係なくその種類で保存します。
+引数を省略した場合は曜日で決めます。
+
+```bash
+sudo /usr/local/sbin/l4-app-data-backup text
+sudo systemctl start l4-app-data-backup.service
+test "$(systemctl show -p Result --value l4-app-data-backup.service)" = success
+sudo journalctl -u l4-app-data-backup.service -n 100 --no-pager
+sudo ls -l /opt/backups/l4-discordbot
+
+sudo systemctl enable --now l4-app-data-backup.timer
+systemctl list-timers l4-app-data-backup.timer --no-pager
+```
+
+[timer定義](../deploy/systemd/l4-app-data-backup.timer)では、毎日04:00 JSTに実行します。
+以前のcronで同じ処理を動かしていた環境では、timerを有効にした後にrootのcrontabから`backup-l4-discordbot.sh`の行を削除します。
+両方を残すと、Botの停止と保存が1日に2回行われます。
+
+## 失敗時の通知
+
+バックアップとディスク使用率の確認が失敗すると、systemdの`OnFailure=`から[scripts/notify-failure.sh](../scripts/notify-failure.sh)を起動し、DiscordのWebhookへ通知します。
+通知には、ホスト名、失敗したユニット名、そのユニットの直近15行のログを含めます。
+メンションは送りません。
+
+| ユニット | 確認内容 |
+| --- | --- |
+| `l4-postgresql-backup.service` | PostgreSQLのバックアップの失敗 |
+| `l4-app-data-backup.service` | アプリデータのバックアップの失敗 |
+| `l4-disk-usage-check.service` | ルートファイルシステムの使用率が80%以上 |
+
+ディスク使用率の確認は、毎日07:00 JSTに[scripts/disk-usage-check.sh](../scripts/disk-usage-check.sh)で行います。
+バックアップが溜まり続けるなどの問題を、ディスクが埋まる前に検知するためのものです。
+
+### 配置と設定
+
+```bash
+sudo install -m 0755 -o root -g root scripts/notify-failure.sh /usr/local/sbin/l4-failure-notify
+sudo install -m 0755 -o root -g root scripts/disk-usage-check.sh /usr/local/sbin/l4-disk-usage-check
+sudo install -m 0644 'deploy/systemd/l4-failure-notify@.service' /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/l4-disk-usage-check.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/l4-disk-usage-check.timer /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/l4-postgresql-backup.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemd-analyze verify \
+  '/etc/systemd/system/l4-failure-notify@.service' \
+  /etc/systemd/system/l4-disk-usage-check.service \
+  /etc/systemd/system/l4-disk-usage-check.timer
+```
+
+通知先は`/etc/l4discord/failure-notify.env`に設定します。
+このファイルはroot所有、権限`0600`とし、リポジトリへ保存しません。
+
+```dotenv
+DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN
+```
+
+確認する場所やしきい値を変える場合は、`/etc/l4discord/disk-usage-check.env`で上書きします。
+
+```dotenv
+DISK_USAGE_PATH=/
+DISK_USAGE_THRESHOLD=80
+```
+
+### 通知の確認
+
+通知のユニットを直接起動すると、指定したユニットのログで通知を送れます。
+Discordにメッセージが届いたことを確認してから、ディスク使用率の確認を有効にします。
+
+```bash
+sudo systemctl start l4-failure-notify@l4-app-data-backup.service.service
+sudo journalctl -u l4-failure-notify@l4-app-data-backup.service.service -n 20 --no-pager
+
+sudo systemctl start l4-disk-usage-check.service
+sudo systemctl enable --now l4-disk-usage-check.timer
+systemctl list-timers l4-disk-usage-check.timer --no-pager
+```
+
+通知の送信自体が失敗した場合は、`systemctl --failed`に`l4-failure-notify@*.service`が表示されます。
 
 ## 別環境での復元確認
 

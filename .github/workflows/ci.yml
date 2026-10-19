@@ -39,6 +39,14 @@ jobs:
         shell: bash
         run: bash scripts/postgres-backup.spec.sh
 
+      - name: Test application data backup script
+        shell: bash
+        run: bash scripts/app-data-backup.spec.sh
+
+      - name: Test alert scripts
+        shell: bash
+        run: bash scripts/alerts.spec.sh
+
       - name: Validate production Compose
         env:
           BOT_ENV_FILE: .env.example
