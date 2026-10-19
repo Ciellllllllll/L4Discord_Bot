@@ -1,6 +1,7 @@
 [Unit]
 Description=L4 PostgreSQL logical backup
 After=postgresql.service
+OnFailure=l4-failure-notify@%n.service
 
 [Service]
 Type=oneshot

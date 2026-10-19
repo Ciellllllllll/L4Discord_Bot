@@ -1,0 +1,14 @@
+[Unit]
+Description=L4 Discord bot application data backup
+After=docker.service
+Wants=docker.service
+OnFailure=l4-failure-notify@%n.service
+
+[Service]
+Type=oneshot
+UMask=0077
+EnvironmentFile=-/etc/l4discord/app-data-backup.env
+ExecStart=/usr/local/sbin/l4-app-data-backup
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
