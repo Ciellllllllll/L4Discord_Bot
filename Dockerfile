@@ -10,7 +10,7 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}" \
   go build -trimpath -ldflags='-s -w' -o /out/japanese-worker .
 
-FROM node:22-bookworm-slim AS app-build
+FROM node:22.23.4-bookworm-slim AS app-build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -19,7 +19,7 @@ COPY tsconfig.json prompt.txt Bokete.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22.23.4-bookworm-slim AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production

@@ -47,7 +47,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.23.4"
 
       - name: Run DeepSeek review
         if: steps.target.outputs.should-run == 'true'
