@@ -16,6 +16,7 @@ import { isAdmin } from "../core/permission.js";
 import { isVersionAllowed, versionBlockedMessage } from "../core/semverGate.js";
 import { SLASH_META } from "./slashMeta.js";
 import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles } from "../features/ai/aiQueryService.js";
+import { AiRequestError } from "../features/ai/aiRequestError.js";
 import { QAttachmentError } from "../features/ai/qAttachment.js";
 import { buildChangePromptModal } from "../features/ai/changePromptModal.js";
 import { showCreatePromptModal } from "../features/ai/createPrompt.js";
@@ -341,8 +342,13 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
     markAiUse(interaction.user.id);
   } catch (e) {
     if (!(e instanceof QAttachmentError)) ctx.log.error({ err: e }, "AI question failed");
+    const content = e instanceof QAttachmentError
+      ? e.message
+      : e instanceof AiRequestError && e.kind === "configuration"
+        ? "AIプロバイダーの設定が未完了です。管理者に .env のAPIキー設定を確認してください。"
+        : Q_FAILED_MESSAGE;
     await interaction.editReply({
-      content: e instanceof QAttachmentError ? e.message : Q_FAILED_MESSAGE,
+      content,
       embeds: [],
       components: [],
       allowedMentions: { parse: [] },
@@ -413,6 +419,7 @@ function fallbackReasonLabel(reason: string | undefined): string {
     case "openai_unconfigured": return "OpenAI設定が未完了";
     case "openrouter_unconfigured": return "OpenRouter設定が未完了";
     case "openrouter_failed": return "OpenRouter障害による一時退避";
+    case "openrouter_budget_threshold": return "OpenRouterの本日分トークン上限に到達";
     default: return reason ? "OpenAI障害による一時退避" : "なし";
   }
 }

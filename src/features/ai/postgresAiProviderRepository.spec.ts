@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
 import {
   ensurePostgresAiProviderSchema,
+  migratePostgresAiProviderOpenRouterBudgetSchema,
   migratePostgresAiProviderOpenRouterSchema,
   PostgresAiProviderBudgetRepository,
   PostgresAiProviderSettingsRepository,
@@ -38,6 +39,7 @@ async function assertPostgresDdl(): Promise<void> {
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "ai_provider_test"\.ai_provider_daily_budget/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "ai_provider_test"\.ai_provider_token_reservations/);
   assert.match(sql, /preferred_provider IN \('openai', 'deepseek', 'openrouter'\)/);
+  assert.match(sql, /provider IN \('openai', 'deepseek', 'openrouter'\)/);
   assert.match(sql, /preferred_openai_model/);
   assert.match(sql, /preferred_openai_model IN \('gpt56', 'gpt54_mini'\)/);
   assert.match(sql, /ALTER TABLE .*ai_guild_provider_settings/s);
@@ -53,6 +55,16 @@ async function assertPostgresDdl(): Promise<void> {
   const migrationSql = migrationPool.queries.join("\n");
   assert.match(migrationSql, /DROP CONSTRAINT IF EXISTS ai_guild_provider_settings_preferred_provider_check/);
   assert.match(migrationSql, /preferred_provider IN \('openai', 'deepseek', 'openrouter'\)/);
+
+  const budgetMigrationPool = createCapturingPool();
+  await migratePostgresAiProviderOpenRouterBudgetSchema(
+    budgetMigrationPool as unknown as Parameters<typeof migratePostgresAiProviderOpenRouterBudgetSchema>[0],
+    "ai_provider_test",
+  );
+  const budgetMigrationSql = budgetMigrationPool.queries.join("\n");
+  assert.match(budgetMigrationSql, /DROP CONSTRAINT IF EXISTS ai_provider_daily_budget_provider_check/);
+  assert.match(budgetMigrationSql, /DROP CONSTRAINT IF EXISTS ai_provider_token_reservations_provider_check/);
+  assert.match(budgetMigrationSql, /provider IN \('openai', 'deepseek', 'openrouter'\)/);
 }
 
 async function assertPostgresIntegration(): Promise<boolean> {
@@ -120,6 +132,15 @@ async function assertPostgresIntegration(): Promise<boolean> {
     assert.equal(nextDay.allowed, true);
     assert.equal((await budget.release("next-day"))?.status, "released");
     assert.equal((await budget.release("next-day"))?.status, "released");
+
+    const openRouter = await budget.tryReserve({
+      ...input,
+      provider: "openrouter",
+      reservationId: "openrouter-1",
+      reservedTokens: 10,
+    });
+    assert.equal(openRouter.allowed, true);
+    assert.equal((await budget.release("openrouter-1"))?.status, "released");
     return true;
   } finally {
     await pool.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);

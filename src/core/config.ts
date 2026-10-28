@@ -124,6 +124,7 @@ const profileOverridableKeys = [
   "OPENROUTER_API_KEY",
   "OPENROUTER_API_BASE",
   "OPENROUTER_MODEL",
+  "OPENROUTER_DAILY_TOKEN_LIMIT",
   "MESSAGE_ATTACHMENT_FILES_DIR",
   "PROMPT_FILE_PATH",
   "USER_PROMPT_DIR",
@@ -297,6 +298,8 @@ const envSchema = z.object({
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.string().min(1).default("openrouter/auto"),
   ),
+  // OpenRouter 経由の1日あたりのトークン上限（UTC基準）。この上限に達すると DeepSeek へ退避します。
+  OPENROUTER_DAILY_TOKEN_LIMIT: z.coerce.number().int().positive().default(1_000_000),
   AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(45_000),
     // DeepSeek 応答 body の最大バイト（fetchWithLimits）
 

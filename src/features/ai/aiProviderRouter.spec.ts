@@ -22,6 +22,7 @@ const baseConfig = {
   OPENROUTER_API_KEY: "openrouter",
   OPENROUTER_API_BASE: "https://openrouter.test/api/v1",
   OPENROUTER_MODEL: "openai/gpt-4.1-mini",
+  OPENROUTER_DAILY_TOKEN_LIMIT: 1_000_000,
   AI_TEMPERATURE: 0.7,
   AI_MAX_RETRIES: 0,
   AI_REQUEST_TIMEOUT_MS: 1_000,
@@ -98,7 +99,8 @@ async function main() {
     assert.equal(result.provider, "openrouter");
     assert.equal(result.model, "openai/gpt-4.1-mini");
     assert.equal(usageCalls, 0);
-    assert.deepEqual(repo.calls, []);
+    assert.match(repo.calls[0] ?? "", /^reserve:\d+$/);
+    assert.match(repo.calls.at(-1) ?? "", /^settle:\d+$/);
 
     const status = await router.getStatus("guild");
     assert.equal(status.preferredProvider, "openrouter");
@@ -111,12 +113,13 @@ async function main() {
       repo.budget,
       {
         async openRouterChat() { throw new Error("unexpected"); },
-        async deepSeekChat() { return { content: "fallback", ms: 1, model: "deepseek-fallback" }; },
+        async deepSeekChat() { throw new Error("must not silently fall back"); },
       },
     );
-    const fallback = await unconfigured.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: false });
-    assert.equal(fallback.provider, "deepseek");
-    assert.equal(fallback.fallbackReason, "openrouter_unconfigured");
+    await assert.rejects(
+      unconfigured.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: false }),
+      (error: unknown) => error instanceof AiRequestError && error.kind === "configuration",
+    );
     const unconfiguredStatus = await unconfigured.getStatus("guild");
     assert.equal(unconfiguredStatus.effectiveProvider, "deepseek");
     assert.equal(unconfiguredStatus.fallbackReason, "openrouter_unconfigured");
@@ -128,6 +131,22 @@ async function main() {
     const failed = await failing.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: false });
     assert.equal(failed.provider, "deepseek");
     assert.equal(failed.fallbackReason, "openrouter_failed");
+  }
+
+  {
+    const repo = repositories({ provider: "openrouter", openAiModel: "gpt56" });
+    repo.budget.tryReserve = async () => ({ allowed: false, duplicate: false, effectiveTokens: 1_000_001, reason: "threshold_exceeded" });
+    const router = new AiProviderRouter(baseConfig, repo.settings, repo.budget, {
+      async openRouterChat() { throw new Error("must not call OpenRouter over budget"); },
+      async deepSeekChat() { return { content: "fallback", ms: 1, model: "deepseek-fallback" }; },
+    });
+    const result = await router.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: false });
+    assert.equal(result.provider, "deepseek");
+    assert.equal(result.fallbackReason, "openrouter_budget_threshold");
+
+    const status = await router.getStatus("guild");
+    assert.equal(status.effectiveProvider, "deepseek");
+    assert.equal(status.fallbackReason, "openrouter_budget_threshold");
   }
 
   {

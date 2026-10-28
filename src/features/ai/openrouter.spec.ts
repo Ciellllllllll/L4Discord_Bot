@@ -38,13 +38,14 @@ async function run(): Promise<void> {
     const result = await openRouterChat(
       testConfig(),
       [{ role: "user", content: "hello" }],
-      { maxRetries: 0 },
+      { maxRetries: 0, maxTokens: 512 },
     );
 
     assert.equal(urls[0], "https://openrouter.test/api/v1/chat/completions");
     assert.equal(authHeaders[0], "Bearer openrouter-secret");
     assert.equal(bodies[0]?.model, "openai/gpt-4.1-mini");
     assert.equal(bodies[0]?.temperature, 0.3);
+    assert.equal(bodies[0]?.max_tokens, 512);
     assert.deepEqual(bodies[0]?.messages, [{ role: "user", content: "hello" }]);
     assert.equal(result.model, "openai/gpt-4.1-mini-response");
     assert.equal(result.content, "answer");
@@ -53,6 +54,20 @@ async function run(): Promise<void> {
     await assert.rejects(
       () => openRouterChat(testConfig({ OPENROUTER_API_KEY: "" }), [{ role: "user", content: "x" }]),
       (error: unknown) => error instanceof AiRequestError && error.kind === "configuration",
+    );
+
+    globalThis.fetch = (async () => Response.json({
+      choices: [{ message: { content: "   " } }],
+      usage: { total_tokens: 3 },
+    })) as typeof fetch;
+    await assert.rejects(
+      () => openRouterChat(testConfig(), [{ role: "user", content: "x" }], { maxRetries: 0 }),
+      (error: unknown) => {
+        assert.ok(error instanceof AiRequestError);
+        assert.equal(error.kind, "invalid_response");
+        assert.equal(error.usageTotalTokens, 3);
+        return true;
+      },
     );
 
     globalThis.fetch = (async () => new Response("reflected-private-prompt", {

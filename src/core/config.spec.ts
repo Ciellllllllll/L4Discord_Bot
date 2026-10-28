@@ -278,6 +278,7 @@ assert.equal(openAiDefaultsConfig.OPENAI_MAX_COMPLETION_TOKENS, 8_192);
 assert.equal(openAiDefaultsConfig.OPENROUTER_API_KEY, "");
 assert.equal(openAiDefaultsConfig.OPENROUTER_API_BASE, "https://openrouter.ai/api/v1");
 assert.equal(openAiDefaultsConfig.OPENROUTER_MODEL, "openrouter/auto");
+assert.equal(openAiDefaultsConfig.OPENROUTER_DAILY_TOKEN_LIMIT, 1_000_000);
 
 const openAiNullKeysConfig = loadConfig({
   ...baseEnv({ BOT_PROFILE: "production" }),

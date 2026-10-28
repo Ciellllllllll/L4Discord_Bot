@@ -15,7 +15,7 @@ import { applyPostgresMigrations, type PostgresMigration } from "../core/db/post
 import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabase } from "../core/db/types.js";
 import { ensurePostgresRuntimeUptimeSchema } from "./runtimeUptime.js";
 import { ensurePostgresAiHistorySchema } from "../features/ai/aiHistorySchema.js";
-import { ensurePostgresAiProviderSchema, migratePostgresAiProviderOpenRouterSchema, PostgresAiProviderBudgetRepository, PostgresAiProviderSettingsRepository } from "../features/ai/postgresAiProviderRepository.js";
+import { ensurePostgresAiProviderSchema, migratePostgresAiProviderOpenRouterBudgetSchema, migratePostgresAiProviderOpenRouterSchema, PostgresAiProviderBudgetRepository, PostgresAiProviderSettingsRepository } from "../features/ai/postgresAiProviderRepository.js";
 import { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
 import { dropPostgresSteamAppListTables, ensurePostgresGameDealSchema } from "../features/gameDeals/postgresGameDealRepository.js";
 import { ensurePostgresLolWatcherSchema } from "../features/lolWatcher/lolWatcher.repository.js";
@@ -149,6 +149,7 @@ async function createDatabaseRuntimeUnsafe(
       await ensurePostgresPreviewSummarySchema(pool);
     } },
     { version: 25, name: "ai_provider_openrouter", apply: (pool) => migratePostgresAiProviderOpenRouterSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
+    { version: 26, name: "ai_provider_openrouter_budget", apply: (pool) => migratePostgresAiProviderOpenRouterBudgetSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);

@@ -24,7 +24,7 @@ export async function ensurePostgresAiProviderSchema(pool: PgQueryable, schemaNa
     );
 
     CREATE TABLE IF NOT EXISTS ${schema}.ai_provider_daily_budget (
-      provider text NOT NULL CHECK (provider IN ('openai', 'deepseek')),
+      provider text NOT NULL CHECK (provider IN ('openai', 'deepseek', 'openrouter')),
       usage_date date NOT NULL,
       confirmed_tokens bigint NOT NULL DEFAULT 0 CHECK (confirmed_tokens >= 0),
       reserved_tokens bigint NOT NULL DEFAULT 0 CHECK (reserved_tokens >= 0),
@@ -36,7 +36,7 @@ export async function ensurePostgresAiProviderSchema(pool: PgQueryable, schemaNa
 
     CREATE TABLE IF NOT EXISTS ${schema}.ai_provider_token_reservations (
       reservation_id text PRIMARY KEY,
-      provider text NOT NULL CHECK (provider IN ('openai', 'deepseek')),
+      provider text NOT NULL CHECK (provider IN ('openai', 'deepseek', 'openrouter')),
       usage_date date NOT NULL,
       reserved_tokens bigint NOT NULL CHECK (reserved_tokens >= 0),
       status text NOT NULL DEFAULT 'pending'
@@ -66,6 +66,26 @@ export async function migratePostgresAiProviderOpenRouterSchema(
     ALTER TABLE ${table}
       ADD CONSTRAINT ai_guild_provider_settings_preferred_provider_check
       CHECK (preferred_provider IN ('openai', 'deepseek', 'openrouter'));
+  `);
+}
+
+export async function migratePostgresAiProviderOpenRouterBudgetSchema(
+  pool: PgQueryable,
+  schemaName: string,
+): Promise<void> {
+  const schema = quotePgIdent(schemaName);
+  await pool.query(`
+    ALTER TABLE ${schema}.ai_provider_daily_budget
+      DROP CONSTRAINT IF EXISTS ai_provider_daily_budget_provider_check;
+    ALTER TABLE ${schema}.ai_provider_daily_budget
+      ADD CONSTRAINT ai_provider_daily_budget_provider_check
+      CHECK (provider IN ('openai', 'deepseek', 'openrouter'));
+
+    ALTER TABLE ${schema}.ai_provider_token_reservations
+      DROP CONSTRAINT IF EXISTS ai_provider_token_reservations_provider_check;
+    ALTER TABLE ${schema}.ai_provider_token_reservations
+      ADD CONSTRAINT ai_provider_token_reservations_provider_check
+      CHECK (provider IN ('openai', 'deepseek', 'openrouter'));
   `);
 }
 

@@ -11,6 +11,7 @@ export type OpenRouterRequestOptions = {
   temperature?: number;
   timeoutMs?: number;
   maxRetries?: number;
+  maxTokens?: number;
   // false のとき @everyone 等のサニタイズをしない（分類器など）
   sanitizeOutput?: boolean;
 };
@@ -85,6 +86,7 @@ export async function openRouterChat(
           body: JSON.stringify({
             model,
             temperature,
+            ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
             messages,
           }),
         },
@@ -114,13 +116,18 @@ export async function openRouterChat(
       }
 
       const raw = body.choices?.[0]?.message?.content?.trim() ?? "";
+      const usageTotalTokens = typeof body.usage?.total_tokens === "number"
+        ? body.usage.total_tokens
+        : undefined;
+      if (!raw) {
+        throw new AiRequestError("invalid_response", "OpenRouter returned an empty response.", {
+          usageTotalTokens,
+        });
+      }
       const content = sanitize ? sanitizeAiText(raw) : raw;
       const responseModel = typeof body.model === "string" && body.model.trim()
         ? body.model.trim()
         : model;
-      const usageTotalTokens = typeof body.usage?.total_tokens === "number"
-        ? body.usage.total_tokens
-        : undefined;
       return {
         content,
         ms: Date.now() - startedTotal,
