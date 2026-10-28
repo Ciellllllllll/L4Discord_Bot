@@ -75,6 +75,12 @@ async function run(): Promise<void> {
     );
     assert.equal(emptyCalls, 1);
 
+    globalThis.fetch = (async () => Response.json({
+      choices: [{ message: { content: "ok" } }],
+      usage: { total_tokens: -1 },
+    })) as typeof fetch;
+    assert.equal((await openRouterChat(testConfig(), [{ role: "user", content: "x" }])).usageTotalTokens, undefined);
+
     globalThis.fetch = (async () => new Response("reflected-private-prompt", {
       status: 200,
       headers: { "Content-Type": "application/json" },

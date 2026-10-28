@@ -2,6 +2,7 @@ import type { AppConfig } from "../../core/config.js";
 import { AiRequestError } from "./aiRequestError.js";
 import { type ChatMessage, sanitizeAiText } from "./chatTypes.js";
 import { fetchWithLimits } from "./fetchWithLimits.js";
+import { usageTotal } from "./openaiResponses.js";
 
 const DEFAULT_BASE = "https://openrouter.ai/api/v1";
 
@@ -110,9 +111,8 @@ export async function openRouterChat(
   }
 
   const raw = body.choices?.[0]?.message?.content?.trim() ?? "";
-  const usageTotalTokens = typeof body.usage?.total_tokens === "number"
-    ? body.usage.total_tokens
-    : undefined;
+  // 不正な値（小数・負数）だと予算の settle が失敗するため、OpenAI と同じ検証を通す。
+  const usageTotalTokens = usageTotal(body);
   if (!raw) {
     throw new AiRequestError("invalid_response", "OpenRouter returned an empty response.", {
       usageTotalTokens,
