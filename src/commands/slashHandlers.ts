@@ -479,7 +479,9 @@ export async function handleSwitch(
       : "DeepSeek";
   const fallbackNote = status.preferredProvider === "openai" && status.preferredOpenAiModel === "gpt56"
     ? "Terra利用不能時: GPT-5.4 miniへ自動退避"
-    : null;
+    : status.preferredProvider === "openrouter"
+      ? "OpenRouterは /q のみに使用し、その他のAI機能はDeepSeekを使用"
+      : null;
   await interaction.reply({
     content: [
       `希望: **${preferred}** / 次回実効: **${effectiveRouteLabel(status)}**`,

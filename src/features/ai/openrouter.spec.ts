@@ -37,7 +37,7 @@ async function run(): Promise<void> {
     const result = await openRouterChat(
       testConfig(),
       [{ role: "user", content: "hello" }],
-      { maxTokens: 512 },
+      { maxTokens: 512, thinking: true },
     );
 
     assert.equal(urls[0], "https://openrouter.test/api/v1/chat/completions");
@@ -45,6 +45,7 @@ async function run(): Promise<void> {
     assert.equal(bodies[0]?.model, "openai/gpt-4.1-mini");
     assert.equal(bodies[0]?.temperature, 0.3);
     assert.equal(bodies[0]?.max_tokens, 512);
+    assert.deepEqual(bodies[0]?.reasoning, { enabled: true });
     assert.deepEqual(bodies[0]?.messages, [{ role: "user", content: "hello" }]);
     assert.equal(result.model, "openai/gpt-4.1-mini-response");
     assert.equal(result.content, "answer");

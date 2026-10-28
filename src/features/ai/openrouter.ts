@@ -11,6 +11,8 @@ export type OpenRouterRequestOptions = {
   temperature?: number;
   timeoutMs?: number;
   maxTokens?: number;
+  // 未指定ならモデル既定。true/false は OpenRouter 共通の reasoning.enabled に変換する。
+  thinking?: boolean;
   // false のとき @everyone 等のサニタイズをしない（分類器など）
   sanitizeOutput?: boolean;
 };
@@ -82,6 +84,7 @@ export async function openRouterChat(
         model,
         temperature,
         ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+        ...(options.thinking === undefined ? {} : { reasoning: { enabled: options.thinking } }),
         messages,
       }),
     },

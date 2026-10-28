@@ -90,12 +90,13 @@ async function main() {
       async openRouterChat(messages, options) {
         assert.deepEqual(messages, [{ role: "user", content: "hello" }]);
         assert.equal(options.sanitizeOutput, undefined);
+        assert.equal(options.thinking, true);
         return { content: "openrouter answer", ms: 2, model: "openai/gpt-4.1-mini" };
       },
       async openAiChat() { throw new Error("unexpected"); },
       async deepSeekChat() { throw new Error("unexpected"); },
     });
-    const result = await router.chat("guild", "answer", [{ role: "user", content: "hello" }], { thinking: false });
+    const result = await router.chat("guild", "answer", [{ role: "user", content: "hello" }], { thinking: true });
     assert.equal(result.provider, "openrouter");
     assert.equal(result.model, "openai/gpt-4.1-mini");
     assert.equal(usageCalls, 0);
@@ -131,6 +132,20 @@ async function main() {
     const failed = await failing.chat("guild", "answer", [{ role: "user", content: "x" }], { thinking: false });
     assert.equal(failed.provider, "deepseek");
     assert.equal(failed.fallbackReason, "openrouter_failed");
+
+    // OpenRouter は /q（answer）専用。他タスクはキー未設定でも DeepSeek に流れる。
+    const otherTask = new AiProviderRouter(
+      { ...baseConfig, OPENROUTER_API_KEY: "" },
+      repo.settings,
+      repo.budget,
+      {
+        async openRouterChat() { throw new Error("OpenRouter is only for answers"); },
+        async deepSeekChat() { return { content: "judged", ms: 1, model: "deepseek-judge" }; },
+      },
+    );
+    const judged = await otherTask.chat("guild", "judge", [{ role: "user", content: "x" }], { thinking: false });
+    assert.equal(judged.provider, "deepseek");
+    assert.equal(judged.fallbackReason, "task_policy_deepseek");
   }
 
   {

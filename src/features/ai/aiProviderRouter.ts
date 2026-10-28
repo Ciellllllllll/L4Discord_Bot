@@ -338,6 +338,8 @@ export class AiProviderRouter {
       return this.callDeepSeek(task, messages, options, "manual_deepseek");
     }
     if (preference.provider === "openrouter") {
+      // OpenRouter は /q（answer）だけに使い、それ以外のタスクは DeepSeek に固定する。
+      if (task !== "answer") return this.callDeepSeek(task, messages, options, "task_policy_deepseek");
       if (!this.config.OPENROUTER_API_KEY.trim()) {
         throw new AiRequestError(
           "configuration",
@@ -410,6 +412,7 @@ export class AiProviderRouter {
     try {
       result = await this.openRouterChat(messages, {
         signal: options.signal,
+        thinking: options.thinking,
         temperature: options.temperature,
         timeoutMs: options.timeoutMs,
         maxTokens: maxOutputTokens,

@@ -84,6 +84,7 @@ async function main(): Promise<void> {
   await handleSwitch(interaction("openrouter", replies), ctx, member(true));
   assert.deepEqual(selected.at(-1), { provider: "openrouter", openAiModel: "gpt54_mini" });
   assert.match((replies[0] as { content: string }).content, /希望: \*\*OpenRouter\*\*/);
+  assert.match((replies[0] as { content: string }).content, /OpenRouterは \/q のみ/);
 
   replies.length = 0;
   await handleSwitch(interaction("openai_gpt56", replies), ctx, member(true));
