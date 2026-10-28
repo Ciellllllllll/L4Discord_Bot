@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
 import {
   ensurePostgresAiProviderSchema,
+  migratePostgresAiProviderOpenRouterSchema,
   PostgresAiProviderBudgetRepository,
   PostgresAiProviderSettingsRepository,
 } from "./postgresAiProviderRepository.js";
@@ -36,13 +37,22 @@ async function assertPostgresDdl(): Promise<void> {
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "ai_provider_test"\.ai_guild_provider_settings/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "ai_provider_test"\.ai_provider_daily_budget/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "ai_provider_test"\.ai_provider_token_reservations/);
-  assert.match(sql, /preferred_provider IN \('openai', 'deepseek'\)/);
+  assert.match(sql, /preferred_provider IN \('openai', 'deepseek', 'openrouter'\)/);
   assert.match(sql, /preferred_openai_model/);
   assert.match(sql, /preferred_openai_model IN \('gpt56', 'gpt54_mini'\)/);
   assert.match(sql, /ALTER TABLE .*ai_guild_provider_settings/s);
   assert.match(sql, /status IN \('pending', 'settled', 'released'\)/);
   assert.match(sql, /PRIMARY KEY \(provider, usage_date\)/);
   assert.match(sql, /FOREIGN KEY \(provider, usage_date\)/);
+
+  const migrationPool = createCapturingPool();
+  await migratePostgresAiProviderOpenRouterSchema(
+    migrationPool as unknown as Parameters<typeof migratePostgresAiProviderOpenRouterSchema>[0],
+    "ai_provider_test",
+  );
+  const migrationSql = migrationPool.queries.join("\n");
+  assert.match(migrationSql, /DROP CONSTRAINT IF EXISTS ai_guild_provider_settings_preferred_provider_check/);
+  assert.match(migrationSql, /preferred_provider IN \('openai', 'deepseek', 'openrouter'\)/);
 }
 
 async function assertPostgresIntegration(): Promise<boolean> {
@@ -66,6 +76,11 @@ async function assertPostgresIntegration(): Promise<boolean> {
     await settings.setPreference("guild-1", { provider: "deepseek", openAiModel: "gpt54_mini" });
     assert.deepEqual(await new PostgresAiProviderSettingsRepository(pool).getPreference("guild-1"), {
       provider: "deepseek",
+      openAiModel: "gpt54_mini",
+    });
+    await settings.setPreference("guild-1", { provider: "openrouter", openAiModel: "gpt54_mini" });
+    assert.deepEqual(await new PostgresAiProviderSettingsRepository(pool).getPreference("guild-1"), {
+      provider: "openrouter",
       openAiModel: "gpt54_mini",
     });
 

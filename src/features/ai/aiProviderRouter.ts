@@ -9,6 +9,7 @@ import type { ChatMessage } from "./chatTypes.js";
 import { deepseekChat, type DeepSeekMessage, type DeepSeekRequestOptions, type DeepSeekResult } from "./deepseek.js";
 import { openAiResponsesChat, type OpenAiResponsesOptions, type OpenAiResponsesResult } from "./openaiResponses.js";
 import { OpenAiUsageClient, type OpenAiUsageSnapshot } from "./openaiUsage.js";
+import { openRouterChat, type OpenRouterRequestOptions, type OpenRouterResult } from "./openrouter.js";
 import type { AiProvider, AiRoutePreference, OpenAiModelPreference } from "./providerTypes.js";
 
 export type AiTask =
@@ -27,6 +28,8 @@ export type AiFallbackReason =
   | "manual_deepseek"
   | "task_policy_deepseek"
   | "openai_unconfigured"
+  | "openrouter_unconfigured"
+  | "openrouter_failed"
   | "usage_unavailable"
   | "budget_threshold"
   | "openai_unauthorized"
@@ -79,6 +82,11 @@ type RouterConfig = Pick<AppConfig,
   | "OPENAI_FALLBACK_THRESHOLD"
   | "OPENAI_USAGE_CACHE_MS"
   | "OPENAI_MAX_COMPLETION_TOKENS"
+  | "OPENROUTER_API_KEY"
+  | "OPENROUTER_API_BASE"
+  | "OPENROUTER_MODEL"
+  | "AI_TEMPERATURE"
+  | "AI_MAX_RETRIES"
   | "AI_REQUEST_TIMEOUT_MS"
   | "AI_MAX_RESPONSE_BYTES"
   | "DEEPSEEK_MODEL"
@@ -95,6 +103,7 @@ export type AiProviderRouterDeps = {
     model: string,
   ) => Promise<OpenAiResponsesResult>;
   deepSeekChat?: (messages: DeepSeekMessage[], options: DeepSeekRequestOptions) => Promise<DeepSeekResult>;
+  openRouterChat?: (messages: ChatMessage[], options: OpenRouterRequestOptions) => Promise<OpenRouterResult>;
   reservationId?: () => string;
 };
 
@@ -165,6 +174,7 @@ export class AiProviderRouter {
   private readonly usageClient: UsageReader;
   private readonly openAiChat: AiProviderRouterDeps["openAiChat"];
   private readonly deepSeekChat: NonNullable<AiProviderRouterDeps["deepSeekChat"]>;
+  private readonly openRouterChat: NonNullable<AiProviderRouterDeps["openRouterChat"]>;
   private readonly reservationId: () => string;
 
   constructor(
@@ -190,6 +200,7 @@ export class AiProviderRouter {
       maxResponseBytes: config.AI_MAX_RESPONSE_BYTES,
     }, messages, options));
     this.deepSeekChat = deps.deepSeekChat ?? ((messages, options) => deepseekChat(config as AppConfig, messages, options));
+    this.openRouterChat = deps.openRouterChat ?? ((messages, options) => openRouterChat(config as AppConfig, messages, options));
     this.reservationId = deps.reservationId ?? randomUUID;
   }
 
@@ -210,6 +221,18 @@ export class AiProviderRouter {
         preferredOpenAiModel: preference.openAiModel,
         effectiveProvider: "deepseek",
         fallbackReason: "manual_deepseek",
+        resetAtUtc: nextUtcMidnight(),
+      };
+    }
+    if (preferredProvider === "openrouter") {
+      const configured = Boolean(this.config.OPENROUTER_API_KEY.trim());
+      return {
+        preferredProvider,
+        preferredOpenAiModel: preference.openAiModel,
+        effectiveProvider: configured ? "openrouter" : "deepseek",
+        ...(configured
+          ? { effectiveModel: this.config.OPENROUTER_MODEL }
+          : { fallbackReason: "openrouter_unconfigured" as const }),
         resetAtUtc: nextUtcMidnight(),
       };
     }
@@ -274,6 +297,24 @@ export class AiProviderRouter {
     const preference = await this.settings.getPreference(guildId);
     if (preference.provider === "deepseek") {
       return this.callDeepSeek(task, messages, options, "manual_deepseek");
+    }
+    if (preference.provider === "openrouter") {
+      if (!this.config.OPENROUTER_API_KEY.trim()) {
+        return this.callDeepSeek(task, messages, options, "openrouter_unconfigured");
+      }
+      try {
+        const result = await this.openRouterChat(messages, {
+          signal: options.signal,
+          temperature: options.temperature,
+          timeoutMs: options.timeoutMs,
+          maxRetries: options.maxRetries,
+          sanitizeOutput: options.sanitizeOutput,
+        });
+        return { ...result, provider: "openrouter" };
+      } catch (error) {
+        if (error instanceof AiRequestError && error.kind === "caller_abort") throw error;
+        return this.callDeepSeek(task, messages, options, "openrouter_failed");
+      }
     }
     if (!this.config.OPENAI_API_KEY.trim()) {
       return this.callDeepSeek(task, messages, options, "openai_unconfigured");

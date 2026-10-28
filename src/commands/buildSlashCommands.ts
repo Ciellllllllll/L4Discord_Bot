@@ -36,6 +36,7 @@ export function buildSlashCommands(botProfile: BotProfile = "production"): RESTP
           { name: "GPT-5.6 Terra", value: "openai_gpt56" },
           { name: "GPT-5.4 mini", value: "openai_gpt54_mini" },
           { name: "DeepSeek", value: "deepseek" },
+          { name: "OpenRouter (OPENROUTER_MODEL)", value: "openrouter" },
         ))
       .toJSON(),
     new SlashCommandBuilder()

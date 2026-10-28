@@ -14,6 +14,7 @@ assert.deepEqual(provider?.choices?.map((choice) => choice.value), [
   "openai_gpt56",
   "openai_gpt54_mini",
   "deepseek",
+  "openrouter",
 ]);
 assert.equal(BOT_SEMVER, "2.0.15");
 assert.equal(SLASH_COMMAND_MIN_BOT_VERSION.switch, "2.0.10");

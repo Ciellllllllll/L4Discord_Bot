@@ -17,7 +17,7 @@ export async function ensurePostgresAiProviderSchema(pool: PgQueryable, schemaNa
     CREATE TABLE IF NOT EXISTS ${schema}.ai_guild_provider_settings (
       guild_id text PRIMARY KEY,
       preferred_provider text NOT NULL DEFAULT 'openai'
-        CHECK (preferred_provider IN ('openai', 'deepseek')),
+        CHECK (preferred_provider IN ('openai', 'deepseek', 'openrouter')),
       preferred_openai_model text NOT NULL DEFAULT 'gpt56'
         CHECK (preferred_openai_model IN ('gpt56', 'gpt54_mini')),
       updated_at timestamptz NOT NULL DEFAULT now()
@@ -51,6 +51,21 @@ export async function ensurePostgresAiProviderSchema(pool: PgQueryable, schemaNa
     ALTER TABLE ${schema}.ai_guild_provider_settings
       ADD COLUMN IF NOT EXISTS preferred_openai_model text NOT NULL DEFAULT 'gpt56'
         CHECK (preferred_openai_model IN ('gpt56', 'gpt54_mini'));
+  `);
+}
+
+export async function migratePostgresAiProviderOpenRouterSchema(
+  pool: PgQueryable,
+  schemaName: string,
+): Promise<void> {
+  const schema = quotePgIdent(schemaName);
+  const table = `${schema}.ai_guild_provider_settings`;
+  await pool.query(`
+    ALTER TABLE ${table}
+      DROP CONSTRAINT IF EXISTS ai_guild_provider_settings_preferred_provider_check;
+    ALTER TABLE ${table}
+      ADD CONSTRAINT ai_guild_provider_settings_preferred_provider_check
+      CHECK (preferred_provider IN ('openai', 'deepseek', 'openrouter'));
   `);
 }
 

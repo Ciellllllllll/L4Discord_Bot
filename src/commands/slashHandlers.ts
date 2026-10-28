@@ -351,13 +351,18 @@ async function handleQ(interaction: ChatInputCommandInteraction, ctx: BotContext
 }
 
 export function buildAiPingReply(
-  result: { ms: number; provider: "openai" | "deepseek"; model: string },
+  result: { ms: number; provider: "openai" | "deepseek" | "openrouter"; model: string },
   thinking: boolean,
   workerLine: string,
 ): { content: string; allowedMentions: { parse: [] } } {
+  const providerLabel = result.provider === "openai"
+    ? "OpenAI"
+    : result.provider === "openrouter"
+      ? "OpenRouter"
+      : "DeepSeek";
   return {
     content: [
-      `AI応答時間: **${result.ms}** ms / Provider: **${result.provider === "openai" ? "OpenAI" : "DeepSeek"}** / Model: **${sanitizeAiModelName(result.model)}** / Thinking: **${thinking ? "ON" : "OFF"}**`,
+      `AI応答時間: **${result.ms}** ms / Provider: **${providerLabel}** / Model: **${sanitizeAiModelName(result.model)}** / Thinking: **${thinking ? "ON" : "OFF"}**`,
       workerLine,
     ].join("\n").slice(0, 2000),
     allowedMentions: { parse: [] },
@@ -406,6 +411,8 @@ function fallbackReasonLabel(reason: string | undefined): string {
     case "budget_threshold": return "本日の安全しきい値に到達";
     case "usage_unavailable": return "OpenAI Usage APIを確認できないため安全退避";
     case "openai_unconfigured": return "OpenAI設定が未完了";
+    case "openrouter_unconfigured": return "OpenRouter設定が未完了";
+    case "openrouter_failed": return "OpenRouter障害による一時退避";
     default: return reason ? "OpenAI障害による一時退避" : "なし";
   }
 }
@@ -416,6 +423,9 @@ function openAiPreferenceLabel(preference: "gpt56" | "gpt54_mini"): string {
 
 function effectiveRouteLabel(status: Awaited<ReturnType<BotContext["aiRouter"]["getStatus"]>>): string {
   if (status.effectiveProvider === "deepseek") return "DeepSeek";
+  if (status.effectiveProvider === "openrouter") {
+    return status.effectiveModel ? `OpenRouter (${status.effectiveModel})` : "OpenRouter";
+  }
   if (status.effectiveModel === "gpt-5.6-terra") return "GPT-5.6 Terra";
   if (status.effectiveModel === "gpt-5.4-mini-2026-03-17") return "GPT-5.4 mini";
   return status.effectiveModel ? `OpenAI (${status.effectiveModel})` : "OpenAI";
@@ -431,7 +441,12 @@ export async function handleSwitch(
     return;
   }
   const selection = interaction.options.getString("provider", true);
-  if (selection !== "openai_gpt56" && selection !== "openai_gpt54_mini" && selection !== "deepseek") {
+  if (
+    selection !== "openai_gpt56"
+    && selection !== "openai_gpt54_mini"
+    && selection !== "deepseek"
+    && selection !== "openrouter"
+  ) {
     await interaction.reply({ content: "プロバイダー指定が不正です。", flags: MessageFlags.Ephemeral });
     return;
   }
@@ -440,12 +455,16 @@ export async function handleSwitch(
     ? { provider: "openai" as const, openAiModel: "gpt56" as const }
     : selection === "openai_gpt54_mini"
       ? { provider: "openai" as const, openAiModel: "gpt54_mini" as const }
-      : { provider: "deepseek" as const, openAiModel: current.openAiModel };
+      : selection === "openrouter"
+        ? { provider: "openrouter" as const, openAiModel: current.openAiModel }
+        : { provider: "deepseek" as const, openAiModel: current.openAiModel };
   await ctx.aiRouter.setPreference(interaction.guildId!, preference);
   const status = await ctx.aiRouter.getStatus(interaction.guildId!);
   const preferred = status.preferredProvider === "openai"
     ? openAiPreferenceLabel(status.preferredOpenAiModel)
-    : "DeepSeek";
+    : status.preferredProvider === "openrouter"
+      ? "OpenRouter"
+      : "DeepSeek";
   const fallbackNote = status.preferredProvider === "openai" && status.preferredOpenAiModel === "gpt56"
     ? "Terra利用不能時: GPT-5.4 miniへ自動退避"
     : null;

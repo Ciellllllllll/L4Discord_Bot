@@ -75,6 +75,11 @@ async function main(): Promise<void> {
   assert.match((replies[0] as { content: string }).content, /希望: \*\*DeepSeek\*\*/);
 
   replies.length = 0;
+  await handleSwitch(interaction("openrouter", replies), ctx, member(true));
+  assert.deepEqual(selected.at(-1), { provider: "openrouter", openAiModel: "gpt54_mini" });
+  assert.match((replies[0] as { content: string }).content, /希望: \*\*OpenRouter\*\*/);
+
+  replies.length = 0;
   await handleSwitch(interaction("openai_gpt56", replies), ctx, member(true));
   assert.deepEqual(selected.at(-1), { provider: "openai", openAiModel: "gpt56" });
   assert.match((replies[0] as { content: string }).content, /Terra利用不能時.*GPT-5\.4 mini/);

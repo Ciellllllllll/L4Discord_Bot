@@ -1,4 +1,4 @@
-export type AiProvider = "openai" | "deepseek";
+export type AiProvider = "openai" | "deepseek" | "openrouter";
 
 export type OpenAiModelPreference = "gpt56" | "gpt54_mini";
 
