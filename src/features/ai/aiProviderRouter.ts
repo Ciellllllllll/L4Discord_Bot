@@ -9,6 +9,7 @@ import type { ChatMessage } from "./chatTypes.js";
 import { deepseekChat, type DeepSeekMessage, type DeepSeekRequestOptions, type DeepSeekResult } from "./deepseek.js";
 import { openAiResponsesChat, type OpenAiResponsesOptions, type OpenAiResponsesResult } from "./openaiResponses.js";
 import { OpenAiUsageClient, type OpenAiUsageSnapshot } from "./openaiUsage.js";
+import { openRouterChat, type OpenRouterRequestOptions, type OpenRouterResult } from "./openrouter.js";
 import type { AiProvider, AiRoutePreference, OpenAiModelPreference } from "./providerTypes.js";
 
 export type AiTask =
@@ -27,6 +28,9 @@ export type AiFallbackReason =
   | "manual_deepseek"
   | "task_policy_deepseek"
   | "openai_unconfigured"
+  | "openrouter_unconfigured"
+  | "openrouter_failed"
+  | "openrouter_budget_threshold"
   | "usage_unavailable"
   | "budget_threshold"
   | "openai_unauthorized"
@@ -79,6 +83,12 @@ type RouterConfig = Pick<AppConfig,
   | "OPENAI_FALLBACK_THRESHOLD"
   | "OPENAI_USAGE_CACHE_MS"
   | "OPENAI_MAX_COMPLETION_TOKENS"
+  | "OPENROUTER_API_KEY"
+  | "OPENROUTER_API_BASE"
+  | "OPENROUTER_MODEL"
+  | "OPENROUTER_DAILY_TOKEN_LIMIT"
+  | "AI_TEMPERATURE"
+  | "AI_MAX_RETRIES"
   | "AI_REQUEST_TIMEOUT_MS"
   | "AI_MAX_RESPONSE_BYTES"
   | "DEEPSEEK_MODEL"
@@ -95,6 +105,7 @@ export type AiProviderRouterDeps = {
     model: string,
   ) => Promise<OpenAiResponsesResult>;
   deepSeekChat?: (messages: DeepSeekMessage[], options: DeepSeekRequestOptions) => Promise<DeepSeekResult>;
+  openRouterChat?: (messages: ChatMessage[], options: OpenRouterRequestOptions) => Promise<OpenRouterResult>;
   reservationId?: () => string;
 };
 
@@ -114,6 +125,10 @@ const TASK_MAX_OUTPUT: Record<AiTask, number> = {
 function nextUtcMidnight(usageDate?: string): string {
   const date = usageDate ?? new Date().toISOString().slice(0, 10);
   return new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString();
+}
+
+function currentUtcDate(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function reservationEstimate(messages: ChatMessage[], maxOutputTokens: number): number {
@@ -165,6 +180,7 @@ export class AiProviderRouter {
   private readonly usageClient: UsageReader;
   private readonly openAiChat: AiProviderRouterDeps["openAiChat"];
   private readonly deepSeekChat: NonNullable<AiProviderRouterDeps["deepSeekChat"]>;
+  private readonly openRouterChat: NonNullable<AiProviderRouterDeps["openRouterChat"]>;
   private readonly reservationId: () => string;
 
   constructor(
@@ -190,6 +206,7 @@ export class AiProviderRouter {
       maxResponseBytes: config.AI_MAX_RESPONSE_BYTES,
     }, messages, options));
     this.deepSeekChat = deps.deepSeekChat ?? ((messages, options) => deepseekChat(config as AppConfig, messages, options));
+    this.openRouterChat = deps.openRouterChat ?? ((messages, options) => openRouterChat(config as AppConfig, messages, options));
     this.reservationId = deps.reservationId ?? randomUUID;
   }
 
@@ -210,6 +227,51 @@ export class AiProviderRouter {
         preferredOpenAiModel: preference.openAiModel,
         effectiveProvider: "deepseek",
         fallbackReason: "manual_deepseek",
+        resetAtUtc: nextUtcMidnight(),
+      };
+    }
+    if (preferredProvider === "openrouter") {
+      if (!this.config.OPENROUTER_API_KEY.trim()) {
+        return {
+          preferredProvider,
+          preferredOpenAiModel: preference.openAiModel,
+          effectiveProvider: "deepseek",
+          fallbackReason: "openrouter_unconfigured",
+          resetAtUtc: nextUtcMidnight(),
+        };
+      }
+      let budgetAllowed: boolean;
+      let effectiveTokens: number | undefined;
+      try {
+        const reservationId = this.reservationId();
+        const result = await this.budget.tryReserve({
+          reservationId,
+          provider: "openrouter",
+          usageDate: currentUtcDate(),
+          reservedTokens: 0,
+          threshold: this.config.OPENROUTER_DAILY_TOKEN_LIMIT,
+          snapshot: { orgTargetTokens: 0, botReportedTokens: 0 },
+        });
+        budgetAllowed = result.allowed;
+        effectiveTokens = result.effectiveTokens;
+        if (result.allowed) await this.budget.release(reservationId);
+      } catch {
+        return {
+          preferredProvider,
+          preferredOpenAiModel: preference.openAiModel,
+          effectiveProvider: "deepseek",
+          fallbackReason: "usage_unavailable",
+          resetAtUtc: nextUtcMidnight(),
+        };
+      }
+      return {
+        preferredProvider,
+        preferredOpenAiModel: preference.openAiModel,
+        effectiveProvider: budgetAllowed ? "openrouter" : "deepseek",
+        ...(budgetAllowed
+          ? { effectiveModel: this.config.OPENROUTER_MODEL }
+          : { fallbackReason: "openrouter_budget_threshold" as const }),
+        effectiveTokens,
         resetAtUtc: nextUtcMidnight(),
       };
     }
@@ -275,6 +337,20 @@ export class AiProviderRouter {
     if (preference.provider === "deepseek") {
       return this.callDeepSeek(task, messages, options, "manual_deepseek");
     }
+    if (preference.provider === "openrouter") {
+      // OpenRouter は /q（answer）だけに使い、それ以外のタスクは DeepSeek に固定する。
+      if (task !== "answer") return this.callDeepSeek(task, messages, options, "task_policy_deepseek");
+      if (!this.config.OPENROUTER_API_KEY.trim()) {
+        throw new AiRequestError(
+          "configuration",
+          "OPENROUTER_API_KEY is not configured. Set it in .env or switch the provider with /switch.",
+        );
+      }
+      const maxOutputTokens = TASK_MAX_OUTPUT[task];
+      const attempt = await this.attemptOpenRouter(messages, options, maxOutputTokens);
+      if (attempt.ok) return attempt.result;
+      return this.callDeepSeek(task, messages, options, attempt.reason);
+    }
     if (!this.config.OPENAI_API_KEY.trim()) {
       return this.callDeepSeek(task, messages, options, "openai_unconfigured");
     }
@@ -313,6 +389,60 @@ export class AiProviderRouter {
     return preference === "gpt56"
       ? this.config.OPENAI_MODEL_GPT56
       : this.config.OPENAI_MODEL_GPT54_MINI;
+  }
+
+  private async attemptOpenRouter(
+    messages: ChatMessage[],
+    options: AiRouterChatOptions,
+    maxOutputTokens: number,
+  ): Promise<OpenAiAttemptOutcome> {
+    const reservationId = this.reservationId();
+    const reservedTokens = reservationEstimate(messages, maxOutputTokens);
+    const reservation = await this.budget.tryReserve({
+      reservationId,
+      provider: "openrouter",
+      usageDate: currentUtcDate(),
+      reservedTokens,
+      threshold: this.config.OPENROUTER_DAILY_TOKEN_LIMIT,
+      snapshot: { orgTargetTokens: 0, botReportedTokens: 0 },
+    });
+    if (!reservation.allowed) return { ok: false, reason: "openrouter_budget_threshold" };
+
+    let result: OpenRouterResult;
+    try {
+      result = await this.openRouterChat(messages, {
+        signal: options.signal,
+        thinking: options.thinking,
+        temperature: options.temperature,
+        timeoutMs: options.timeoutMs,
+        maxTokens: maxOutputTokens,
+        sanitizeOutput: options.sanitizeOutput,
+      });
+    } catch (error) {
+      const typed = error instanceof AiRequestError
+        ? error
+        : new AiRequestError("invalid_response", "OpenRouter adapter returned an unexpected error.", { cause: error });
+      if (typed.usageTotalTokens !== undefined) {
+        await this.budget.settle(reservationId, typed.usageTotalTokens);
+      } else if (releaseOnFailure(typed)) {
+        await this.budget.release(reservationId);
+      } else {
+        await this.budget.consumeEstimate(reservationId);
+      }
+      if (typed.kind === "caller_abort" || typed.kind === "configuration") throw typed;
+      return { ok: false, reason: "openrouter_failed" };
+    }
+
+    // usage が返らない場合は予約見積もりを実使用として確定し、上限超過を防ぐ。
+    await this.budget.settle(reservationId, result.usageTotalTokens ?? reservedTokens);
+    return {
+      ok: true,
+      result: {
+        ...result,
+        provider: "openrouter",
+        usageTotalTokens: result.usageTotalTokens ?? reservedTokens,
+      },
+    };
   }
 
   private async attemptOpenAi(
@@ -390,6 +520,9 @@ export class AiProviderRouter {
       maxRetries: options.maxRetries,
       model: options.imageDataUrl ? "deepseek-flash" : deepSeekModel(this.config, task),
     });
+    if (!result.content.trim()) {
+      throw new AiRequestError("invalid_response", "DeepSeek returned an empty response.");
+    }
     return { ...result, provider: "deepseek", fallbackReason };
   }
 }

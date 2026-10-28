@@ -59,7 +59,7 @@ function responseText(body: unknown): string {
   return parts.join("\n").trim();
 }
 
-function usageTotal(body: unknown): number | undefined {
+export function usageTotal(body: unknown): number | undefined {
   if (!body || typeof body !== "object") return undefined;
   const usage = (body as Record<string, unknown>).usage;
   if (!usage || typeof usage !== "object") return undefined;

@@ -121,6 +121,10 @@ const profileOverridableKeys = [
   "OPENAI_FALLBACK_THRESHOLD",
   "OPENAI_USAGE_CACHE_MS",
   "OPENAI_MAX_COMPLETION_TOKENS",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_API_BASE",
+  "OPENROUTER_MODEL",
+  "OPENROUTER_DAILY_TOKEN_LIMIT",
   "MESSAGE_ATTACHMENT_FILES_DIR",
   "PROMPT_FILE_PATH",
   "USER_PROMPT_DIR",
@@ -285,6 +289,17 @@ const envSchema = z.object({
   OPENAI_FALLBACK_THRESHOLD: z.coerce.number().int().positive().default(2_400_000),
   OPENAI_USAGE_CACHE_MS: z.coerce.number().int().min(0).default(30_000),
   OPENAI_MAX_COMPLETION_TOKENS: z.coerce.number().int().positive().default(8_192),
+  OPENROUTER_API_KEY: z.preprocess((v) => (v === undefined || v === null ? "" : v), z.string().default("")),
+  OPENROUTER_API_BASE: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().url().default("https://openrouter.ai/api/v1"),
+  ),
+  OPENROUTER_MODEL: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : v),
+    z.string().min(1).default("openrouter/auto"),
+  ),
+  // OpenRouter 経由の1日あたりのトークン上限（UTC基準）。この上限に達すると DeepSeek へ退避します。
+  OPENROUTER_DAILY_TOKEN_LIMIT: z.coerce.number().int().positive().default(1_000_000),
   AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(45_000),
     // DeepSeek 応答 body の最大バイト（fetchWithLimits）
 

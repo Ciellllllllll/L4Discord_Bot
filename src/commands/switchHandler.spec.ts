@@ -35,7 +35,7 @@ async function main(): Promise<void> {
   const selected: AiRoutePreference[] = [];
   let current: AiRoutePreference = { provider: "openai", openAiModel: "gpt56" };
   const ctx = {
-    config: { OWNER_ID: "owner", ADMIN_ROLE_ID: "admin-role" },
+    config: { OWNER_ID: "owner", ADMIN_ROLE_ID: "admin-role", OPENROUTER_API_KEY: "" },
     aiRouter: {
       async getPreference() { return current; },
       async setPreference(_guildId: string, preference: AiRoutePreference) {
@@ -73,6 +73,18 @@ async function main(): Promise<void> {
   await handleSwitch(interaction("deepseek", replies), ctx, member(true));
   assert.deepEqual(selected.at(-1), { provider: "deepseek", openAiModel: "gpt54_mini" });
   assert.match((replies[0] as { content: string }).content, /希望: \*\*DeepSeek\*\*/);
+
+  replies.length = 0;
+  await handleSwitch(interaction("openrouter", replies), ctx, member(true));
+  assert.deepEqual(selected.at(-1), { provider: "deepseek", openAiModel: "gpt54_mini" });
+  assert.match((replies[0] as { content: string }).content, /OPENROUTER_API_KEY が未設定/);
+
+  (ctx.config as { OPENROUTER_API_KEY: string }).OPENROUTER_API_KEY = "key";
+  replies.length = 0;
+  await handleSwitch(interaction("openrouter", replies), ctx, member(true));
+  assert.deepEqual(selected.at(-1), { provider: "openrouter", openAiModel: "gpt54_mini" });
+  assert.match((replies[0] as { content: string }).content, /希望: \*\*OpenRouter\*\*/);
+  assert.match((replies[0] as { content: string }).content, /OpenRouterは \/q のみ/);
 
   replies.length = 0;
   await handleSwitch(interaction("openai_gpt56", replies), ctx, member(true));

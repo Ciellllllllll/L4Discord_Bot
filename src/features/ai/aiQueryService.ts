@@ -47,7 +47,7 @@ export type AiQueryRouteOptions = {
 
 type HistoryMode = "normal" | "r18" | "optimizer";
 
-type QuestionProvider = "openai" | "deepseek" | "local_llm";
+type QuestionProvider = "openai" | "deepseek" | "openrouter" | "local_llm";
 
 type QuestionAnswer = {
   content: string;
@@ -59,6 +59,7 @@ function formatModelMetadata(answer: QuestionAnswer): string {
   const providerLabel: Record<QuestionProvider, string> = {
     openai: "OpenAI",
     deepseek: "DeepSeek",
+    openrouter: "OpenRouter",
     local_llm: "ローカルLLM",
   };
   const model = sanitizeAiModelName(answer.model);
