@@ -10,7 +10,6 @@ function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     OPENROUTER_MODEL: "openai/gpt-4.1-mini",
     AI_TEMPERATURE: 0.3,
     AI_REQUEST_TIMEOUT_MS: 10_000,
-    AI_MAX_RETRIES: 0,
     AI_MAX_RESPONSE_BYTES: 64_000,
     ...overrides,
   } as AppConfig;
@@ -38,7 +37,7 @@ async function run(): Promise<void> {
     const result = await openRouterChat(
       testConfig(),
       [{ role: "user", content: "hello" }],
-      { maxRetries: 0, maxTokens: 512 },
+      { maxTokens: 512 },
     );
 
     assert.equal(urls[0], "https://openrouter.test/api/v1/chat/completions");
@@ -56,12 +55,17 @@ async function run(): Promise<void> {
       (error: unknown) => error instanceof AiRequestError && error.kind === "configuration",
     );
 
-    globalThis.fetch = (async () => Response.json({
-      choices: [{ message: { content: "   " } }],
-      usage: { total_tokens: 3 },
-    })) as typeof fetch;
+    // 課金済みの空応答をリトライすると予算予約に計上されない使用量が発生するため、1回だけ送る。
+    let emptyCalls = 0;
+    globalThis.fetch = (async () => {
+      emptyCalls += 1;
+      return Response.json({
+        choices: [{ message: { content: "   " } }],
+        usage: { total_tokens: 3 },
+      });
+    }) as typeof fetch;
     await assert.rejects(
-      () => openRouterChat(testConfig(), [{ role: "user", content: "x" }], { maxRetries: 0 }),
+      () => openRouterChat(testConfig({ AI_MAX_RETRIES: 2 }), [{ role: "user", content: "x" }]),
       (error: unknown) => {
         assert.ok(error instanceof AiRequestError);
         assert.equal(error.kind, "invalid_response");
@@ -69,13 +73,14 @@ async function run(): Promise<void> {
         return true;
       },
     );
+    assert.equal(emptyCalls, 1);
 
     globalThis.fetch = (async () => new Response("reflected-private-prompt", {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })) as typeof fetch;
     await assert.rejects(
-      () => openRouterChat(testConfig(), [{ role: "user", content: "x" }], { maxRetries: 0 }),
+      () => openRouterChat(testConfig(), [{ role: "user", content: "x" }]),
       (error: unknown) => {
         assert.ok(error instanceof AiRequestError);
         assert.equal(error.kind, "invalid_response");
@@ -86,7 +91,7 @@ async function run(): Promise<void> {
 
     globalThis.fetch = (async () => new Response("upstream error detail", { status: 429 })) as typeof fetch;
     await assert.rejects(
-      () => openRouterChat(testConfig(), [{ role: "user", content: "x" }], { maxRetries: 0 }),
+      () => openRouterChat(testConfig(), [{ role: "user", content: "x" }]),
       (error: unknown) => {
         assert.ok(error instanceof AiRequestError);
         assert.equal(error.kind, "http_status");

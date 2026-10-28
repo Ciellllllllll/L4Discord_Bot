@@ -412,7 +412,6 @@ export class AiProviderRouter {
         signal: options.signal,
         temperature: options.temperature,
         timeoutMs: options.timeoutMs,
-        maxRetries: options.maxRetries,
         maxTokens: maxOutputTokens,
         sanitizeOutput: options.sanitizeOutput,
       });

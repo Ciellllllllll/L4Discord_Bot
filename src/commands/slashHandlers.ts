@@ -457,6 +457,11 @@ export async function handleSwitch(
     await interaction.reply({ content: "プロバイダー指定が不正です。", flags: MessageFlags.Ephemeral });
     return;
   }
+  // 未設定のまま保存すると /q が設定エラーになるため、切り替え自体を拒否する。
+  if (selection === "openrouter" && !ctx.config.OPENROUTER_API_KEY.trim()) {
+    await interaction.reply({ content: "OPENROUTER_API_KEY が未設定です。.env に設定してから切り替えてください。", flags: MessageFlags.Ephemeral });
+    return;
+  }
   const current = await ctx.aiRouter.getPreference(interaction.guildId!);
   const preference = selection === "openai_gpt56"
     ? { provider: "openai" as const, openAiModel: "gpt56" as const }

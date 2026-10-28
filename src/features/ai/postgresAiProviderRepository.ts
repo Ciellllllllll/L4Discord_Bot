@@ -61,9 +61,9 @@ export async function migratePostgresAiProviderOpenRouterSchema(
   const schema = quotePgIdent(schemaName);
   const table = `${schema}.ai_guild_provider_settings`;
   await pool.query(`
-    ALTER TABLE ${table}
+    ALTER TABLE IF EXISTS ${table}
       DROP CONSTRAINT IF EXISTS ai_guild_provider_settings_preferred_provider_check;
-    ALTER TABLE ${table}
+    ALTER TABLE IF EXISTS ${table}
       ADD CONSTRAINT ai_guild_provider_settings_preferred_provider_check
       CHECK (preferred_provider IN ('openai', 'deepseek', 'openrouter'));
   `);
@@ -75,15 +75,15 @@ export async function migratePostgresAiProviderOpenRouterBudgetSchema(
 ): Promise<void> {
   const schema = quotePgIdent(schemaName);
   await pool.query(`
-    ALTER TABLE ${schema}.ai_provider_daily_budget
+    ALTER TABLE IF EXISTS ${schema}.ai_provider_daily_budget
       DROP CONSTRAINT IF EXISTS ai_provider_daily_budget_provider_check;
-    ALTER TABLE ${schema}.ai_provider_daily_budget
+    ALTER TABLE IF EXISTS ${schema}.ai_provider_daily_budget
       ADD CONSTRAINT ai_provider_daily_budget_provider_check
       CHECK (provider IN ('openai', 'deepseek', 'openrouter'));
 
-    ALTER TABLE ${schema}.ai_provider_token_reservations
+    ALTER TABLE IF EXISTS ${schema}.ai_provider_token_reservations
       DROP CONSTRAINT IF EXISTS ai_provider_token_reservations_provider_check;
-    ALTER TABLE ${schema}.ai_provider_token_reservations
+    ALTER TABLE IF EXISTS ${schema}.ai_provider_token_reservations
       ADD CONSTRAINT ai_provider_token_reservations_provider_check
       CHECK (provider IN ('openai', 'deepseek', 'openrouter'));
   `);

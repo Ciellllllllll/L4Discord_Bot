@@ -1,4 +1,3 @@
-import { setTimeout as delay } from "node:timers/promises";
 import type { AppConfig } from "../../core/config.js";
 import { AiRequestError } from "./aiRequestError.js";
 import { type ChatMessage, sanitizeAiText } from "./chatTypes.js";
@@ -10,7 +9,6 @@ export type OpenRouterRequestOptions = {
   signal?: AbortSignal;
   temperature?: number;
   timeoutMs?: number;
-  maxRetries?: number;
   maxTokens?: number;
   // false のとき @everyone 等のサニタイズをしない（分類器など）
   sanitizeOutput?: boolean;
@@ -31,7 +29,6 @@ type OpenRouterConfig = Pick<
   | "AI_TEMPERATURE"
   | "AI_REQUEST_TIMEOUT_MS"
   | "AI_MAX_RESPONSE_BYTES"
-  | "AI_MAX_RETRIES"
 >;
 
 function classifyFetchError(error: unknown, signal?: AbortSignal): AiRequestError {
@@ -66,82 +63,69 @@ export async function openRouterChat(
   const model = config.OPENROUTER_MODEL;
   const temperature = options.temperature ?? config.AI_TEMPERATURE;
   const timeoutMs = options.timeoutMs ?? config.AI_REQUEST_TIMEOUT_MS;
-  const maxRetries = options.maxRetries ?? config.AI_MAX_RETRIES;
   const sanitize = options.sanitizeOutput !== false;
   const maxResponseBytes = config.AI_MAX_RESPONSE_BYTES;
 
   const startedTotal = Date.now();
-  let lastErr: unknown;
+  // リトライはしない。1リクエストごとに予算予約を確定させるため、失敗時の再試行は
+  // 呼び出し側（AiProviderRouter の DeepSeek 退避）に任せる。
+  const res = await fetchWithLimits(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature,
+        ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+        messages,
+      }),
+    },
+    {
+      timeoutMs,
+      maxResponseBytes,
+      outerSignal: options.signal,
+    },
+  ).catch((error: unknown) => {
+    throw classifyFetchError(error, options.signal);
+  });
 
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    try {
-      const res = await fetchWithLimits(
-        url,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            temperature,
-            ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
-            messages,
-          }),
-        },
-        {
-          timeoutMs,
-          maxResponseBytes,
-          outerSignal: options.signal,
-        },
-      ).catch((error: unknown) => {
-        throw classifyFetchError(error, options.signal);
-      });
-
-      if (!res.ok) {
-        await res.text();
-        throw new AiRequestError("http_status", `OpenRouter HTTP ${res.status}`, { status: res.status });
-      }
-
-      let body: {
-        model?: unknown;
-        choices?: Array<{ message?: { content?: string } }>;
-        usage?: { total_tokens?: unknown };
-      };
-      try {
-        body = await res.json() as typeof body;
-      } catch {
-        throw new AiRequestError("invalid_response", "OpenRouter returned invalid JSON");
-      }
-
-      const raw = body.choices?.[0]?.message?.content?.trim() ?? "";
-      const usageTotalTokens = typeof body.usage?.total_tokens === "number"
-        ? body.usage.total_tokens
-        : undefined;
-      if (!raw) {
-        throw new AiRequestError("invalid_response", "OpenRouter returned an empty response.", {
-          usageTotalTokens,
-        });
-      }
-      const content = sanitize ? sanitizeAiText(raw) : raw;
-      const responseModel = typeof body.model === "string" && body.model.trim()
-        ? body.model.trim()
-        : model;
-      return {
-        content,
-        ms: Date.now() - startedTotal,
-        model: responseModel,
-        ...(usageTotalTokens === undefined ? {} : { usageTotalTokens }),
-      };
-    } catch (e) {
-      lastErr = e;
-      if (e instanceof AiRequestError && e.kind === "caller_abort") throw e;
-      if (attempt < maxRetries) {
-        await delay(400 * (attempt + 1));
-      }
-    }
+  if (!res.ok) {
+    await res.text();
+    throw new AiRequestError("http_status", `OpenRouter HTTP ${res.status}`, { status: res.status });
   }
 
-  throw lastErr instanceof Error ? lastErr : new Error("OpenRouter request failed");
+  let body: {
+    model?: unknown;
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { total_tokens?: unknown };
+  };
+  try {
+    body = await res.json() as typeof body;
+  } catch {
+    throw new AiRequestError("invalid_response", "OpenRouter returned invalid JSON");
+  }
+
+  const raw = body.choices?.[0]?.message?.content?.trim() ?? "";
+  const usageTotalTokens = typeof body.usage?.total_tokens === "number"
+    ? body.usage.total_tokens
+    : undefined;
+  if (!raw) {
+    throw new AiRequestError("invalid_response", "OpenRouter returned an empty response.", {
+      usageTotalTokens,
+    });
+  }
+  const content = sanitize ? sanitizeAiText(raw) : raw;
+  const responseModel = typeof body.model === "string" && body.model.trim()
+    ? body.model.trim()
+    : model;
+  return {
+    content,
+    ms: Date.now() - startedTotal,
+    model: responseModel,
+    ...(usageTotalTokens === undefined ? {} : { usageTotalTokens }),
+  };
 }
