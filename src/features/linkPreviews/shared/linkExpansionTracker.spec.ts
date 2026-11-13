@@ -78,6 +78,8 @@ function fixture() {
   let overridePayload: MessageCreateOptions | undefined;
   let lookupFailure = false;
   let retryReplies = false;
+  let failSends = 0;
+  const payloads: MessageCreateOptions[] = [];
   const entered = deferred();
   const channel = {
     isTextBased: () => true, isDMBased: () => false,
@@ -87,7 +89,11 @@ function fixture() {
       if (fetchErrors.has(id) || !message) throw Object.assign(new Error("fetch error"), { code: fetchErrors.get(id) ?? 10008 });
       return message;
     } },
-    send: async (payload: MessageCreateOptions) => makeMessage(`response-${++count}`, payload),
+    send: async (payload: MessageCreateOptions) => {
+      payloads.push(payload);
+      if (failSends > 0) { failSends--; throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" }); }
+      return makeMessage(`response-${++count}`, payload);
+    },
   };
   function makeMessage(id: string, payload: MessageCreateOptions = {}): Message {
     let flag = Number(payload.flags ?? 0);
@@ -132,7 +138,8 @@ function fixture() {
   const release = async (message: Message) => { released.push(message.id); };
   let tracker = new LinkExpansionTracker(ctx, repository, render, release);
   return {
-    source, quote, repository, messages, edits, deleted, warnings, fetchErrors, entered, released,
+    ctx, source, quote, repository, messages, edits, deleted, warnings, fetchErrors, entered, released, payloads,
+    failSends(value: number) { failSends = value; },
     get tracker() { return tracker; },
     restart() { tracker = new LinkExpansionTracker(ctx, repository, render, release); },
     block() { gate = deferred(); return gate; },
@@ -142,6 +149,60 @@ function fixture() {
     renders: () => renders, sent: () => count,
   };
 }
+
+const card = (text: string): MessageCreateOptions => ({
+  components: [{ type: ComponentType.TextDisplay, content: text }], flags: MessageFlags.IsComponentsV2,
+});
+
+void test("created expansions carry an enforced nonce that is unique per expansion key", async () => {
+  const f = fixture();
+  await f.tracker.onCreate(f.source);
+  assert.equal(f.payloads.length, 2);
+  for (const payload of f.payloads) {
+    assert.equal(payload.enforceNonce, true);
+    assert.equal(typeof payload.nonce, "string");
+    assert.ok(String(payload.nonce).length > 0 && String(payload.nonce).length <= 25, "Discord accepts nonces up to 25 characters");
+  }
+  assert.notEqual(f.payloads[0]!.nonce, f.payloads[1]!.nonce);
+});
+
+void test("resending the same expansion after a failed send reuses the nonce so Discord returns the reply it already created", async () => {
+  const f = fixture();
+  f.failSends(1);
+  const tracker: LinkExpansionTracker = new LinkExpansionTracker(f.ctx, f.repository, async (message) => {
+    await tracker.reply(message, "youtube:0", card("with media")).catch(() => undefined);
+    await tracker.reply(message, "youtube:0", card("without media"));
+  });
+  await tracker.onCreate(f.source);
+  assert.equal(f.payloads.length, 2);
+  assert.equal(f.payloads[0]!.nonce, f.payloads[1]!.nonce);
+  assert.equal(f.repository.responses.size, 1);
+});
+
+void test("a reply deleted after a failed save is resent with a fresh nonce", async () => {
+  const f = fixture();
+  f.repository.failSave = true;
+  const tracker: LinkExpansionTracker = new LinkExpansionTracker(f.ctx, f.repository, async (message) => {
+    await tracker.reply(message, "web:0", card("first")).catch(() => undefined);
+    f.repository.failSave = false;
+    await tracker.reply(message, "web:0", card("second"));
+  });
+  await tracker.onCreate(f.source);
+  assert.deepEqual(f.deleted, ["response-1"]);
+  assert.equal(f.payloads.length, 2);
+  assert.notEqual(f.payloads[0]!.nonce, f.payloads[1]!.nonce, "the deleted reply must not be returned for the retry");
+});
+
+void test("a reply deleted after a failed save is not reused by a later reconciliation", async () => {
+  const f = fixture();
+  f.repository.failSave = true;
+  await assert.rejects(f.tracker.onCreate(f.source), /database unavailable/);
+  assert.deepEqual(f.deleted, ["response-1"]);
+  f.repository.failSave = false;
+  await f.tracker.reconcile();
+  assert.equal(f.payloads.length, 3, "reconciliation resends both cards");
+  assert.notEqual(f.payloads[1]!.nonce, f.payloads[0]!.nonce, "the deleted reply's nonce must not be reused across sessions");
+});
 
 void test("initial lookup failures leave a retryable source without saving its content hash", async () => {
   const f = fixture();
