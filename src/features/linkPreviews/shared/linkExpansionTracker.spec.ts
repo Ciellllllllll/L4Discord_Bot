@@ -193,6 +193,17 @@ void test("a reply deleted after a failed save is resent with a fresh nonce", as
   assert.notEqual(f.payloads[0]!.nonce, f.payloads[1]!.nonce, "the deleted reply must not be returned for the retry");
 });
 
+void test("a reply deleted after a failed save is not reused by a later reconciliation", async () => {
+  const f = fixture();
+  f.repository.failSave = true;
+  await assert.rejects(f.tracker.onCreate(f.source), /database unavailable/);
+  assert.deepEqual(f.deleted, ["response-1"]);
+  f.repository.failSave = false;
+  await f.tracker.reconcile();
+  assert.equal(f.payloads.length, 3, "reconciliation resends both cards");
+  assert.notEqual(f.payloads[1]!.nonce, f.payloads[0]!.nonce, "the deleted reply's nonce must not be reused across sessions");
+});
+
 void test("initial lookup failures leave a retryable source without saving its content hash", async () => {
   const f = fixture();
   f.failLookup(true);
