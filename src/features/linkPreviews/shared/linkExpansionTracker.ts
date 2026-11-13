@@ -17,6 +17,15 @@ function sourceHash(message: Pick<Message, "content">): string {
   return createHash("sha256").update(message.content ?? "").digest("hex");
 }
 
+/**
+ * 展開カードを作るときの nonce。enforceNonce と一緒に送ると、同じ nonce の投稿がすでにあれば
+ * Discord は新しく作らずにその投稿を返す。送信のタイムアウト後に discord.js が自動で送り直したときや、
+ * 展開側が失敗とみなして作り直したときに、同じカードが重複しないようにする（Discord の上限は25文字）。
+ */
+function expansionNonce(sourceId: string, key: string, hash: string, generation: number): string {
+  return createHash("sha256").update(JSON.stringify([sourceId, key, hash, generation])).digest("base64url").slice(0, 25);
+}
+
 function quotedHash(message: Message): string {
   return createHash("sha256").update(JSON.stringify([
     message.content, message.embeds, message.components, [...message.attachments.values()],
@@ -35,6 +44,8 @@ type RenderSession = {
   deleted: Set<string>;
   references: Set<string>;
   failures: Set<string>;
+  /** 自分で削除した返信の nonce を使い回さないよう、キーごとに nonce を作り直した回数を数える */
+  nonceGenerations: Map<string, number>;
 };
 
 export class CyclicQuoteError extends Error {}
@@ -140,11 +151,13 @@ export class LinkExpansionTracker {
           allowedMentions: { parse: [], repliedUser: false },
         });
       } else {
+        const nonce = expansionNonce(message.id, key, session.hash, session.nonceGenerations.get(key) ?? 0);
+        const createPayload: MessageCreateOptions = { ...payload, nonce, enforceNonce: true };
         if (quoted) {
           const channel = message.channel;
           if (!channel.isTextBased() || channel.isDMBased()) throw new Error("Expansion destination unavailable");
-          response = await channel.send(payload);
-        } else response = await message.reply(payload);
+          response = await channel.send(createPayload);
+        } else response = await message.reply(createPayload);
       }
       written = response;
       await this.repository.save({
@@ -158,9 +171,13 @@ export class LinkExpansionTracker {
     } catch (error) {
       if (error instanceof CyclicQuoteError) { session.seen.delete(key); throw error; }
       session.failures.add(key);
-      if (written) await written.delete().catch((cleanupError) => {
-        this.ctx.log.warn({ err: String(cleanupError), messageId: written!.id }, "untracked expansion cleanup failed");
-      });
+      if (written) {
+        // 削除した返信が同じ nonce で返されないよう、次の送信では別の nonce を使う
+        session.nonceGenerations.set(key, (session.nonceGenerations.get(key) ?? 0) + 1);
+        await written.delete().catch((cleanupError) => {
+          this.ctx.log.warn({ err: String(cleanupError), messageId: written!.id }, "untracked expansion cleanup failed");
+        });
+      }
       throw error;
     }
   }
@@ -178,7 +195,7 @@ export class LinkExpansionTracker {
     const records = source ? await this.repository.records(message.id) : [];
     const session: RenderSession = {
       source, hash: sourceHash(message), records,
-      seen: new Set(), deleted: new Set(), failures: new Set(),
+      seen: new Set(), deleted: new Set(), failures: new Set(), nonceGenerations: new Map(),
       references: new Set(records.flatMap((record) => record.quoted_message_id ? [record.quoted_message_id] : [])),
     };
     this.sessions.set(message.id, session);
