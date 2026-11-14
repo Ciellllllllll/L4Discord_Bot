@@ -3,7 +3,7 @@ import type { BotContext } from "../../bot/context.js";
 import { analyzeMorph, analyzeSenryu } from "../japaneseAnalysis/japaneseAnalysisClient.js";
 import { pacchiAiFinalCheck } from "./pacchi.aiFinalCheck.js";
 import { extractPhrase, extractWords, isLearnableMessage } from "./pacchi.filters.js";
-import { buildPacchiGeneratedReply } from "./pacchi.generator.js";
+import { buildPacchiChatReply } from "./pacchi.tinyAi.js";
 import { buildSentencePattern, toLearnableLexiconTokens } from "./pacchi.japaneseLearning.js";
 import { createPacchiRepositoryForContext, type PacchiRepositoryLike } from "./pacchi.repository.js";
 import { appendRandomEmojiAtEnd, buildPacchiReply, formatDuration, janken, RATE_CONFIG } from "./pacchi.reply.js";
@@ -21,6 +21,7 @@ import type { PacchiLearnedEmoji } from "./pacchi.types.js";
 
 const lastSpokeByChannel = new Map<string, number>();
 const lastAutoReplyUserByChannel = new Map<string, string>();
+const pendingChatChannels = new Set<string>();
 const WIKIPEDIA_RANDOM_REPLY_CHANCE = 0.01;
 
 type WikipediaSummary = {
@@ -330,13 +331,19 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
 
     const called = content.includes("ぱっちぃ");
     if (called && canSpeak(message.channelId, cooldownSeconds)) {
-      const generated = await buildPacchiGeneratedReply(repo, message.guildId, ctx.config.PACCHI_GENERATION_MODE, true);
-      const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
-      await sendPacchiReply(message, reply, replyEmoji);
-      markSpoke(message.channelId);
-      await repo.touchSpoke(message.guildId);
-      await repo.logReply(message.guildId, message.channelId, message.author.id, "called", reply);
-      return true;
+      if (pendingChatChannels.has(message.channelId)) return true;
+      pendingChatChannels.add(message.channelId);
+      try {
+        const generated = await buildPacchiChatReply(repo, message.guildId, ctx.config, content, ctx.log, true);
+        const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
+        await sendPacchiReply(message, reply, replyEmoji);
+        markSpoke(message.channelId);
+        await repo.touchSpoke(message.guildId);
+        await repo.logReply(message.guildId, message.channelId, message.author.id, "called", reply);
+        return true;
+      } finally {
+        pendingChatChannels.delete(message.channelId);
+      }
     }
 
     if (
@@ -361,14 +368,20 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       const sameUser = lastAutoReplyUserByChannel.get(message.channelId) === message.author.id;
       const lengthFactor = content.length < 6 ? 0.25 : 1;
       if (!sameUser && Math.random() < chance * lengthFactor) {
-        const generated = await buildPacchiGeneratedReply(repo, message.guildId, ctx.config.PACCHI_GENERATION_MODE);
-        const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
-        await sendPacchiReply(message, reply, replyEmoji);
-        markSpoke(message.channelId);
-        lastAutoReplyUserByChannel.set(message.channelId, message.author.id);
-        await repo.touchSpoke(message.guildId);
-        await repo.logReply(message.guildId, message.channelId, message.author.id, "backchannel", reply);
-        return true;
+        if (pendingChatChannels.has(message.channelId)) return true;
+        pendingChatChannels.add(message.channelId);
+        try {
+          const generated = await buildPacchiChatReply(repo, message.guildId, ctx.config, content, ctx.log);
+          const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
+          await sendPacchiReply(message, reply, replyEmoji);
+          markSpoke(message.channelId);
+          lastAutoReplyUserByChannel.set(message.channelId, message.author.id);
+          await repo.touchSpoke(message.guildId);
+          await repo.logReply(message.guildId, message.channelId, message.author.id, "backchannel", reply);
+          return true;
+        } finally {
+          pendingChatChannels.delete(message.channelId);
+        }
       }
     }
   } catch (err) {

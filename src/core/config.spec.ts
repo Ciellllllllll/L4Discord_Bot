@@ -40,6 +40,19 @@ const productionConfig = loadConfig(
   }),
 );
 
+const tinyAiConfig = loadConfig(baseEnv({
+  PACCHI_GENERATION_MODE: "template",
+  PRODUCTION_PACCHI_GENERATION_MODE: "tiny-ai",
+  PRODUCTION_PACCHI_TINY_AI_URL: "http://tiny-ai:8790",
+  PRODUCTION_PACCHI_TINY_AI_TIMEOUT_MS: "2500",
+}));
+assert.equal(tinyAiConfig.PACCHI_GENERATION_MODE, "tiny-ai");
+assert.equal(tinyAiConfig.PACCHI_TINY_AI_URL, "http://tiny-ai:8790");
+assert.equal(tinyAiConfig.PACCHI_TINY_AI_TIMEOUT_MS, 2500);
+assert.equal(loadConfig(baseEnv()).PACCHI_GENERATION_MODE, "template");
+assert.equal(loadConfig(baseEnv({ PACCHI_TINY_AI_TIMEOUT_MS: "" })).PACCHI_TINY_AI_TIMEOUT_MS, 5000);
+assert.throws(() => loadConfig(baseEnv({ PACCHI_TINY_AI_TIMEOUT_MS: "0" })));
+
 assert.equal(productionConfig.BOT_PROFILE, "production");
 assert.equal(productionConfig.GAME_DEAL_CHANNEL_ID, "production-game-deal-channel");
 assert.equal(productionConfig.GAME_DEAL_NOTIFY_ROLE_ID, "production-game-deal-role");

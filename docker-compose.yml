@@ -44,5 +44,36 @@ services:
       - "${BOT_DATA_DIR:-./data/production}:/app/data/production"
       - "${BOT_LEGACY_ATTACHMENT_DATA_DIR:-./data/message_log_attachments}:/app/data/message_log_attachments:ro"
 
+  tiny-ai:
+    profiles: ["tiny-ai"]
+    image: "${PACCHI_TINY_AI_IMAGE:-l4-tiny-ai:service}"
+    build:
+      context: ./experiments/tiny-ai
+      dockerfile: Dockerfile.serve
+    init: true
+    restart: unless-stopped
+    cpus: 0.75
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 64
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: bind
+        source: "${PACCHI_TINY_AI_MODEL_PATH:-/opt/l4-tiny-ai/runs/quality-v2/medium/best.pt}"
+        target: /model/best.pt
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8790/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
   postgres-data:

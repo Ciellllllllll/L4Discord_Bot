@@ -148,6 +148,8 @@ const profileOverridableKeys = [
   "PACCHI_LEARNING_ANALYZER",
   "PACCHI_PATTERN_LEARNING_ENABLED",
   "PACCHI_GENERATION_MODE",
+  "PACCHI_TINY_AI_URL",
+  "PACCHI_TINY_AI_TIMEOUT_MS",
   "PACCHI_AI_FINAL_CHECK_ENABLED",
   "PACCHI_WIKIPEDIA_API_BASE_URL",
   "DEEPLOL_WATCHER_ENABLED",
@@ -486,7 +488,15 @@ const envSchema = z.object({
   PACCHI_PATTERN_LEARNING_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
   PACCHI_GENERATION_MODE: z.preprocess(
     (v) => (v === "" || v === undefined ? undefined : v),
-    z.enum(["template", "slot-template", "learned-pattern", "mixed"]).default("template"),
+    z.enum(["template", "slot-template", "learned-pattern", "mixed", "tiny-ai"]).default("template"),
+  ),
+  PACCHI_TINY_AI_URL: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.string().url().default("http://tiny-ai:8790"),
+  ),
+  PACCHI_TINY_AI_TIMEOUT_MS: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.coerce.number().int().min(100).max(30_000).default(5_000),
   ),
   PACCHI_AI_FINAL_CHECK_ENABLED: z.preprocess(envFlagFalseByDefault, z.boolean()),
   PACCHI_WIKIPEDIA_API_BASE_URL: z.preprocess(

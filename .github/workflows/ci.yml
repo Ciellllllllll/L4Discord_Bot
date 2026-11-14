@@ -10,6 +10,25 @@ permissions:
   contents: read
 
 jobs:
+  tiny-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test inference API
+        run: |
+          pip install -r experiments/tiny-ai/requirements-test-serve.txt
+          python -m unittest discover -s experiments/tiny-ai -p test_server.py
+      - name: Build inference image
+        run: docker build -f experiments/tiny-ai/Dockerfile.serve -t l4-tiny-ai:ci experiments/tiny-ai
+      - name: Test model and production HTTP server with synthetic weights
+        run: |
+          docker run --rm --network none -v "$PWD/experiments/tiny-ai:/tests:ro" l4-tiny-ai:ci python -m unittest discover -s /tests -p test_model.py
+          docker run --rm --network none -v "$PWD/experiments/tiny-ai:/tests:ro" l4-tiny-ai:ci python -m unittest discover -s /tests -p test_generation.py
+          docker run --rm --network none --cpus 0.75 --memory 512m --memory-swap 512m --read-only --tmpfs /tmp:size=32m --cap-drop ALL --security-opt no-new-privileges -v "$PWD/experiments/tiny-ai:/tests:ro" l4-tiny-ai:ci python /tests/smoke_service.py
+
   verify:
     runs-on: ubuntu-latest
 
