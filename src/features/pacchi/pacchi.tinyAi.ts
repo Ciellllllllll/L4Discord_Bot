@@ -11,7 +11,9 @@ type Logger = { warn: (fields: Record<string, unknown>, message: string) => void
 let inFlight = false;
 
 export function tinyAiPrompt(content: string): string {
-  const text = content.replaceAll("ぱっちぃ", "").replace(/\s+/gu, " ").trim();
+  // 「ぱっちぃ、明日は」の「、」のように、呼びかけの直後に残る記号は入力に含めない。
+  const text = content.replaceAll("ぱっちぃ", "").replace(/\s+/gu, " ")
+    .replace(/^[\s、。，．,.!！?？〜~ー…]+/u, "").trim();
   if (containsUnsafeText(text)) return "";
   return Array.from(text).slice(0, 48).join("");
 }

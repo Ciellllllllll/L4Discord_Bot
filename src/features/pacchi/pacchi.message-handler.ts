@@ -3,6 +3,7 @@ import type { BotContext } from "../../bot/context.js";
 import { analyzeMorph, analyzeSenryu } from "../japaneseAnalysis/japaneseAnalysisClient.js";
 import { pacchiAiFinalCheck } from "./pacchi.aiFinalCheck.js";
 import { extractPhrase, extractWords, isLearnableMessage } from "./pacchi.filters.js";
+import { buildPacchiGeneratedReply } from "./pacchi.generator.js";
 import { buildPacchiChatReply } from "./pacchi.tinyAi.js";
 import { buildSentencePattern, toLearnableLexiconTokens } from "./pacchi.japaneseLearning.js";
 import { createPacchiRepositoryForContext, type PacchiRepositoryLike } from "./pacchi.repository.js";
@@ -331,7 +332,9 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
 
     const called = content.includes("ぱっちぃ");
     if (called && canSpeak(message.channelId, cooldownSeconds)) {
-      if (pendingChatChannels.has(message.channelId)) return true;
+      // 同じチャンネルで生成中なら返信しない。返信していないので、クールダウン中と
+      // 同じく「未処理」として後続の処理へ渡す。
+      if (pendingChatChannels.has(message.channelId)) return false;
       pendingChatChannels.add(message.channelId);
       try {
         const generated = await buildPacchiChatReply(repo, message.guildId, ctx.config, content, ctx.log, true);
@@ -368,20 +371,17 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
       const sameUser = lastAutoReplyUserByChannel.get(message.channelId) === message.author.id;
       const lengthFactor = content.length < 6 ? 0.25 : 1;
       if (!sameUser && Math.random() < chance * lengthFactor) {
-        if (pendingChatChannels.has(message.channelId)) return true;
-        pendingChatChannels.add(message.channelId);
-        try {
-          const generated = await buildPacchiChatReply(repo, message.guildId, ctx.config, content, ctx.log);
-          const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
-          await sendPacchiReply(message, reply, replyEmoji);
-          markSpoke(message.channelId);
-          lastAutoReplyUserByChannel.set(message.channelId, message.author.id);
-          await repo.touchSpoke(message.guildId);
-          await repo.logReply(message.guildId, message.channelId, message.author.id, "backchannel", reply);
-          return true;
-        } finally {
-          pendingChatChannels.delete(message.channelId);
-        }
+        // 呼ばれていない返信では自作AIを使わない。相手の発言を入力にすると、
+        // 発言をそのまま繰り返す返信になるため。
+        const mode = ctx.config.PACCHI_GENERATION_MODE === "tiny-ai" ? "template" : ctx.config.PACCHI_GENERATION_MODE;
+        const generated = await buildPacchiGeneratedReply(repo, message.guildId, mode);
+        const reply = await maybeAiCheckedPacchiReply(ctx, repo, message.guildId, generated);
+        await sendPacchiReply(message, reply, replyEmoji);
+        markSpoke(message.channelId);
+        lastAutoReplyUserByChannel.set(message.channelId, message.author.id);
+        await repo.touchSpoke(message.guildId);
+        await repo.logReply(message.guildId, message.channelId, message.author.id, "backchannel", reply);
+        return true;
       }
     }
   } catch (err) {

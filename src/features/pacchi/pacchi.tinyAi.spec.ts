@@ -21,6 +21,9 @@ async function withFetch(fetchImpl: typeof fetch, fn: () => Promise<void>): Prom
 
 async function run(): Promise<void> {
   assert.equal(tinyAiPrompt("ぱっちぃ  明日は\n"), "明日は");
+  assert.equal(tinyAiPrompt("ぱっちぃ、明日は"), "明日は");
+  assert.equal(tinyAiPrompt("ぱっちぃー！ 明日は、どう？"), "明日は、どう？");
+  assert.equal(tinyAiPrompt("ぱっちぃ！？"), "");
   assert.equal(tinyAiPrompt("ぱっちぃ <@123456789>"), "");
   assert.equal(tinyAiPrompt("ぱっちぃ https://example.com"), "");
   assert.equal(Array.from(tinyAiPrompt("ぱっちぃ " + "あ".repeat(100))).length, 48);

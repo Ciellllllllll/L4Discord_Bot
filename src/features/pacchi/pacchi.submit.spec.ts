@@ -163,6 +163,15 @@ async function run(): Promise<void> {
     });
     assert.equal(fallbackReplies.length, 1);
 
+    // 呼びかけを含まない通常メッセージでは、tiny-ai モードでも自作AIへ問い合わせない。
+    let ordinaryRequests = 0;
+    const ordinaryReplies: string[] = [];
+    await withFetch(async () => { ordinaryRequests++; return responseJson({ text: "unexpected" }); }, async () => {
+      assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("今日はいい天気だね", ordinaryReplies, "ordinary-channel")), false);
+    });
+    assert.equal(ordinaryRequests, 0);
+    assert.deepEqual(ordinaryReplies, []);
+
     let release: (() => void) | undefined;
     let entered: (() => void) | undefined;
     const started = new Promise<void>((resolve) => { entered = resolve; });
@@ -177,7 +186,7 @@ async function run(): Promise<void> {
       const first = handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ", concurrentReplies, "concurrent-channel"));
       await started;
       try {
-        assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ", concurrentReplies, "concurrent-channel")), true);
+        assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ", concurrentReplies, "concurrent-channel")), false);
         assert.equal(concurrentRequests, 1);
       } finally {
         release!();
