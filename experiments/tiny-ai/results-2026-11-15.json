@@ -1,0 +1,77 @@
+{
+  "parameters": 87008,
+  "config": {
+    "vocab_size": 2256,
+    "width": 32,
+    "context": 64
+  },
+  "seed": 42,
+  "epochs": 8,
+  "torch_version": "2.6.0+cpu",
+  "history": [
+    {
+      "epoch": 0,
+      "val_loss": 7.714586747366831
+    },
+    {
+      "epoch": 1,
+      "train_loss": 4.978693844525112,
+      "val_loss": 4.542377706611256,
+      "elapsed_seconds": 22.28
+    },
+    {
+      "epoch": 2,
+      "train_loss": 4.350613311686445,
+      "val_loss": 4.319704799173564,
+      "elapsed_seconds": 44.32
+    },
+    {
+      "epoch": 3,
+      "train_loss": 4.155342339855098,
+      "val_loss": 4.2399294936045955,
+      "elapsed_seconds": 66.7
+    },
+    {
+      "epoch": 4,
+      "train_loss": 4.055012040141603,
+      "val_loss": 4.191131428810721,
+      "elapsed_seconds": 89.07
+    },
+    {
+      "epoch": 5,
+      "train_loss": 3.9915240160113368,
+      "val_loss": 4.155281121854979,
+      "elapsed_seconds": 111.56
+    },
+    {
+      "epoch": 6,
+      "train_loss": 3.940303887722337,
+      "val_loss": 4.142777257440619,
+      "elapsed_seconds": 133.71
+    },
+    {
+      "epoch": 7,
+      "train_loss": 3.90393863180362,
+      "val_loss": 4.130688248381883,
+      "elapsed_seconds": 156.27
+    },
+    {
+      "epoch": 8,
+      "train_loss": 3.874277774628336,
+      "val_loss": 4.103884012876604,
+      "elapsed_seconds": 178.59
+    }
+  ],
+  "best_val_loss": 4.103884012876604,
+  "peak_rss_mib": 305.2421875,
+  "elapsed_seconds": 178.6,
+  "data_stats": {
+    "source_messages": 9431,
+    "unique_messages": 7905,
+    "train_messages": 7149,
+    "val_messages": 756,
+    "train_chars": 141896,
+    "val_chars": 11321,
+    "train_sha256": "03a2b76db71c4e2caf7f5e2a1b0b72d0cc47ecf64015bb9edbba09a8838d9cf1"
+  }
+}
