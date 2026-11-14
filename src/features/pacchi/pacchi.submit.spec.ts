@@ -6,6 +6,7 @@ import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
 import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
 import { handlePacchiMessage } from "./pacchi.message-handler.js";
 import { ensurePostgresPacchiSchema } from "./pacchi.schema.js";
+import { PostgresPacchiRepository } from "./postgresPacchiRepository.js";
 
 function makeCtx(mainPgPool: Pool): BotContext {
   return {
@@ -134,6 +135,65 @@ async function run(): Promise<void> {
     assert.deepEqual(generatedReplies, ["春風に\nコードが揺れて\nバグが咲く"]);
     assert.equal(workerRequests.length, 16);
     assert.match(workerRequests[0]!, /"rule":\[5,7,5\]/);
+
+    const tinyCtx = makeCtx(pool);
+    tinyCtx.config.PACCHI_GENERATION_MODE = "tiny-ai";
+    tinyCtx.config.PACCHI_TINY_AI_URL = "http://tiny-ai:8790";
+    tinyCtx.config.PACCHI_TINY_AI_TIMEOUT_MS = 100;
+    const aiReplies: string[] = [];
+    await withFetch(async (_input, init) => {
+      assert.deepEqual(JSON.parse(String(init?.body)), { prompt: "明日は" });
+      return responseJson({ text: "明日は無理だよ" });
+    }, async () => {
+      assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ 明日は", aiReplies, "tiny-channel")), true);
+      assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ 明日は", aiReplies, "tiny-channel")), false);
+    });
+    assert.deepEqual(aiReplies, ["明日は無理だよ"]);
+
+    await new PostgresPacchiRepository(pool).setChannelSettings("guild", "disabled-channel", false, true);
+    let disabledRequests = 0;
+    await withFetch(async () => { disabledRequests++; return responseJson({ text: "unexpected" }); }, async () => {
+      assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ", [], "disabled-channel")), false);
+    });
+    assert.equal(disabledRequests, 0);
+
+    const fallbackReplies: string[] = [];
+    await withFetch(async () => responseJson({}, 503), async () => {
+      assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ", fallbackReplies, "fallback-channel")), true);
+    });
+    assert.equal(fallbackReplies.length, 1);
+
+    // 呼びかけを含まない通常メッセージでは、tiny-ai モードでも自作AIへ問い合わせない。
+    let ordinaryRequests = 0;
+    const ordinaryReplies: string[] = [];
+    await withFetch(async () => { ordinaryRequests++; return responseJson({ text: "unexpected" }); }, async () => {
+      assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("今日はいい天気だね", ordinaryReplies, "ordinary-channel")), false);
+    });
+    assert.equal(ordinaryRequests, 0);
+    assert.deepEqual(ordinaryReplies, []);
+
+    let release: (() => void) | undefined;
+    let entered: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const concurrentReplies: string[] = [];
+    let concurrentRequests = 0;
+    await withFetch(async () => {
+      concurrentRequests++;
+      entered!();
+      await new Promise<void>((resolve) => { release = resolve; });
+      return responseJson({ text: "できたよ" });
+    }, async () => {
+      const first = handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ", concurrentReplies, "concurrent-channel"));
+      await started;
+      try {
+        assert.equal(await handlePacchiMessage(tinyCtx, makeMessage("ぱっちぃ", concurrentReplies, "concurrent-channel")), false);
+        assert.equal(concurrentRequests, 1);
+      } finally {
+        release!();
+        await first;
+      }
+    });
+    assert.deepEqual(concurrentReplies, ["できたよ"]);
   } finally {
     await pool.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
     await pool.end();

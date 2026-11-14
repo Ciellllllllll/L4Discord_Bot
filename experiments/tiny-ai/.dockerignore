@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!model.py
+!run.py
+!test_model.py
+!quality.py
+!benchmark_data.py
+!test_benchmark_data.py
+!test_quality.py
+!test_pipeline.py
+!test_generation.py
+!Dockerfile.serve
+!requirements-serve.txt
+!server.py
