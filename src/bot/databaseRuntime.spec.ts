@@ -148,6 +148,7 @@ test("createDatabaseRuntime initializes, pings, and closes all PostgreSQL schema
       { version: 24, name: "web_link_preview" },
       { version: 25, name: "ai_provider_openrouter" },
       { version: 26, name: "ai_provider_openrouter_budget" },
+      { version: 27, name: "legacy_flag_columns" },
     ]);
     await Promise.all([
       upsertGuildSettingsData(runtime.db, "guild", { ai_thinking_enabled: true }),

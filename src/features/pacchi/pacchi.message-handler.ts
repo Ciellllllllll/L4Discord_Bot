@@ -200,6 +200,48 @@ async function tryHandlePacchiSenryuSubmission(
   return true;
 }
 
+async function learnFromPacchiMessage(
+  ctx: BotContext,
+  repo: PacchiRepositoryLike,
+  message: Message,
+  guildId: string,
+  content: string,
+  learnEnabled: boolean,
+  learnable: boolean,
+): Promise<void> {
+  if (!learnEnabled) return;
+  if (!content.startsWith("!") && !content.startsWith("/")) {
+    await repo.learnEmojis(guildId, extractGuildSafeEmojis(message));
+  }
+  if (!learnable) return;
+
+  if (
+    ctx.config.JAPANESE_WORKER_ENABLED &&
+    ctx.config.PACCHI_LEARNING_ANALYZER === "go-worker" &&
+    !isUnsafeForPacchiLearning(content)
+  ) {
+    const morph = await analyzeMorph(content, {
+      baseUrl: ctx.config.JAPANESE_WORKER_URL,
+      timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
+    });
+    if (morph.ok) {
+      const lexiconTokens = toLearnableLexiconTokens(morph.data);
+      await repo.learnMorph(guildId, lexiconTokens);
+      if (ctx.config.PACCHI_PATTERN_LEARNING_ENABLED) {
+        const pattern = buildSentencePattern(content, morph.data);
+        if (pattern) await repo.learnSentencePattern(guildId, pattern);
+      }
+    } else {
+      ctx.log.warn({ reason: morph.reason, err: morph.error }, "pacchi morph learning skipped");
+    }
+    return;
+  }
+
+  const words = extractWords(content);
+  const phrase = extractPhrase(content);
+  if (words.length > 0 || phrase) await repo.learn(guildId, words, phrase);
+}
+
 export async function handlePacchiMessage(ctx: BotContext, message: Message): Promise<boolean> {
   if (isSelfAuthoredMessage(ctx, message)) return false;
   if (!message.guildId || message.guildId !== ctx.config.GUILD_ID) return false;
@@ -214,38 +256,14 @@ export async function handlePacchiMessage(ctx: BotContext, message: Message): Pr
   const channel = await repo.getChannelSettings(message.guildId, message.channelId);
   const learnable = isLearnableMessage(content, message.attachments.size > 0);
 
+  // 学習は返信のおまけなので、DB や形態素解析の失敗で返信まで止めない。
   try {
-    if (settings.enabled && channel.learnEnabled && !content.startsWith("!") && !content.startsWith("/")) {
-      await repo.learnEmojis(message.guildId, extractGuildSafeEmojis(message));
-    }
+    await learnFromPacchiMessage(ctx, repo, message, message.guildId, content, settings.enabled && channel.learnEnabled, learnable);
+  } catch (err) {
+    ctx.log.warn({ err }, "pacchi learning failed; continuing to reply");
+  }
 
-    if (settings.enabled && channel.learnEnabled && learnable) {
-      if (
-        ctx.config.JAPANESE_WORKER_ENABLED &&
-        ctx.config.PACCHI_LEARNING_ANALYZER === "go-worker" &&
-        !isUnsafeForPacchiLearning(content)
-      ) {
-        const morph = await analyzeMorph(content, {
-          baseUrl: ctx.config.JAPANESE_WORKER_URL,
-          timeoutMs: ctx.config.JAPANESE_WORKER_TIMEOUT_MS,
-        });
-        if (morph.ok) {
-          const lexiconTokens = toLearnableLexiconTokens(morph.data);
-          await repo.learnMorph(message.guildId, lexiconTokens);
-          if (ctx.config.PACCHI_PATTERN_LEARNING_ENABLED) {
-            const pattern = buildSentencePattern(content, morph.data);
-            if (pattern) await repo.learnSentencePattern(message.guildId, pattern);
-          }
-        } else {
-          ctx.log.warn({ reason: morph.reason, err: morph.error }, "pacchi morph learning skipped");
-        }
-      } else {
-        const words = extractWords(content);
-        const phrase = extractPhrase(content);
-        if (words.length > 0 || phrase) await repo.learn(message.guildId, words, phrase);
-      }
-    }
-
+  try {
     const cooldownSeconds = settings.cooldownSeconds || RATE_CONFIG[settings.speakRate].cooldownSeconds;
     const pickedEmoji = await repo.pickEmoji(message.guildId);
     const replyEmoji = isReplyEmojiAvailable(message, pickedEmoji) ? pickedEmoji : null;

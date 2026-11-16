@@ -194,6 +194,24 @@ async function run(): Promise<void> {
       }
     });
     assert.deepEqual(concurrentReplies, ["できたよ"]);
+
+    // 学習の DB 書き込みが失敗しても、呼びかけへの返信は続ける。
+    await pool.query(`
+      CREATE FUNCTION pacchi_spec_reject_learning() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'learning rejected by spec'; END $$;
+      CREATE TRIGGER pacchi_spec_reject_words BEFORE INSERT OR UPDATE ON pacchi_words
+        FOR EACH ROW EXECUTE FUNCTION pacchi_spec_reject_learning();
+    `);
+    const learningWarnings: string[] = [];
+    const learningCtx = makeCtx(pool);
+    learningCtx.log.warn = ((_fields: unknown, msg: string) => { learningWarnings.push(msg); }) as never;
+    const learningReplies: string[] = [];
+    assert.equal(
+      await handlePacchiMessage(learningCtx, makeMessage("ぱっちぃ 今日はラーメンを食べた", learningReplies, "learning-fail-channel")),
+      true,
+    );
+    assert.equal(learningReplies.length, 1);
+    assert.deepEqual(learningWarnings, ["pacchi learning failed; continuing to reply"]);
   } finally {
     await pool.query(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
     await pool.end();

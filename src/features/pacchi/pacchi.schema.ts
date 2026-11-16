@@ -1,12 +1,13 @@
+import { migrateLegacyBooleanColumns, type LegacyBooleanColumn } from "../../core/db/legacyBooleanColumns.js";
 import type { PgQueryable } from "../../core/db/postgres.js";
 
-const PACCHI_POSTGRES_BOOLEAN_COLUMNS = [
-  { table: "pacchi_settings", column: "enabled" },
-  { table: "pacchi_settings", column: "default_talk_enabled" },
-  { table: "pacchi_settings", column: "default_learn_enabled" },
-  { table: "pacchi_channel_settings", column: "talk_enabled" },
-  { table: "pacchi_channel_settings", column: "learn_enabled" },
-] as const;
+const PACCHI_POSTGRES_BOOLEAN_COLUMNS: readonly LegacyBooleanColumn[] = [
+  { table: "pacchi_settings", column: "enabled", defaultValue: true },
+  { table: "pacchi_settings", column: "default_talk_enabled", defaultValue: true },
+  { table: "pacchi_settings", column: "default_learn_enabled", defaultValue: true },
+  { table: "pacchi_channel_settings", column: "talk_enabled", defaultValue: true },
+  { table: "pacchi_channel_settings", column: "learn_enabled", defaultValue: true },
+];
 
 /**
  * PostgreSQL runtime schema for Pacchi.  This deliberately lives beside the
@@ -181,24 +182,5 @@ export async function ensurePostgresPacchiSchema(pool: PgQueryable): Promise<voi
 
 /** Repairs old PostgreSQL copies that created Pacchi flags as bigint. */
 export async function migratePostgresPacchiBooleanColumns(pool: PgQueryable): Promise<void> {
-  for (const { table, column } of PACCHI_POSTGRES_BOOLEAN_COLUMNS) {
-    const result = await pool.query<{ data_type: string }>(
-      `SELECT data_type
-       FROM information_schema.columns
-       WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`,
-      [table, column],
-    );
-    if (result.rows[0]?.data_type !== "bigint") continue;
-
-    await pool.query(`
-      ALTER TABLE ${quoteIdentifier(table)}
-        ALTER COLUMN ${quoteIdentifier(column)} DROP DEFAULT,
-        ALTER COLUMN ${quoteIdentifier(column)} TYPE boolean USING ${quoteIdentifier(column)} <> 0,
-        ALTER COLUMN ${quoteIdentifier(column)} SET DEFAULT true
-    `);
-  }
-}
-
-function quoteIdentifier(identifier: string): string {
-  return `"${identifier.replace(/"/g, '""')}"`;
+  await migrateLegacyBooleanColumns(pool, PACCHI_POSTGRES_BOOLEAN_COLUMNS);
 }

@@ -9,6 +9,7 @@ import {
   createPostgresMainKysely,
   createPostgresTicketKysely,
 } from "../core/db/kysely.js";
+import { migrateLegacyBooleanColumns, type LegacyBooleanColumn } from "../core/db/legacyBooleanColumns.js";
 import { createPgPool } from "../core/db/postgres.js";
 import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
 import { applyPostgresMigrations, type PostgresMigration } from "../core/db/postgresMigrations.js";
@@ -37,6 +38,17 @@ import { ensurePostgresVcTempSchema } from "../features/vc/vcTempPersistence.js"
 import { ensurePostgresVcTimeSchema } from "../features/vc/vcTimeSchema.js";
 import { ensurePostgresYouTubeWatcherSchema, migratePostgresYouTubeVideoCacheReferences, migratePostgresYouTubeWatcherDurableMedia } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
 import { ensurePostgresBokeruSchema } from "../features/bokeru/bokeruRepository.js";
+
+/**
+ * SQLite から移したときに bigint で作られ、コードは boolean を書き込むフラグ列。
+ * version 11 は pacchi の設定列だけを直していた。
+ */
+export const LEGACY_FLAG_COLUMNS: readonly LegacyBooleanColumn[] = [
+  { table: "pacchi_lexicon", column: "is_proper_noun", defaultValue: false },
+  { table: "pacchi_lexicon", column: "is_oov", defaultValue: false },
+  { table: "senryu_records", column: "spoiler", defaultValue: null },
+  { table: "lol_watcher_accounts", column: "enabled", defaultValue: true },
+];
 
 export type DatabaseRuntime = {
   db: Kysely<Database>;
@@ -150,6 +162,8 @@ async function createDatabaseRuntimeUnsafe(
     } },
     { version: 25, name: "ai_provider_openrouter", apply: (pool) => migratePostgresAiProviderOpenRouterSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
     { version: 26, name: "ai_provider_openrouter_budget", apply: (pool) => migratePostgresAiProviderOpenRouterBudgetSchema(pool, config.POSTGRES_MAIN_SCHEMA) },
+    // version 11 で漏れていた、SQLite 由来の bigint フラグ列を boolean に直す。
+    { version: 27, name: "legacy_flag_columns", apply: (pool) => migrateLegacyBooleanColumns(pool, LEGACY_FLAG_COLUMNS) },
   ]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_TICKET_SCHEMA, [{ version: 1, name: "ticket_initial", apply: ensurePostgresTicketDatabaseSchema }]);
   await migrateTemporarySchema(config.DATABASE_URL, config.POSTGRES_AI_HISTORY_SCHEMA, [{ version: 1, name: "ai_history_initial", apply: ensurePostgresAiHistorySchema }]);
