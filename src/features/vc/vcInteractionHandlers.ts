@@ -131,6 +131,9 @@ export async function handleVcCreateModal(
     return true;
   }
 
+  // VC作成とDB保存は3秒の応答期限を超えることがあるため、先に応答を保留する。
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const genre = interaction.customId.slice(VC_NAME_MODAL_PREFIX.length).trim();
   const vcName = interaction.fields.getTextInputValue("vc_name_input").trim();
   const finalName = genre ? `[${genre}]:${vcName}` : vcName;
@@ -140,21 +143,22 @@ export async function handleVcCreateModal(
     creatorTag: interaction.user.tag,
   });
 
-  if (result.ok) {
-    await interaction.reply({ content: `VC ${result.name} を作成しました`, flags: MessageFlags.Ephemeral });
-    const created = await guild.channels.fetch(result.channelId).catch(() => null);
-    if (created) {
-      const botId = ctx.client.user?.id;
-      if (botId) {
-        const nologEmbed = await runNologToggleAndBuildEmbed(ctx.db, guild.id, created.id, botId);
-        await trySendNologEmbedInChannel(created, nologEmbed, ctx.log, botId);
-      }
+  if (!result.ok) {
+    await interaction.editReply({ content: vcCreatorErrText[result.error] ?? "VC作成に失敗しました。" });
+    return true;
+  }
+
+  // VCは作成済みなので、完了通知に失敗してもnolog案内の送信は続ける。
+  await interaction
+    .editReply({ content: `VC ${result.name} を作成しました` })
+    .catch((err) => ctx.log.warn({ err, channelId: result.channelId }, "temporary VC create reply failed"));
+  const created = await guild.channels.fetch(result.channelId).catch(() => null);
+  if (created) {
+    const botId = ctx.client.user?.id;
+    if (botId) {
+      const nologEmbed = await runNologToggleAndBuildEmbed(ctx.db, guild.id, created.id, botId);
+      await trySendNologEmbedInChannel(created, nologEmbed, ctx.log, botId);
     }
-  } else {
-    await interaction.reply({
-      content: vcCreatorErrText[result.error] ?? "VC作成に失敗しました。",
-      flags: MessageFlags.Ephemeral,
-    });
   }
   return true;
 }
@@ -172,20 +176,17 @@ export async function handleVcRenameModal(
     return true;
   }
 
+  // メンバー取得とVC名変更は3秒の応答期限を超えることがあるため、先に応答を保留する。
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const voiceChannel = await resolveCurrentVoiceChannel(interaction);
   if (!voiceChannel || voiceChannel.id !== parsed.channelId) {
-    await interaction.reply({
-      content: "同じVCに接続したまま操作してください。",
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply({ content: "同じVCに接続したまま操作してください。" });
     return true;
   }
 
   if (!ctx.vcTemp.isTrackedTemporaryVc(parsed.channelId)) {
-    await interaction.reply({
-      content: "現在接続中のVCは変更対象ではありません。",
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply({ content: "現在接続中のVCは変更対象ではありません。" });
     return true;
   }
 
@@ -194,10 +195,7 @@ export async function handleVcRenameModal(
     parsed.genre,
   );
   if (finalName === `[${parsed.genre}]:`) {
-    await interaction.reply({
-      content: "変更後VC名を入力してください。",
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply({ content: "変更後VC名を入力してください。" });
     return true;
   }
 
@@ -208,15 +206,9 @@ export async function handleVcRenameModal(
   });
 
   if (result.ok) {
-    await interaction.reply({
-      content: `VC名を ${result.name} に変更しました。`,
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply({ content: `VC名を ${result.name} に変更しました。` });
   } else {
-    await interaction.reply({
-      content: vcRenameErrText[result.error] ?? "VC名の変更に失敗しました。",
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply({ content: vcRenameErrText[result.error] ?? "VC名の変更に失敗しました。" });
   }
   return true;
 }
