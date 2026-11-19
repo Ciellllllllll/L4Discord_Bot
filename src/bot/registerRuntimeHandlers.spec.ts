@@ -74,6 +74,26 @@ test("interaction errors reply, edit deferred replies, and fall back to follow-u
   assert.deepEqual(failures, ["reply"]);
 });
 
+test("interaction errors stop after Discord reports an unknown interaction", async () => {
+  const calls: string[] = [];
+  const failures: string[] = [];
+  const unknownInteraction = Object.assign(new Error("Unknown interaction"), { code: 10062 });
+  await respondToInteractionError({
+    replied: false,
+    deferred: false,
+    reply: async () => { calls.push("reply"); throw unknownInteraction; },
+    followUp: async () => { calls.push("followUp"); },
+  } as never, (_error, method) => { failures.push(method); });
+  await respondToInteractionError({
+    replied: false,
+    deferred: true,
+    editReply: async () => { calls.push("edit"); throw unknownInteraction; },
+    followUp: async () => { calls.push("followUp"); },
+  } as never, (_error, method) => { failures.push(method); });
+  assert.deepEqual(calls, ["reply", "edit"]);
+  assert.deepEqual(failures, ["reply", "editReply"]);
+});
+
 test("runtime shutdown stops timers, watcher, worker, VC sweep, and Discord client", async () => {
   const calls: string[] = [];
   const shutdown = createRuntimeShutdown({
