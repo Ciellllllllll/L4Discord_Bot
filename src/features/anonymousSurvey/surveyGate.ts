@@ -37,11 +37,3 @@ export async function promptAnonymousSurvey(
   await interaction.showModal(buildAnonymousSurveyModal(sessionId));
   return true;
 }
-
-export async function maybePromptAnonymousSurvey(
-  interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
-  member: GuildMember | null,
-): Promise<boolean> {
-  return promptAnonymousSurvey(interaction, ctx, member);
-}

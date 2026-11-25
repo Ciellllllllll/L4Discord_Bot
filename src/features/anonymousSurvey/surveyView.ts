@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import type { BotContext } from "../../bot/context.js";
 import type { Database } from "../../core/db/types.js";
 import { isAdmin } from "../../core/permission.js";
-import { ComponentCardBuilder, componentCardsPayload, ephemeralComponentPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload, ephemeralComponentPayload } from "../../core/componentCard.js";
 
 // 自由記述を含むため、メッセージ全体のテキスト上限（4000 字）に収まる件数にする
 export const ANONYMOUS_SURVEY_VIEW_PAGE_SIZE = 5;

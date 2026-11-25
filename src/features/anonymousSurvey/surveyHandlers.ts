@@ -11,7 +11,7 @@ import {
   type AnonymousSurveySessionAction,
 } from "./surveyService.js";
 import { createSurveyReplayInteraction } from "./surveyCommandState.js";
-import { ephemeralComponentPayload } from "../panels/componentCard.js";
+import { ephemeralComponentPayload } from "../../core/componentCard.js";
 import {
   SURVEY_BUG_REPORT_FIELD_ID,
   SURVEY_CONTINUE_PREFIX,

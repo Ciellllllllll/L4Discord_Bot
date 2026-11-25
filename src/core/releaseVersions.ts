@@ -36,6 +36,7 @@ export const SLASH_COMMAND_MIN_BOT_VERSION: Record<string, string> = {
   lol_watch: "2.0.7",
   lol_add: "2.0.7",
   lol_remove: "2.0.7",
+  adhd: "2.0.15",
 };
 
 // プレフィックスコマンド（小文字キー）→ 利用に必要な最低 BOT_SEMVER

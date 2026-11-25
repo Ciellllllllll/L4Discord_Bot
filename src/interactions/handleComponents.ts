@@ -1,13 +1,8 @@
-import {
-  ActionRowBuilder,
-  MessageFlags,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  type ButtonInteraction,
-  type ChannelSelectMenuInteraction,
-  type ModalSubmitInteraction,
-  type StringSelectMenuInteraction,
+import type {
+  ButtonInteraction,
+  ChannelSelectMenuInteraction,
+  ModalSubmitInteraction,
+  StringSelectMenuInteraction,
 } from "discord.js";
 import type { BotContext } from "../bot/context.js";
 import { routeMessageLogButton, routeMessageLogModal } from "../features/messageLog/messageLogsView.js";
@@ -51,79 +46,19 @@ import {
   handleAppealStartButton,
   handleAppealSubmitModal,
 } from "../features/appeals/appealHandlers.js";
-import { getDetecterService, DETECTER_REASON_INPUT_ID } from "../features/detecter/detecterService.js";
+import { handleDetecterButton, handleDetecterModal } from "../features/detecter/detecterInteractions.js";
 import { handleExecutionFlowButton } from "../features/execution/executionFlow.js";
 import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
 import { handleGameDealButton } from "../features/gameDeals/gameDealWatcher.js";
 import { handleWerewolfButton, handleWerewolfStringSelect } from "../features/werewolf/werewolfGame.js";
 import { handleAnonymousSurveyButton, handleAnonymousSurveyModalSubmit } from "../features/anonymousSurvey/surveyHandlers.js";
 import { handleAnonymousSurveyViewButton } from "../features/anonymousSurvey/surveyView.js";
-import { parseCustomId } from "./parseCustomId.js";
 import { handleBokeruButton, handleBokeruModal } from "../features/bokeru/bokeru.js";
 import { handleVxTwitterPreviewButton } from "../features/utilities/vxtwitterPreviewInteractions.js";
 import { handlePreviewInteraction } from "../features/linkPreviews/shared/previewInteractions.js";
 import { refreshPreviewTranslationState } from "../features/linkPreviews/linkPreviewMessageHandler.js";
 import { handleWebSummaryInteraction } from "../features/linkPreviews/web/webSummaryInteractions.js";
 import { handleYouTubeMediaRefresh } from "../features/linkPreviews/youtube/youtubeMediaRefresh.js";
-
-export async function handlePanelButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  if (await handleSetupUiOpenButton(interaction, ctx)) return true;
-  return false;
-}
-
-export async function handleDetecterButton(
-  interaction: ButtonInteraction,
-  ctx: BotContext,
-): Promise<boolean> {
-  const parsed = parseCustomId(interaction.customId);
-  if (!parsed || parsed.domain !== "detecter") return false;
-
-  if (parsed.action === "reasonPrompt") {
-    const svc = getDetecterService(ctx);
-    const event = svc.getPendingEvent(parsed.shortId);
-    if (!event) {
-      await interaction.reply({ content: "このイベントは期限切れか、既に処理済みです。", flags: MessageFlags.Ephemeral });
-      return true;
-    }
-    if (event.reasonButtonFired) {
-      await interaction.reply({ content: "この理由入力は既に処理済みです。", flags: MessageFlags.Ephemeral });
-      return true;
-    }
-    if (interaction.user.id !== event.actorUserId) {
-      await interaction.reply({ content: "処罰を実行したユーザーのみこのボタンを使用できます。", flags: MessageFlags.Ephemeral });
-      return true;
-    }
-    const modal = new ModalBuilder()
-      .setCustomId(`detecter:reasonModalPrompt:${parsed.shortId}`)
-      .setTitle("処罰理由の入力")
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder()
-            .setCustomId(DETECTER_REASON_INPUT_ID)
-            .setLabel("理由")
-            .setStyle(TextInputStyle.Paragraph)
-            .setRequired(true)
-            .setMaxLength(1000)
-            .setPlaceholder("対象ユーザーに送信する理由を入力してください。"),
-        ),
-      );
-    try {
-      await interaction.showModal(modal);
-    } catch {
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction
-          .reply({
-            content: "モーダルを表示できませんでした。しばらくしてから再度お試しください。",
-            flags: MessageFlags.Ephemeral,
-          })
-          .catch(() => undefined);
-      }
-    }
-    return true;
-  }
-
-  return false;
-}
 
 export async function routeButton(interaction: ButtonInteraction, ctx: BotContext): Promise<void> {
   if (await handlePreviewInteraction(interaction, ctx, {
@@ -159,34 +94,7 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
   if (await handleAfkDisconnectButton(interaction, ctx)) return;
   if (await handleGameDealButton(interaction, ctx)) return;
   if (await handleVcCreatorButton(interaction, ctx)) return;
-  if (await handlePanelButton(interaction, ctx)) return;
-}
-
-export async function handleDetecterModal(
-  interaction: ModalSubmitInteraction,
-  ctx: BotContext,
-): Promise<boolean> {
-  const parsed = parseCustomId(interaction.customId);
-  if (!parsed || parsed.domain !== "detecter") return false;
-
-  if (parsed.action === "reasonModalPrompt") {
-    const reason = interaction.fields.getTextInputValue(DETECTER_REASON_INPUT_ID);
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    try {
-      const result = await getDetecterService(ctx).submitModeratorReason(
-        interaction.user.id,
-        parsed.shortId,
-        reason,
-      );
-      await interaction.editReply({ content: result.message });
-    } catch (err) {
-      ctx.log.error({ err }, "detecter: reason modal submit failed");
-      await interaction.editReply({ content: "処理中にエラーが発生しました。" }).catch(() => undefined);
-    }
-    return true;
-  }
-
-  return false;
+  if (await handleSetupUiOpenButton(interaction, ctx)) return;
 }
 
 export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<void> {
