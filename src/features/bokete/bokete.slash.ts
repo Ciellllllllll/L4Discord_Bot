@@ -1,6 +1,6 @@
 import { AttachmentBuilder, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import { fetchBoketePost, type FetchBoketePostOptions } from "./boketeClient.js";
 
 const FETCH_FAILED_MESSAGE = "投稿の取得に失敗しました。しばらくしてから再度お試しください。";

@@ -1,5 +1,9 @@
 // Discord Snowflake は64bit整数のため、JavaScriptのNumberではなく文字列で扱う。
 
+export function normalizeSnowflake(value: unknown): string | null {
+  const s = String(value ?? "").trim();
+  return /^\d+$/.test(s) ? s : null;
+}
 
 export function snowflakeToBigInt(id: string): bigint {
   return BigInt(id);

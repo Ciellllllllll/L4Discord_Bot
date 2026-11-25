@@ -1,5 +1,3 @@
-// /vc_rank の期間フィルタ（リポジトリの VcRankPeriod と同値）
-
 export type VcRankingPeriodKey = "day" | "week" | "month" | "all";
 
 function gregorianToJdn(y: number, m: number, d: number): number {
@@ -30,8 +28,6 @@ function jdnToGregorian(j: number): { y: number; m: number; d: number } {
   return { y: year, m: month, d: day };
 }
 
-// IANA タイムゾーンにおける UTC 瞬間 ms の暦日（en-CA 形式 yyyy-mm-dd）
-
 export function zonedYmdFromUtcMs(timeZone: string, ms: number): { y: number; m: number; d: number } {
   const s = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -43,17 +39,12 @@ export function zonedYmdFromUtcMs(timeZone: string, ms: number): { y: number; m:
   return { y, m, d };
 }
 
-// 0=日曜 … 6=土曜（Intl en-US weekday short）
-
 function zonedWeekdaySun0(timeZone: string, ms: number): number {
   const w = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(new Date(ms));
   const key = w.slice(0, 3);
   const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   return map[key] ?? 0;
 }
-
-// 指定タイムゾーンで「その暦日の hour:minute:second」に相当する UTC エポック ms。
-// DST 等は ±36 時間を 1 分刻みで走査して解決する（ランキング境界用・呼び出しは低頻度）。
 
 export function zonedWallTimeToUtcMs(
   timeZone: string,
@@ -86,28 +77,24 @@ export function zonedWallTimeToUtcMs(
     }
     return o;
   };
-  const targetY = year;
-  const targetM = month;
-  const targetD = day;
-  const targetH = hour;
-  const targetMin = minute;
-  const targetS = second;
-  const ok = (ms: number) => {
+  const matches = (ms: number) => {
     const p = read(ms);
-    return (
-      p.y === targetY &&
-      p.m === targetM &&
-      p.d === targetD &&
-      p.H === targetH &&
-      p.M === targetMin &&
-      p.S === targetS
-    );
+    return p.y === year && p.m === month && p.d === day && p.H === hour && p.M === minute && p.S === second;
   };
-  const base = Date.UTC(year, month - 1, day, 0, 0, 0);
-  const span = 36 * 60 * 60 * 1000;
-  const step = 60 * 1000;
-  for (let ms = base - span; ms <= base + span; ms += step) {
-    if (ok(ms)) return ms;
+  const targetAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  const offsetAt = (ms: number) => {
+    const p = read(ms);
+    return Date.UTC(p.y, p.m - 1, p.d, p.H, p.M, p.S) - ms;
+  };
+
+  // Two-step fixed-point solve handles DST transitions; check earlier offset first for fall-back ambiguity.
+  const offset1 = offsetAt(targetAsUtc);
+  const candidate1 = targetAsUtc - offset1;
+  const offset2 = offsetAt(candidate1);
+  const candidate2 = targetAsUtc - offset2;
+  const candidates = candidate2 < candidate1 ? [candidate2, candidate1] : [candidate1, candidate2];
+  for (const ms of candidates) {
+    if (matches(ms)) return ms;
   }
   return null;
 }

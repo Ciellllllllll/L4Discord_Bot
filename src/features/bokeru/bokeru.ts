@@ -14,7 +14,7 @@ import {
 import type { BotContext } from "../../bot/context.js";
 import { parseCustomId } from "../../interactions/parseCustomId.js";
 import { BOKETE_THREAD_ID } from "../bokete/bokete.slash.js";
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import { judgeBokeruAnswer } from "./bokeruJudge.js";
 import { loadBokeruOdaiList, pickBokeruOdai, type BokeruOdai } from "./bokeruOdai.js";
 import {

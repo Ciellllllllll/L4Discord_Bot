@@ -368,10 +368,7 @@ const envSchema = z.object({
   DETECTER_AUDIT_WINDOW_SEC: z.coerce.number().int().min(5).default(45),
   DETECTER_DEFAULT_APPEAL_WINDOW_SEC: z.coerce.number().int().min(60).default(60 * 60 * 24 * 30),
   DETECTER_DEFAULT_REASON_TEXT: z.string().min(1).default("モデレーターによる理由は未入力です。"),
-  SKIP_COMMAND_SYNC: z.preprocess(
-    (v) => v === "true" || v === "1",
-    z.boolean().optional().default(false),
-  ),
+  SKIP_COMMAND_SYNC: z.preprocess(envFlagFalseByDefault, z.boolean()),
   COMMAND_SYNC_DEBOUNCE_MS: z.coerce.number().int().min(0).default(0),
   GUILD_MISMATCH_POLICY: z.enum(["warn"]).optional(),
     // VC ランキングの「今日／週／月」の境界に使う IANA タイムゾーン（既定: Asia/Tokyo）

@@ -8,7 +8,7 @@ import {
   type ModalSubmitInteraction,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import { isAdmin } from "../../core/permission.js";
 import { cancelPendingRepliesByAppeal } from "../modmail/modmailStaffFlow.js";
 import {

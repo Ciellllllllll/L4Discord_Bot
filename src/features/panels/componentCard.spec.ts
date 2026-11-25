@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, type APISectionComponent } from "discord.js";
-import { ComponentCardBuilder, componentCardsPayload } from "./componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 
 function collectText(container: ReturnType<ComponentCardBuilder["toContainer"]>): string {
   return container.components.flatMap((component) => {

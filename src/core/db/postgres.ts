@@ -2,17 +2,6 @@ import { Pool } from "pg";
 
 export type PgQueryable = Pick<Pool, "query">;
 
-export type PostgresSchemaMap = {
-  main: string;
-  ticket: string;
-  messageLog: string;
-  messageAttachment: string;
-  vcTime: string;
-  aiHistory: string;
-  automod: string;
-  reminder: string;
-};
-
 export async function createPgPool(connectionString: string, schema?: string): Promise<Pool> {
   if (schema) {
     const setupPool = new Pool({ connectionString });

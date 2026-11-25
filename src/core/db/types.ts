@@ -204,18 +204,6 @@ export interface StampUsageRow {
   updated_at: Date;
 }
 
-// 参照 vc_time.db 互換
-
-export interface VcSessionsRow {
-  id: Generated<number>;
-  guild_id: bigint | number;
-  user_id: bigint | number;
-  channel_id: bigint | number;
-  started_at: string;
-  ended_at: string | null;
-  duration_sec: number | null;
-}
-
 export interface RemindersRow {
   id: string;
   guild_id: string;
