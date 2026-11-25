@@ -7,7 +7,7 @@ import type { Message, PartialMessage } from "discord.js";
 import type { Pool } from "pg";
 import type { PgQueryable } from "../../core/db/postgres.js";
 import type pino from "pino";
-import { readResponseArrayBufferWithLimit } from "../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../core/http/fetchWithLimits.js";
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_FETCH_TIMEOUT_MS = 45_000;

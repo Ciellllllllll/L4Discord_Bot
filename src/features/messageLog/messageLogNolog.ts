@@ -1,4 +1,4 @@
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import type { Channel } from "discord.js";
 
 import type { Kysely } from "kysely";
