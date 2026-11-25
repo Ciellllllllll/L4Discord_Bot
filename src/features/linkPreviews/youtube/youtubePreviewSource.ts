@@ -1,9 +1,16 @@
 import { URL } from "node:url";
 import type { APIEmbed } from "discord.js";
-import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../../core/http/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
+import {
+  asRecord,
+  ensureScheme,
+  numberValue,
+  safeHttpsUrl as sharedSafeHttpsUrl,
+  stringValue,
+  stripUrlTail,
+} from "../shared/urlUtils.js";
 
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const REQUEST_TIMEOUT_MS = 10_000;
 // Data API（プレイリスト項目は最大 3 件）や oEmbed の応答は数十 KB 程度なので、1MB あれば十分
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -50,38 +57,10 @@ export type YouTubeSourceFetchOptions = {
 type CacheEntry = { expiresAt: number; result: YouTubePreviewResult };
 const previewCache = new Map<string, CacheEntry>();
 
-function ensureScheme(value: string): string {
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
-
-function stripUrlTail(value: string): string {
-  let result = value.trim();
-  while (result && TRIM_TAIL_CHARS.includes(result.at(-1)!)) result = result.slice(0, -1);
-  return result;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
 function arrayValue(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-function numberValue(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
 function firstString(...values: unknown[]): string | undefined { return values.map(stringValue).find(Boolean); }
 export function safeYouTubeHttpsUrl(value: unknown): string | undefined {
-  const raw = stringValue(value);
-  if (!raw) return undefined;
-  try {
-    const url = new URL(raw);
-    return url.protocol === "https:" ? url.toString() : undefined;
-  } catch { return undefined; }
+  return sharedSafeHttpsUrl(value, { allowCredentials: true });
 }
 
 function canonicalUrl(pathname: string, search: Record<string, string> = {}): string {

@@ -3,7 +3,6 @@ import { ComponentType } from "discord.js";
 import {
   cacheYouTubeWatcherVideo,
   recoverYouTubeWatcherVideoCacheReferenceCandidate,
-  repairOneYouTubeWatcherMessage,
   scanYouTubeWatcher,
   saveYouTubeWatcherVideoCacheReference,
   saveYouTubeWatcherReferenceRecoveryPending,
@@ -115,29 +114,6 @@ const noPublicWatcher = startYouTubeWatcher({
 assert.notEqual(noPublicWatcher, null);
 noPublicWatcher?.stop();
 assert.equal(startYouTubeWatcher({ config: { BOT_PROFILE: "debug", ADHD_WATCHER_ENABLED: false } } as never), null);
-
-const productionRepairContext = {
-  client: {
-    user: { id: "bot-1" },
-    channels: { fetch: async () => { throw new Error("旧repairはチャンネル取得しない"); } },
-  },
-  config: {
-    BOT_PROFILE: "production",
-    YOUTUBE_REQUEST_TIMEOUT_MS: 1_000,
-    ADHD_VIDEO_FILES_DIR: "C:\\adhd-videos",
-    ADHD_VIDEO_PUBLIC_BASE_URL: "https://media.example/adhd/",
-    ADHD_VIDEO_MIN_FREE_BYTES: 1_000,
-  },
-  log: { warn: () => undefined },
-};
-let oldRepairPersistCalls = 0;
-await repairOneYouTubeWatcherMessage(productionRepairContext as never, {} as never, {
-  persistVideo: async () => {
-    oldRepairPersistCalls += 1;
-    return { status: "cached", mediaUrl: "https://media.example/unused.mp4", evictedVideoIds: [] };
-  },
-});
-assert.equal(oldRepairPersistCalls, 0);
 
 assert.equal(shouldMarkYouTubeWatcherPostFailed(false, new Error("send failed")), true);
 assert.equal(shouldMarkYouTubeWatcherPostFailed(true, new Error("reference save failed")), false);

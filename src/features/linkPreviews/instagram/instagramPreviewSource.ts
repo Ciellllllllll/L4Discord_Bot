@@ -1,8 +1,9 @@
 import { load } from "cheerio";
 import { URL } from "node:url";
-import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../../core/http/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
 import { cancelBody, type FetchLike } from "../shared/previewMediaDownload.js";
+import { ensureScheme, hostWithoutWww, safeHttpsUrl, stripUrlTail } from "../shared/urlUtils.js";
 
 export type { FetchLike };
 
@@ -32,7 +33,6 @@ const MIRROR_BASE_URL = "https://uuinstagram.com";
 const CDN_HOST_SUFFIXES = [".cdninstagram.com", ".fbcdn.net"] as const;
 /** カルーセルの項目数の上限（Instagram の仕様上の上限でもある） */
 export const MAX_INSTAGRAM_MEDIA_ITEMS = 10;
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 const SHORTCODE_PATTERN = /^[A-Za-z0-9_-]{5,64}$/;
 const MONTHS: Readonly<Record<string, number>> = {
   january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
@@ -68,21 +68,6 @@ export type InstagramPost = {
 export type InstagramPreviewResult =
   | { status: "ok"; post: InstagramPost }
   | { status: "fallback"; reason: string };
-
-function ensureScheme(urlText: string): string {
-  return /^https?:\/\//i.test(urlText) ? urlText : `https://${urlText}`;
-}
-
-function stripUrlTail(urlText: string): string {
-  let out = urlText.trim();
-  while (out && TRIM_TAIL_CHARS.includes(out[out.length - 1]!)) out = out.slice(0, -1);
-  return out;
-}
-
-function hostWithoutWww(host: string): string {
-  const normalized = host.trim().toLowerCase();
-  return normalized.startsWith("www.") ? normalized.slice(4) : normalized;
-}
 
 function postKind(segment: string | undefined): InstagramPostKind | null {
   if (segment === "p") return "p";
@@ -125,16 +110,6 @@ export function collectInstagramReplyTargets(links: readonly string[]): Instagra
     targets.push(target);
   }
   return targets;
-}
-
-function safeHttpsUrl(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" && !parsed.username && !parsed.password ? parsed.toString() : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** `…: "キャプション"` の形からキャプションを取り出す（末尾の `.` などは除く）。 */

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { ComponentType, MessageFlags, type Message, type MessageCreateOptions } from "discord.js";
 import type { BotContext } from "../../../bot/context.js";
+import { isDiscordMissingResourceError } from "../../../core/discordErrors.js";
 import { LinkExpansionRepository, type ExpansionRecord, type ExpansionSource } from "./linkExpansionRepository.js";
 
 /** retry: 一時的な失敗による代替表示。送信後も未完了として扱い、定期確認で再構築する。 */
@@ -32,9 +33,7 @@ function quotedHash(message: Message): string {
   ])).digest("hex");
 }
 
-function missingMessage(error: unknown): boolean {
-  return [10008, 10003].includes(Number((error as { code?: unknown })?.code));
-}
+const missingMessage = isDiscordMissingResourceError;
 
 type RenderSession = {
   source?: ExpansionSource;

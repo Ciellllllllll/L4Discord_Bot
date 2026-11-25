@@ -1,5 +1,5 @@
 import { AttachmentBuilder } from "discord.js";
-import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../../core/http/fetchWithLimits.js";
 import { safeYouTubeHttpsUrl } from "./youtubePreviewSource.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;

@@ -1,5 +1,5 @@
 import { CyclicQuoteError, type ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
-import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../../core/componentCard.js";
 import {
   ChannelType,
   ComponentType,

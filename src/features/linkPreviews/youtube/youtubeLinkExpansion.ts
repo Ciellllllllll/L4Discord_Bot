@@ -17,6 +17,7 @@ import type {
 } from "../../youtubeWatcher/youtubeVideoCache.service.js";
 import { YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX, youtubeGoogleVideoPendingError } from "../../youtubeWatcher/youtubeWatcher.repository.js";
 import {
+  isGoogleVideoMediaUrl,
   resolveYouTubeVideoMedia,
   resolveYouTubeVideoMediaWithRetry,
 } from "../../utilities/youtubeVideoMedia.js";
@@ -89,12 +90,7 @@ export type YouTubePreviewPayloadOptions = {
   detectedSteamLinks?: string[];
 };
 
-function isGoogleVideoUrl(value: string): boolean {
-  try {
-    const host = new URL(value).hostname.toLowerCase();
-    return host === "googlevideo.com" || host.endsWith(".googlevideo.com");
-  } catch { return false; }
-}
+const isGoogleVideoUrl = isGoogleVideoMediaUrl;
 
 function safeMediaUrl(value: unknown): string | undefined {
   if (value === `attachment://${YOUTUBE_MEDIA_ATTACHMENT_FILENAME}`) return value;

@@ -1,6 +1,7 @@
 import { URL } from "node:url";
-import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../../core/http/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
+import { asRecord, ensureScheme, hostWithoutWww, safeHttpsUrl as sharedSafeHttpsUrl, stringValue, stripUrlTail } from "../shared/urlUtils.js";
 
 export const TIKTOK_DOMAINS: ReadonlySet<string> = new Set(["tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com"]);
 const TIKWM_API_URL = "https://www.tikwm.com/api/";
@@ -8,7 +9,6 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** tikwm の応答は通常数KB。想定外に巨大な応答を丸ごとメモリへ読まないよう上限を設ける */
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const USER_AGENT = "L4DiscordBot/0.1 TikTokPreview";
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -41,21 +41,6 @@ export type TikTokPreview = {
 export type TikTokPreviewResult =
   | { status: "ok"; video: TikTokPreview }
   | { status: "fallback"; reason: string };
-
-function ensureScheme(urlText: string): string {
-  return /^https?:\/\//i.test(urlText) ? urlText : `https://${urlText}`;
-}
-
-function stripUrlTail(urlText: string): string {
-  let out = urlText.trim();
-  while (out && TRIM_TAIL_CHARS.includes(out[out.length - 1]!)) out = out.slice(0, -1);
-  return out;
-}
-
-function hostWithoutWww(host: string): string {
-  const normalized = host.trim().toLowerCase();
-  return normalized.startsWith("www.") ? normalized.slice(4) : normalized;
-}
 
 /** TikTok の動画・写真投稿・短縮URLを解析する。プロフィール等の非投稿URLは null。 */
 export function parseTikTokUrl(urlText: string): TikTokReplyTarget | null {
@@ -101,14 +86,6 @@ export function collectTikTokReplyTargets(links: readonly string[]): TikTokReply
   return targets;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -116,12 +93,7 @@ function numberValue(value: unknown): number | undefined {
 function safeHttpsUrl(value: unknown): string | undefined {
   const raw = stringValue(value);
   if (!raw) return undefined;
-  try {
-    const parsed = new URL(raw.startsWith("/") ? `https://www.tikwm.com${raw}` : raw);
-    return parsed.protocol === "https:" && !parsed.username && !parsed.password ? parsed.toString() : undefined;
-  } catch {
-    return undefined;
-  }
+  return sharedSafeHttpsUrl(raw.startsWith("/") ? `https://www.tikwm.com${raw}` : raw);
 }
 
 export function normalizeTikwmResponse(raw: unknown): TikTokPreviewResult {

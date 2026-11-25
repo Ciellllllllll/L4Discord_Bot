@@ -1,9 +1,13 @@
 import type { PreviewDocument, PreviewTextLine, PreviewTextPart } from "../shared/previewDocument.js";
+import {
+  ensureScheme,
+  hasBareUrlBoundary as hasBoundary,
+  QUOTED_TRIM_TAIL_CHARS,
+  stripUrlTail as sharedStripUrlTail,
+} from "../shared/urlUtils.js";
 
 const GITHUB_URL_PATTERN = /(?<url>(?:https?:\/\/)?(?:www\.)?github\.com\/[^\s<>\u3000]+)/giu;
 const GITHUB_HOSTS = new Set(["github.com", "www.github.com"]);
-const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）\"'";
 const MAX_CODE_CHARS = 2_000;
 
 export type GithubPageKind = "repository" | "issue" | "pull" | "release" | "commit" | "file";
@@ -91,19 +95,7 @@ export type GithubPreviewDocumentOptions = {
 };
 
 function stripUrlTail(value: string): string {
-  let url = String(value || "").trim();
-  while (url && TRIM_TAIL_CHARS.includes(url[url.length - 1]!)) url = url.slice(0, -1);
-  return url;
-}
-
-function ensureScheme(value: string): string {
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
-
-function hasBoundary(content: string, index: number, raw: string): boolean {
-  if (/^https?:\/\//i.test(raw) || index <= 0) return true;
-  const previous = content[index - 1] ?? "";
-  return /\s/u.test(previous) || previous === "\u3000" || BARE_URL_BOUNDARY_CHARS.has(previous);
+  return sharedStripUrlTail(value, QUOTED_TRIM_TAIL_CHARS);
 }
 
 function decoded(value: string): string | null {

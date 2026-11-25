@@ -1,10 +1,15 @@
 import { load, type CheerioAPI } from "cheerio";
 import { URL } from "node:url";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
+import {
+  compactText,
+  MARKDOWN_TRIM_TAIL_CHARS,
+  safeHttpsUrl,
+  stripUrlTail as sharedStripUrlTail,
+} from "../shared/urlUtils.js";
 import { extractSteamLinks } from "../steam/steamPreviewSource.js";
 
 const WEB_URL_PATTERN = /https:\/\/[^\s<>\u3000]+/giu;
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）*_~`|";
 /** 1投稿でページを取得してカードにするリンクの数。超えた分は取得せず「ほかのリンク」カードにまとめる */
 export const MAX_WEB_PREVIEWS = 3;
 /** 「ほかのリンク」カードに並べるリンクの上限 */
@@ -51,9 +56,7 @@ export type WebPagePreview = {
 };
 
 function stripUrlTail(urlText: string): string {
-  let out = urlText.trim();
-  while (out && TRIM_TAIL_CHARS.includes(out[out.length - 1]!)) out = out.slice(0, -1);
-  return out;
+  return sharedStripUrlTail(urlText, MARKDOWN_TRIM_TAIL_CHARS);
 }
 
 function isExcludedHost(hostname: string): boolean {
@@ -117,13 +120,6 @@ export function decodeHtml(body: Buffer, contentType: string): string {
   }
 }
 
-function compactText(text: string, maxLength: number): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  return normalized.length <= maxLength
-    ? normalized
-    : `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
-}
-
 function metaContent($: CheerioAPI, ...keys: string[]): string | undefined {
   for (const key of keys) {
     const value = $(`meta[property="${key}"]`).attr("content") ?? $(`meta[name="${key}"]`).attr("content");
@@ -134,13 +130,7 @@ function metaContent($: CheerioAPI, ...keys: string[]): string | undefined {
 }
 
 function resolveHttpsUrl(value: string | undefined, base: string): string | undefined {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value, base);
-    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : undefined;
-  } catch {
-    return undefined;
-  }
+  return safeHttpsUrl(value, { base });
 }
 
 /** ナビゲーションや広告を除いた本文。記事（article・main）があればそこから取る */

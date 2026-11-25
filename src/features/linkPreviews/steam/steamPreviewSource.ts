@@ -1,13 +1,18 @@
 import type { PreviewDocument, PreviewTextPart } from "../shared/previewDocument.js";
 import {
+  compactText,
+  ensureScheme,
+  hasBareUrlBoundary as hasBoundary,
+  QUOTED_TRIM_TAIL_CHARS,
+  stripUrlTail as sharedStripUrlTail,
+} from "../shared/urlUtils.js";
+import {
   canonicalSteamUrl,
   isOfficialSteamHost,
   type SteamPagePreview,
 } from "../../steam/steamStoreClient.js";
 
 const STEAM_URL_PATTERN = /(?<url>(?:https?:\/\/)?(?:[a-z\d-]+\.)*(?:steampowered\.com|steamcommunity\.com)\/[^\s<>\u3000]+)/giu;
-const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）\"'";
 
 export type SteamReplyTarget = {
   canonicalUrl: string;
@@ -15,19 +20,7 @@ export type SteamReplyTarget = {
 };
 
 function stripUrlTail(value: string): string {
-  let url = value.trim();
-  while (url && TRIM_TAIL_CHARS.includes(url[url.length - 1]!)) url = url.slice(0, -1);
-  return url;
-}
-
-function ensureScheme(value: string): string {
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
-
-function hasBoundary(content: string, index: number, raw: string): boolean {
-  if (/^https?:\/\//i.test(raw) || index <= 0) return true;
-  const previous = content[index - 1] ?? "";
-  return /\s/u.test(previous) || previous === "\u3000" || BARE_URL_BOUNDARY_CHARS.has(previous);
+  return sharedStripUrlTail(value, QUOTED_TRIM_TAIL_CHARS);
 }
 
 export function parseSteamUrl(value: string): SteamReplyTarget | null {
@@ -69,13 +62,6 @@ export function collectSteamReplyTargets(links: readonly string[]): SteamReplyTa
     if (targets.length >= 5) break;
   }
   return targets;
-}
-
-function compactText(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length <= maxLength
-    ? normalized
-    : `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 function usableExchangeRate(value: number | null): number | null {

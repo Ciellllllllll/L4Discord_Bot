@@ -4,7 +4,9 @@ import type { Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
-import { COLD_LAUGH_KEYWORD } from "./coldLaughConstants.js";
+
+export const COLD_LAUGH_KEYWORD =
+  "うお,うおｗ,uo,おお,oo,どわー,ったく,かっこよw,えぐー！笑,えぐー！w,えぐー!笑,えぐー!w,冗談ですやん,きちー,おもろいなあ！,おもろいなあ!,ど、どした？,ど、どした?,ちょw,落ち着けw,落ち着け,ええて,必死やんw,すごいなあキミw,すごいなあw,すごいなあキミｗ,すごいなあｗ,怒んなやw,怒んなやｗ,";
 
 const LINK_IN_CONTENT_PATTERN =
   /(?:https?:\/\/|www\.)[^\s<>\u3000]+|(?:discord\.gg|discord(?:app)?\.com\/channels|x\.com|twitter\.com|mobile\.twitter\.com|vxtwitter\.com|fxtwitter\.com|fixupx\.com|youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be)\/[^\s<>\u3000]+/gi;

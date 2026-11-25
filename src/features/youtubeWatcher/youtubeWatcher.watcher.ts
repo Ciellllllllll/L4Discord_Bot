@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { MessageFlags, type Client, type GuildTextBasedChannel, type Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { isDiscordMissingResourceError } from "../../core/discordErrors.js";
 import {
   sendYouTubeWatcherNotification,
   type YouTubeWatcherNotificationResult,
@@ -11,6 +12,7 @@ import {
 import { replacePreviewMedia } from "../linkPreviews/shared/previewRenderer.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "../linkPreviews/youtube/youtubeMediaAttachment.js";
 import {
+  isGoogleVideoMediaUrl,
   resolveYouTubeVideoMedia,
   resolveYouTubeVideoMediaWithRetry,
 } from "../utilities/youtubeVideoMedia.js";
@@ -46,17 +48,6 @@ export async function cacheYouTubeWatcherVideo(
     videoId: entry.videoId,
     videoUrl: entry.videoUrl,
   }, { repo, ...deps });
-}
-
-export async function repairOneYouTubeWatcherMessage(
-  ctx: Pick<BotContext, "client" | "config" | "log">,
-  repo: Pick<PostgresYouTubeWatcherRepository, "listMediaRepairCandidates" | "finalizeMediaRepair">,
-  deps: { persistVideo?: typeof persistYouTubeVideo } = {},
-): Promise<void> {
-  // 互換 export。起動時修復はキャッシュ保守サービスが参照テーブルだけを編集する。
-  void ctx;
-  void repo;
-  void deps;
 }
 
 async function fetchTarget(client: Client, id: string): Promise<GuildTextBasedChannel | null> {
@@ -104,10 +95,7 @@ export async function saveYouTubeWatcherReferenceRecoveryPending(
   });
 }
 
-function isUnknownDiscordResourceError(error: unknown): boolean {
-  const code = error && typeof error === "object" ? (error as { code?: number }).code : undefined;
-  return code === 10003 || code === 10008;
-}
+const isUnknownDiscordResourceError = isDiscordMissingResourceError;
 
 async function resolveYouTubeWatcherRecoveryMedia(
   ctx: Pick<BotContext, "config" | "log">,
@@ -133,9 +121,7 @@ async function resolveYouTubeWatcherRecoveryMedia(
       maxBytes: Number.MAX_SAFE_INTEGER,
     })))(candidate.entry.videoUrl);
     if (resolved.status === "ok") {
-      const resolvedUrl = new URL(resolved.mediaUrl);
-      const hostname = resolvedUrl.hostname.toLowerCase();
-      if (resolvedUrl.protocol === "https:" && (hostname === "googlevideo.com" || hostname.endsWith(".googlevideo.com"))) {
+      if (isGoogleVideoMediaUrl(resolved.mediaUrl)) {
         return { mediaMode: "google", mediaUrl: resolved.mediaUrl, lastError: null };
       }
       return { mediaMode: "none", lastError: youtubeGoogleVideoPendingError("invalid_google_url") };

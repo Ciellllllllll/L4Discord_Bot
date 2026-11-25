@@ -3,8 +3,10 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { MessageFlags } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
+import { isDiscordMissingResourceError } from "../../core/discordErrors.js";
 import { replacePreviewMedia } from "../linkPreviews/shared/previewRenderer.js";
 import {
+  isGoogleVideoMediaUrl,
   resolveYouTubeVideoMedia,
   resolveYouTubeVideoMediaWithRetry,
 } from "../utilities/youtubeVideoMedia.js";
@@ -80,20 +82,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isUnknownDiscordResourceError(error: unknown): boolean {
-  const code = error && typeof error === "object" ? (error as { code?: number }).code : undefined;
-  return code === 10003 || code === 10008;
-}
-
-function isGoogleVideoUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    return parsed.protocol === "https:" && (host === "googlevideo.com" || host.endsWith(".googlevideo.com"));
-  } catch {
-    return false;
-  }
-}
+const isUnknownDiscordResourceError = isDiscordMissingResourceError;
+const isGoogleVideoUrl = isGoogleVideoMediaUrl;
 
 export function createYouTubeVideoCacheMaintenanceForContext(
   ctx: Pick<BotContext, "config" | "log" | "client" | "mainPgPool">,

@@ -317,52 +317,36 @@ export async function migratePostgresPreviewTranslationStates(pool: PgQueryable)
   `);
 }
 
-export async function migratePostgresSteamPreviewSupport(pool: PgQueryable): Promise<void> {
+async function updatePreviewSourceKindsCheck(
+  pool: PgQueryable,
+  kinds: readonly PreviewSource[],
+): Promise<void> {
+  const literals = kinds.map((kind) => `'${kind}'`).join(", ");
   await pool.query(`
     ALTER TABLE preview_translation_states
       DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check;
     ALTER TABLE preview_translation_states
       ADD CONSTRAINT preview_translation_states_source_kind_check
-      CHECK (source_kind IN ('x', 'youtube', 'steam'));
+      CHECK (source_kind IN (${literals}));
   `);
+}
+
+export async function migratePostgresSteamPreviewSupport(pool: PgQueryable): Promise<void> {
+  await updatePreviewSourceKindsCheck(pool, ["x", "youtube", "steam"]);
 }
 
 export async function migratePostgresGithubPreviewSupport(pool: PgQueryable): Promise<void> {
-  await pool.query(`
-    ALTER TABLE preview_translation_states
-      DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check;
-    ALTER TABLE preview_translation_states
-      ADD CONSTRAINT preview_translation_states_source_kind_check
-      CHECK (source_kind IN ('x', 'youtube', 'steam', 'github'));
-  `);
+  await updatePreviewSourceKindsCheck(pool, ["x", "youtube", "steam", "github"]);
 }
 
 export async function migratePostgresTikTokPreviewSupport(pool: PgQueryable): Promise<void> {
-  await pool.query(`
-    ALTER TABLE preview_translation_states
-      DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check;
-    ALTER TABLE preview_translation_states
-      ADD CONSTRAINT preview_translation_states_source_kind_check
-      CHECK (source_kind IN ('x', 'youtube', 'steam', 'github', 'tiktok'));
-  `);
+  await updatePreviewSourceKindsCheck(pool, ["x", "youtube", "steam", "github", "tiktok"]);
 }
 
 export async function migratePostgresInstagramPreviewSupport(pool: PgQueryable): Promise<void> {
-  await pool.query(`
-    ALTER TABLE preview_translation_states
-      DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check;
-    ALTER TABLE preview_translation_states
-      ADD CONSTRAINT preview_translation_states_source_kind_check
-      CHECK (source_kind IN ('x', 'youtube', 'steam', 'github', 'tiktok', 'instagram'));
-  `);
+  await updatePreviewSourceKindsCheck(pool, ["x", "youtube", "steam", "github", "tiktok", "instagram"]);
 }
 
 export async function migratePostgresWebPreviewSupport(pool: PgQueryable): Promise<void> {
-  await pool.query(`
-    ALTER TABLE preview_translation_states
-      DROP CONSTRAINT IF EXISTS preview_translation_states_source_kind_check;
-    ALTER TABLE preview_translation_states
-      ADD CONSTRAINT preview_translation_states_source_kind_check
-      CHECK (source_kind IN ('x', 'youtube', 'steam', 'github', 'tiktok', 'instagram', 'web'));
-  `);
+  await updatePreviewSourceKindsCheck(pool, ["x", "youtube", "steam", "github", "tiktok", "instagram", "web"]);
 }

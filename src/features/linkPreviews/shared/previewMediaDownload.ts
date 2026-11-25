@@ -1,5 +1,5 @@
 import type { MessageCreateOptions } from "discord.js";
-import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../../core/http/fetchWithLimits.js";
 import { LocalLlmQueue } from "../../ai/localLlmQueue.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;

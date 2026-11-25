@@ -1,6 +1,7 @@
 import { URL } from "node:url";
-import { readResponseArrayBufferWithLimit } from "../../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../../core/http/fetchWithLimits.js";
 import type { PreviewDocument, PreviewTextBlock } from "../shared/previewDocument.js";
+import { ensureScheme, hostWithoutWww, safeHttpsUrl as sharedSafeHttpsUrl, stripUrlTail } from "../shared/urlUtils.js";
 
 const VX_DOMAIN = "vxtwitter.com";
 const X_DOMAINS = new Set([
@@ -15,7 +16,6 @@ const REQUEST_TIMEOUT_MS = 10_000;
 // FxTwitter の 1 ツイート分の応答は数十 KB 程度なので、1MB あれば十分
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const USER_AGENT = "L4DiscordBot/0.1 VxTwitterPreview (+https://api.fxtwitter.com/)";
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -84,30 +84,8 @@ export type FixTweetPreviewResult =
   | { status: "ok"; tweet: TweetPreview }
   | { status: "fallback"; reason: string };
 
-function ensureScheme(urlText: string): string {
-  return /^https?:\/\//i.test(urlText) ? urlText : `https://${urlText}`;
-}
-
-function stripUrlTail(urlText: string): string {
-  let out = urlText.trim();
-  while (out && TRIM_TAIL_CHARS.includes(out[out.length - 1]!)) out = out.slice(0, -1);
-  return out;
-}
-
-function hostWithoutWww(host: string): string {
-  const normalized = host.trim().toLowerCase();
-  return normalized.startsWith("www.") ? normalized.slice(4) : normalized;
-}
-
 function safeHttpsUrl(value: unknown): string | undefined {
-  const raw = stringValue(value);
-  if (!raw) return undefined;
-  try {
-    const parsed = new URL(raw);
-    return parsed.protocol === "https:" ? parsed.toString() : undefined;
-  } catch {
-    return undefined;
-  }
+  return sharedSafeHttpsUrl(value, { allowCredentials: true });
 }
 
 export function parseXStatusUrl(urlText: string): ParsedXStatusUrl | null {

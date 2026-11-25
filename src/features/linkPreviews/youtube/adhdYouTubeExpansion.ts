@@ -12,6 +12,7 @@ import type { YouTubeFeedEntry } from "../../youtubeWatcher/youtubeRss.js";
 import { youtubeVideoThumbnailUrl, type YouTubeVideoCachePostMedia } from "../../youtubeWatcher/youtubeVideoCache.service.js";
 import { YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX, youtubeGoogleVideoPendingError } from "../../youtubeWatcher/youtubeWatcher.repository.js";
 import {
+  isGoogleVideoMediaUrl,
   resolveYouTubeVideoMedia,
   resolveYouTubeVideoMediaWithRetry,
 } from "../../utilities/youtubeVideoMedia.js";
@@ -72,13 +73,7 @@ type PrepareDeps = {
   attachmentSizeLimitBytes?: number;
 };
 
-function isGoogleVideoUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    const host = parsed.hostname.toLowerCase();
-    return parsed.protocol === "https:" && (host === "googlevideo.com" || host.endsWith(".googlevideo.com"));
-  } catch { return false; }
-}
+const isGoogleVideoUrl = isGoogleVideoMediaUrl;
 
 async function resolveAdhdMedia(
   ctx: PrepareContext,

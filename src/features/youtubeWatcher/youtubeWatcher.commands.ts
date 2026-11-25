@@ -5,14 +5,14 @@ import { parseYouTubeChannelUrl } from "./youtubeRss.js";
 import { PostgresYouTubeWatcherRepository } from "./youtubeWatcher.repository.js";
 import { scanYouTubeWatcher, youtubeSubscriptionSummary } from "./youtubeWatcher.watcher.js";
 
-function allowed(interaction: ChatInputCommandInteraction, ctx: BotContext, member: GuildMember | null): boolean {
+async function allowed(interaction: ChatInputCommandInteraction, ctx: BotContext, member: GuildMember | null): Promise<boolean> {
   if (member && isAdmin(member, ctx.config)) return true;
-  void interaction.reply({ content: "この操作には管理者権限が必要です。", flags: MessageFlags.Ephemeral });
+  await interaction.reply({ content: "この操作には管理者権限が必要です。", flags: MessageFlags.Ephemeral });
   return false;
 }
 
 export async function handleAdhdCommand(interaction: ChatInputCommandInteraction, ctx: BotContext, member: GuildMember | null): Promise<void> {
-  if (!allowed(interaction, ctx, member)) return;
+  if (!(await allowed(interaction, ctx, member))) return;
   const subcommand = interaction.options.getSubcommand(true);
   const repo = new PostgresYouTubeWatcherRepository(ctx.mainPgPool);
   if (subcommand === "list") {
@@ -21,7 +21,7 @@ export async function handleAdhdCommand(interaction: ChatInputCommandInteraction
     return;
   }
   if (subcommand === "scan_now") {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await scanYouTubeWatcher(ctx);
     await interaction.editReply("YouTube監視を実行しました。");
     return;
@@ -36,7 +36,7 @@ export async function handleAdhdCommand(interaction: ChatInputCommandInteraction
     await interaction.reply({ content: removed ? "この場所へのYouTube通知を停止しました。" : "この場所には該当するYouTube監視がありません。", flags: MessageFlags.Ephemeral });
     return;
   }
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await repo.add({ guildId: interaction.guildId!, youtubeChannelId: parsed.channelId, sourceUrl: parsed.canonicalUrl, discordChannelId: interaction.channelId });
   await scanYouTubeWatcher(ctx);
   await interaction.editReply("YouTube監視を登録しました。取得できる既存投稿もこの場所へ通知しました。");

@@ -1,6 +1,5 @@
 import type { ExpansionReply } from "./shared/linkExpansionTracker.js";
 import { MessageFlags, type Message } from "discord.js";
-import { URL } from "node:url";
 import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
@@ -8,17 +7,16 @@ import {
   cacheYouTubeVideoForPost,
   saveYouTubeVideoCacheReferenceForPost,
 } from "../youtubeWatcher/youtubeVideoCache.service.js";
-import type { PreviewTranslationStateV1 } from "./shared/previewState.repository.js";
 import {
   buildTwitterReplyPayloads,
   expandTwitterLinks,
 } from "./twitter/twitterLinkExpansion.js";
-import { collectTwitterReplyTargets, parseXStatusUrl } from "./twitter/twitterPreviewSource.js";
+import { collectTwitterReplyTargets } from "./twitter/twitterPreviewSource.js";
 import {
   buildSteamReplyPayloads,
   sendSteamLinkExpansion,
 } from "./steam/steamLinkExpansion.js";
-import { collectSteamReplyTargets, extractSteamLinks, parseSteamUrl } from "./steam/steamPreviewSource.js";
+import { collectSteamReplyTargets } from "./steam/steamPreviewSource.js";
 import {
   buildYouTubeReplyPayloads,
   prepareYouTubeLinkExpansion,
@@ -26,101 +24,44 @@ import {
   waitForNativeYouTubeEmbed,
   type YouTubePreviewBuildOptions,
 } from "./youtube/youtubeLinkExpansion.js";
-import { collectYouTubeReplyTargets, parseYouTubeUrl } from "./youtube/youtubePreviewSource.js";
-import { collectGithubReplyTargets, extractGithubLinks as extractGithubLinksFromContent, parseGithubUrl } from "./github/githubPreviewSource.js";
+import { collectYouTubeReplyTargets } from "./youtube/youtubePreviewSource.js";
+import { collectGithubReplyTargets } from "./github/githubPreviewSource.js";
 import {
   buildGithubReplyPayloads,
   isTransientGithubFailure,
   sendGithubLinkExpansion,
   type GithubPreviewBuildResult,
 } from "./github/githubLinkExpansion.js";
-import { buildTikTokReplyPayloads, expandTikTokLinks } from "./tiktok/tiktokLinkExpansion.js";
-import { collectTikTokReplyTargets, parseTikTokUrl, TIKTOK_DOMAINS } from "./tiktok/tiktokPreviewSource.js";
-import { buildInstagramReplyPayloads, expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
-import { collectInstagramReplyTargets, INSTAGRAM_DOMAINS, parseInstagramUrl } from "./instagram/instagramPreviewSource.js";
+import { expandTikTokLinks } from "./tiktok/tiktokLinkExpansion.js";
+import { collectTikTokReplyTargets } from "./tiktok/tiktokPreviewSource.js";
+import { expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
+import { collectInstagramReplyTargets } from "./instagram/instagramPreviewSource.js";
 import { buildWebReplyPayloads, sendWebLinkExpansion, type WebPreviewBuildResult } from "./web/webLinkExpansion.js";
-import { collectWebReplyTargets, extractWebLinks, MAX_WEB_PREVIEWS, parseWebUrl } from "./web/webPreviewSource.js";
+import { collectWebReplyTargets, extractWebLinks, MAX_WEB_PREVIEWS } from "./web/webPreviewSource.js";
 import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
 import { LateEmbedWatcher } from "./shared/lateEmbedWatcher.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
+import {
+  extractGithubEmbedImageUrls,
+  extractGithubLinks,
+  extractGithubLinksFromMessage,
+  extractInstagramLinks,
+  extractSteamLinksFromMessage,
+  extractTikTokLinks,
+  extractXLinks,
+  extractYouTubeLinks,
+} from "./shared/linkExtraction.js";
+import { refreshPreviewTranslationState } from "./shared/previewTranslationRefresh.js";
 
-const X_DOMAINS = new Set([
-  "x.com", "twitter.com", "mobile.twitter.com", "vxtwitter.com", "fxtwitter.com", "fixupx.com",
-]);
-const YOUTUBE_DOMAINS = new Set([
-  "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be",
-]);
-const X_URL_PATTERN =
-  /(?<url>(?:https?:\/\/)?(?:www\.)?(?:vxtwitter\.com|fxtwitter\.com|fixupx\.com|x\.com|twitter\.com|mobile\.twitter\.com)\/[^\s<>\u3000]+)/gi;
-const YOUTUBE_URL_PATTERN =
-  /(?<url>(?:https?:\/\/)?(?:youtube\.com|www\.youtube\.com|m\.youtube\.com|music\.youtube\.com|youtu\.be|www\.youtu\.be)\/[^\s<>\u3000]+)/gi;
-const TIKTOK_URL_PATTERN =
-  /(?<url>(?:https?:\/\/)?(?:www\.|m\.|vm\.|vt\.)?tiktok\.com\/[^\s<>\u3000]+)/gi;
-const INSTAGRAM_URL_PATTERN =
-  /(?<url>(?:https?:\/\/)?(?:(?:www\.|m\.)?instagram\.com|(?:www\.)?instagr\.am)\/[^\s<>\u3000]+)/gi;
-const BARE_URL_BOUNDARY_CHARS = new Set(["<", "(", "[", "{", "\"", "'"]);
-const TRIM_TAIL_CHARS = ".,!?;:)]}>,、。」』）";
-
-function stripUrlTail(urlText: string): string {
-  let url = String(urlText || "").trim();
-  while (url && TRIM_TAIL_CHARS.includes(url[url.length - 1]!)) url = url.slice(0, -1);
-  return url;
-}
-
-function ensureScheme(urlText: string): string {
-  return /^https?:\/\//i.test(urlText) ? urlText : `https://${urlText}`;
-}
-
-function hasUrlCandidateBoundary(content: string, index: number, urlText: string): boolean {
-  if (/^https?:\/\//i.test(urlText) || index <= 0) return true;
-  const previous = content[index - 1] ?? "";
-  return /\s/u.test(previous) || previous === "\u3000" || BARE_URL_BOUNDARY_CHARS.has(previous);
-}
-
-function hostWithoutWww(host: string): string {
-  const normalized = host.trim().toLowerCase();
-  return normalized.startsWith("www.") ? normalized.slice(4) : normalized;
-}
-
-function matchesDomain(urlText: string, domains: ReadonlySet<string>, stripWww: boolean): boolean {
-  try {
-    const host = new URL(ensureScheme(urlText)).host.toLowerCase();
-    return domains.has(stripWww ? hostWithoutWww(host) : host);
-  } catch {
-    return false;
-  }
-}
-
-function extractLinks(content: string, pattern: RegExp, domains: ReadonlySet<string>, stripWww: boolean): string[] {
-  const found: string[] = [];
-  for (const match of String(content || "").matchAll(pattern)) {
-    const raw = match.groups?.url ?? "";
-    if (!hasUrlCandidateBoundary(content, match.index ?? 0, raw)) continue;
-    const trimmed = stripUrlTail(raw);
-    if (trimmed && matchesDomain(trimmed, domains, stripWww)) found.push(trimmed);
-  }
-  return found;
-}
-
-export function extractXLinks(content: string): string[] {
-  return extractLinks(String(content || ""), X_URL_PATTERN, X_DOMAINS, true);
-}
-
-export function extractYouTubeLinks(content: string): string[] {
-  return extractLinks(String(content || ""), YOUTUBE_URL_PATTERN, YOUTUBE_DOMAINS, false);
-}
-
-export function extractTikTokLinks(content: string): string[] {
-  return extractLinks(String(content || ""), TIKTOK_URL_PATTERN, TIKTOK_DOMAINS, true);
-}
-
-export function extractInstagramLinks(content: string): string[] {
-  return extractLinks(String(content || ""), INSTAGRAM_URL_PATTERN, INSTAGRAM_DOMAINS, true);
-}
-
-export function extractGithubLinks(content: string): string[] {
-  return extractGithubLinksFromContent(String(content || ""));
-}
+export {
+  extractGithubEmbedImageUrls,
+  extractGithubLinks,
+  extractInstagramLinks,
+  extractTikTokLinks,
+  extractXLinks,
+  extractYouTubeLinks,
+  refreshPreviewTranslationState,
+};
 
 function attachmentSizeLimitForMessage(message: Message): number {
   return youtubeAttachmentSizeLimitForPremiumTier(message.guild?.premiumTier);
@@ -162,94 +103,6 @@ type LinkPreviewMessageHandlerDeps = {
   /** 抑制した後に遅れて付く公式 Embed を messageUpdate で監視する。null なら監視しない */
   lateEmbedWatcher?: Pick<LateEmbedWatcher, "watch" | "unwatch"> | null;
 };
-
-function extractSteamLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
-  const values: string[] = [String(message.content || "")];
-  for (const embed of message.embeds ?? []) {
-    const raw = typeof (embed as { toJSON?: unknown }).toJSON === "function"
-      ? (embed as { toJSON: () => unknown }).toJSON()
-      : embed;
-    if (!raw || typeof raw !== "object") continue;
-    const value = raw as {
-      url?: unknown;
-      title?: unknown;
-      description?: unknown;
-      fields?: Array<{ name?: unknown; value?: unknown }>;
-      author?: { name?: unknown };
-      footer?: { text?: unknown };
-    };
-    for (const item of [value.url, value.title, value.description]) {
-      if (typeof item === "string") values.push(item);
-    }
-    for (const item of [value.author?.name, value.footer?.text]) {
-      if (typeof item === "string") values.push(item);
-    }
-    for (const field of value.fields ?? []) {
-      if (typeof field.name === "string") values.push(field.name);
-      if (typeof field.value === "string") values.push(field.value);
-    }
-  }
-  return values.flatMap((value) => extractSteamLinks(value));
-}
-
-function extractGithubLinksFromMessage(message: Pick<Message, "content" | "embeds">): string[] {
-  const values: string[] = [String(message.content || "")];
-  for (const embed of message.embeds ?? []) {
-    const raw = typeof (embed as { toJSON?: unknown }).toJSON === "function"
-      ? (embed as { toJSON: () => unknown }).toJSON()
-      : embed;
-    if (!raw || typeof raw !== "object") continue;
-    const value = raw as {
-      url?: unknown;
-      title?: unknown;
-      description?: unknown;
-      fields?: Array<{ name?: unknown; value?: unknown }>;
-      author?: { name?: unknown };
-      footer?: { text?: unknown };
-    };
-    for (const item of [value.url, value.title, value.description, value.author?.name, value.footer?.text]) {
-      if (typeof item === "string") values.push(item);
-    }
-    for (const field of value.fields ?? []) {
-      if (typeof field.name === "string") values.push(field.name);
-      if (typeof field.value === "string") values.push(field.value);
-    }
-  }
-  return values.flatMap((value) => extractGithubLinks(value));
-}
-
-function safeHttpsUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value) return undefined;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function extractGithubEmbedImageUrls(
-  message: Pick<Message, "embeds">,
-): Map<string, string> {
-  const images = new Map<string, string>();
-  for (const embed of message.embeds ?? []) {
-    const raw = typeof (embed as { toJSON?: unknown }).toJSON === "function"
-      ? (embed as { toJSON: () => unknown }).toJSON()
-      : embed;
-    if (!raw || typeof raw !== "object") continue;
-    const value = raw as {
-      url?: unknown;
-      image?: { url?: unknown };
-      thumbnail?: { url?: unknown };
-    };
-    if (typeof value.url !== "string") continue;
-    const target = parseGithubUrl(value.url);
-    if (!target) continue;
-    const imageUrl = safeHttpsUrl(value.image?.url) ?? safeHttpsUrl(value.thumbnail?.url);
-    if (imageUrl) images.set(target.canonicalUrl, imageUrl);
-  }
-  return images;
-}
 
 type MessageUpdateSource = ConstructorParameters<typeof LateEmbedWatcher>[0];
 
@@ -491,193 +344,4 @@ export class LinkPreviewMessageHandler {
     if (sentCardsHere) await recheckLateEmbeds();
     if (this.tracked) await Promise.all(mediaTasks);
   }
-}
-
-type RefreshDeps = {
-  buildTwitter?: typeof buildTwitterReplyPayloads;
-  buildYouTube?: typeof buildYouTubeReplyPayloads;
-  buildSteam?: typeof buildSteamReplyPayloads;
-  buildGithub?: typeof buildGithubReplyPayloads;
-  buildTikTok?: typeof buildTikTokReplyPayloads;
-  buildInstagram?: typeof buildInstagramReplyPayloads;
-  buildWeb?: typeof buildWebReplyPayloads;
-};
-
-function componentUrls(components: readonly unknown[]): string[] {
-  const urls: string[] = [];
-  const visit = (value: unknown): void => {
-    if (!value || typeof value !== "object") return;
-    const component = value as { url?: unknown; components?: readonly unknown[]; toJSON?: () => unknown };
-    if (typeof component.toJSON === "function") {
-      visit(component.toJSON());
-      return;
-    }
-    if (typeof component.url === "string") urls.push(component.url);
-    for (const child of component.components ?? []) visit(child);
-  };
-  for (const component of components) visit(component);
-  return urls;
-}
-
-function componentMediaUrls(components: readonly unknown[]): string[] {
-  const urls: string[] = [];
-  const visit = (value: unknown): void => {
-    if (!value || typeof value !== "object") return;
-    const component = value as {
-      items?: readonly unknown[];
-      components?: readonly unknown[];
-      toJSON?: () => unknown;
-    };
-    if (typeof component.toJSON === "function") {
-      visit(component.toJSON());
-      return;
-    }
-    for (const item of component.items ?? []) {
-      if (!item || typeof item !== "object") continue;
-      const media = (item as { media?: { url?: unknown } }).media;
-      const url = safeHttpsUrl(media?.url);
-      if (url) urls.push(url);
-    }
-    for (const child of component.components ?? []) visit(child);
-  };
-  for (const component of components) visit(component);
-  return urls;
-}
-
-export async function refreshPreviewTranslationState(
-  message: Pick<Message, "id" | "components">,
-  ctx: Pick<BotContext, "config" | "log" | "aiRouter"> & Partial<Pick<BotContext, "mainPgPool">>,
-  guildId: string,
-  channelId: string,
-  deps: RefreshDeps = {},
-): Promise<PreviewTranslationStateV1 | null> {
-  // 種類の判定には先頭のリンクボタン（「Xで開く」などの開くボタン）の URL だけを使う。
-  // X の記事カードの「記事を開く」など2つ目のボタンが Steam などを指していても、別のプレビューとして作り直さない
-  const urls = componentUrls(message.components).slice(0, 1);
-  const mediaUrl = componentMediaUrls(message.components)[0];
-  for (const url of urls) {
-    const steam = parseSteamUrl(url);
-    if (!steam) continue;
-    const [payload] = await (deps.buildSteam ?? buildSteamReplyPayloads)([steam], {
-      mainPgPool: ctx.mainPgPool,
-      config: ctx.config,
-      log: ctx.log,
-      aiRouter: ctx.aiRouter,
-      guildId,
-    });
-    if (!payload?.previewState) return null;
-    return {
-      version: 1, messageId: message.id, guildId, channelId,
-      sourceUrl: payload.previewState.document.url,
-      ...payload.previewState,
-    };
-  }
-  for (const url of urls) {
-    const x = parseXStatusUrl(url);
-    if (x) {
-      const [payload] = await (deps.buildTwitter ?? buildTwitterReplyPayloads)([{
-        vxUrl: x.vxUrl, screenName: x.screenName, statusId: x.id,
-      }], { config: ctx.config, log: ctx.log, aiRouter: ctx.aiRouter, guildId });
-      if (!payload?.previewState) return null;
-      return {
-        version: 1, messageId: message.id, guildId, channelId,
-        sourceUrl: payload.previewState.document.url,
-        ...payload.previewState,
-      };
-    }
-  }
-  for (const url of urls) {
-    const youtube = parseYouTubeUrl(url);
-    if (!youtube) continue;
-    const [payload] = await (deps.buildYouTube ?? buildYouTubeReplyPayloads)([youtube], {
-      apiKey: ctx.config.YOUTUBE_DATA_API_KEY,
-      requestTimeoutMs: ctx.config.YOUTUBE_REQUEST_TIMEOUT_MS,
-      componentsOnly: true,
-      mediaMode: "none",
-      config: ctx.config,
-      log: ctx.log,
-      aiRouter: ctx.aiRouter,
-      guildId,
-    });
-    if (!payload?.previewState) return null;
-    return {
-      version: 1, messageId: message.id, guildId, channelId,
-      sourceUrl: payload.previewState.document.url,
-      ...payload.previewState,
-    };
-  }
-  for (const url of urls) {
-    const tiktok = parseTikTokUrl(url);
-    if (!tiktok) continue;
-    // 表示切り替えはテキストのみ差し替えるため、動画は再ダウンロードしない
-    const [payload] = await (deps.buildTikTok ?? buildTikTokReplyPayloads)([tiktok], {
-      attachmentSizeLimitBytes: 0,
-      config: ctx.config,
-      log: ctx.log,
-      aiRouter: ctx.aiRouter,
-      guildId,
-    });
-    const previewState = payload && "previewState" in payload ? payload.previewState : undefined;
-    if (!previewState) return null;
-    return {
-      version: 1, messageId: message.id, guildId, channelId,
-      sourceUrl: previewState.document.url,
-      ...previewState,
-    };
-  }
-  for (const url of urls) {
-    const instagram = parseInstagramUrl(url);
-    if (!instagram) continue;
-    // 表示切り替えはテキストのみ差し替えるため、メディアは再取得しない
-    const [payload] = await (deps.buildInstagram ?? buildInstagramReplyPayloads)([instagram], {
-      attachmentSizeLimitBytes: 0,
-      config: ctx.config,
-      log: ctx.log,
-      aiRouter: ctx.aiRouter,
-      guildId,
-    });
-    const previewState = payload && "previewState" in payload ? payload.previewState : undefined;
-    if (!previewState) return null;
-    return {
-      version: 1, messageId: message.id, guildId, channelId,
-      sourceUrl: previewState.document.url,
-      ...previewState,
-    };
-  }
-  for (const url of urls) {
-    const github = parseGithubUrl(url);
-    if (!github) continue;
-    const [result] = await (deps.buildGithub ?? buildGithubReplyPayloads)([github], {
-      token: ctx.config.GITHUB_API_TOKEN,
-      config: ctx.config,
-      log: ctx.log,
-      aiRouter: ctx.aiRouter,
-      guildId,
-      ...(mediaUrl ? { imageUrlByCanonicalUrl: new Map([[github.canonicalUrl, mediaUrl]]) } : {}),
-    });
-    if (!result || result.status !== "success" || !result.payload.previewState) return null;
-    return {
-      version: 1, messageId: message.id, guildId, channelId,
-      sourceUrl: result.payload.previewState.document.url,
-      ...result.payload.previewState,
-    };
-  }
-  // 専用の展開に当てはまらないリンクは汎用の展開として作り直す（parseWebUrl は専用の展開のホストを除く）
-  for (const url of urls) {
-    const web = parseWebUrl(url);
-    if (!web) continue;
-    const [result] = await (deps.buildWeb ?? buildWebReplyPayloads)([web], {
-      config: ctx.config,
-      log: ctx.log,
-      aiRouter: ctx.aiRouter,
-      guildId,
-    });
-    if (!result || result.status !== "success" || !result.payload.previewState) return null;
-    return {
-      version: 1, messageId: message.id, guildId, channelId,
-      sourceUrl: result.payload.previewState.document.url,
-      ...result.payload.previewState,
-    };
-  }
-  return null;
 }
