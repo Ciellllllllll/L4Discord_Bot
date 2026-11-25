@@ -51,9 +51,6 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -80,6 +77,10 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Set up Docker Buildx
+        if: steps.tag.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and publish
         if: steps.tag.outputs.exists != 'true'
         uses: docker/build-push-action@v6
@@ -92,6 +93,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=bot
+          cache-to: type=gha,mode=max,scope=bot
 
   deploy:
     needs: publish

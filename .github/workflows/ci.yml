@@ -6,6 +6,10 @@ on:
     branches:
       - develop
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -17,21 +21,34 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: experiments/tiny-ai/requirements-test-serve.txt
       - name: Test inference API
         run: |
           pip install -r experiments/tiny-ai/requirements-test-serve.txt
           python -m unittest discover -s experiments/tiny-ai -p test_server.py
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build inference image
-        run: docker build -f experiments/tiny-ai/Dockerfile.serve -t l4-tiny-ai:ci experiments/tiny-ai
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: experiments/tiny-ai
+          file: experiments/tiny-ai/Dockerfile.serve
+          platforms: linux/amd64
+          load: true
+          tags: l4-tiny-ai:ci
+          cache-from: type=gha,scope=tiny-ai
+          cache-to: type=gha,mode=max,scope=tiny-ai
       - name: Test model and production HTTP server with synthetic weights
         run: |
           docker run --rm --network none -v "$PWD/experiments/tiny-ai:/tests:ro" l4-tiny-ai:ci python -m unittest discover -s /tests -p test_model.py
           docker run --rm --network none -v "$PWD/experiments/tiny-ai:/tests:ro" l4-tiny-ai:ci python -m unittest discover -s /tests -p test_generation.py
           docker run --rm --network none --cpus 0.75 --memory 512m --memory-swap 512m --read-only --tmpfs /tmp:size=32m --cap-drop ALL --security-opt no-new-privileges -v "$PWD/experiments/tiny-ai:/tests:ro" l4-tiny-ai:ci python /tests/smoke_service.py
 
-  verify:
+  quality:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,29 +59,86 @@ jobs:
           node-version: "22.23.4"
           cache: npm
 
+      - name: Restore node_modules cache
+        id: node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-22.23.4-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
-        run: npm ci
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Typecheck, lint, build, and script tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run typecheck > /tmp/typecheck.log 2>&1 & pid_typecheck=$!
+          npm run lint > /tmp/lint.log 2>&1 & pid_lint=$!
+          npm run build > /tmp/build.log 2>&1 & pid_build=$!
+          bash scripts/postgres-backup.spec.sh > /tmp/pg-backup.log 2>&1 & pid_pg=$!
+          bash scripts/app-data-backup.spec.sh > /tmp/app-backup.log 2>&1 & pid_app=$!
+          bash scripts/alerts.spec.sh > /tmp/alerts.log 2>&1 & pid_alerts=$!
 
-      - name: Lint
-        run: npm run lint
+          status=0
+          wait "$pid_typecheck" || status=$?
+          echo "=== Typecheck ==="
+          cat /tmp/typecheck.log
+
+          wait "$pid_lint" || status=$?
+          echo "=== Lint ==="
+          cat /tmp/lint.log
+
+          wait "$pid_build" || status=$?
+          echo "=== Build ==="
+          cat /tmp/build.log
+
+          wait "$pid_pg" || status=$?
+          echo "=== PostgreSQL backup script ==="
+          cat /tmp/pg-backup.log
+
+          wait "$pid_app" || status=$?
+          echo "=== App data backup script ==="
+          cat /tmp/app-backup.log
+
+          wait "$pid_alerts" || status=$?
+          echo "=== Alert scripts ==="
+          cat /tmp/alerts.log
+
+          exit "$status"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.4"
+          cache: npm
+
+      - name: Restore node_modules cache
+        id: node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-22.23.4-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Test with Docker PostgreSQL
         run: npm test
 
-      - name: Test PostgreSQL backup script
-        shell: bash
-        run: bash scripts/postgres-backup.spec.sh
-
-      - name: Test application data backup script
-        shell: bash
-        run: bash scripts/app-data-backup.spec.sh
-
-      - name: Test alert scripts
-        shell: bash
-        run: bash scripts/alerts.spec.sh
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Validate production Compose
         env:
@@ -74,8 +148,20 @@ jobs:
           BOT_DATABASE_URL: postgres://l4bot:ci-only-password@postgres:5432/l4discord
         run: docker compose -f docker-compose.yml config --quiet
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build production Docker image
-        run: docker build --tag l4discord-bot:ci .
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: l4discord-bot:ci
+          cache-from: type=gha,scope=bot
+          cache-to: type=gha,mode=max,scope=bot
 
       - name: Smoke test Docker startup and migrations
         shell: bash
@@ -112,6 +198,3 @@ jobs:
           set -e
           grep -q 'Database runtime initialized successfully\.' docker-bot-smoke.log
           test "$bot_status" -ne 0
-
-      - name: Build
-        run: npm run build
