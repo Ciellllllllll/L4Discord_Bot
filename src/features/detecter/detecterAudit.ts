@@ -4,7 +4,25 @@ import {
   type GuildAuditLogsEntry,
 } from "discord.js";
 import { setTimeout as delay } from "node:timers/promises";
+import { getDiscordErrorCode } from "../../core/discordErrors.js";
 import { normalizeSnowflake } from "../../core/snowflake.js";
+
+function isTransientAuditFetchError(error: unknown): boolean {
+  if (error instanceof TypeError || error instanceof RangeError || error instanceof SyntaxError) {
+    return false;
+  }
+  const discordCode = getDiscordErrorCode(error);
+  if (discordCode !== null) {
+    return false;
+  }
+  if (error && typeof error === "object" && "status" in error) {
+    const status = Number((error as { status: unknown }).status);
+    if (Number.isFinite(status)) {
+      return status === 429 || status >= 500;
+    }
+  }
+  return true;
+}
 
 export type AuditLookupResult = {
   actorId: string;
@@ -101,6 +119,7 @@ export async function findAuditLogForTarget(input: {
   defaultReasonText: string;
   isProcessedAuditId: (auditId: string) => boolean;
   warn: (meta: Record<string, unknown>, message: string) => void;
+  retryDelaysMs?: readonly number[];
 }): Promise<AuditLookupResult | null> {
   const normalizedTargetId = normalizeSnowflake(input.targetUserId);
   if (!normalizedTargetId) return null;
@@ -108,7 +127,7 @@ export async function findAuditLogForTarget(input: {
   const me = input.guild.members.me;
   if (!me?.permissions.has("ViewAuditLog")) return null;
 
-  const retries = [250, 800, 1500];
+  const retries = input.retryDelaysMs ?? [250, 800, 1500];
   for (const wait of retries) {
     if (wait > 0) await delay(wait);
     try {
@@ -145,7 +164,9 @@ export async function findAuditLogForTarget(input: {
       }
     } catch (err) {
       input.warn({ err }, "detecter: failed to inspect audit log");
-      return null;
+      if (!isTransientAuditFetchError(err)) {
+        return null;
+      }
     }
   }
   return null;

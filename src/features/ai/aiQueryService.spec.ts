@@ -34,6 +34,20 @@ async function withFixture(run: (fixture: {
     executeTakeFirst: async () => undefined,
     execute: async () => history,
   };
+  const aiHistoryDb = {
+    selectFrom: () => query,
+    insertInto: () => ({
+      values: (rows: (typeof history)[number] | (typeof history)[number][]) => ({
+        execute: async () => {
+          if (Array.isArray(rows)) {
+            history.push(...rows);
+          } else {
+            history.push(rows);
+          }
+        },
+      }),
+    }),
+  };
   const ctx = {
     config: {
       BOT_PROFILE: "debug", GUILD_ID: "guild", USER_PROMPT_DIR: root, PROMPT_FILE_PATH: join(root, "base.txt"),
@@ -41,10 +55,7 @@ async function withFixture(run: (fixture: {
       AI_JUDGE_ENABLED: true,
     },
     db: { selectFrom: () => query },
-    aiHistoryDb: {
-      selectFrom: () => query,
-      insertInto: () => ({ values: (row: typeof history[number]) => ({ execute: async () => { history.push(row); } }) }),
-    },
+    aiHistoryDb,
     aiRouter: {
       chat: async (_guild: string, task: string, messages: ChatMessage[], options: AiRouterChatOptions) => {
         assert.equal(task, "answer", "attachments must not enter command classification");

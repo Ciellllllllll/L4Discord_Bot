@@ -8,10 +8,14 @@ export class TtlStore<T> {
     private readonly now: () => number = Date.now,
   ) {}
 
+  private isExpired(entry: { lastTouchedAt: number }, current = this.now()): boolean {
+    return current - entry.lastTouchedAt > this.ttlMs;
+  }
+
   sweep(): void {
     const current = this.now();
     for (const [key, entry] of this.entries.entries()) {
-      if (current - entry.lastTouchedAt > this.ttlMs) {
+      if (this.isExpired(entry, current)) {
         this.entries.delete(key);
       }
     }
@@ -21,7 +25,7 @@ export class TtlStore<T> {
     this.sweep();
     const entry = this.entries.get(key);
     if (!entry) return null;
-    if (this.now() - entry.lastTouchedAt > this.ttlMs) {
+    if (this.isExpired(entry)) {
       this.entries.delete(key);
       return null;
     }
@@ -30,7 +34,12 @@ export class TtlStore<T> {
 
   touch(key: string): void {
     const entry = this.entries.get(key);
-    if (entry) entry.lastTouchedAt = this.now();
+    if (!entry) return;
+    if (this.isExpired(entry)) {
+      this.entries.delete(key);
+      return;
+    }
+    entry.lastTouchedAt = this.now();
   }
 
   set(key: string, value: T): void {
@@ -42,7 +51,13 @@ export class TtlStore<T> {
   }
 
   has(key: string): boolean {
-    return this.entries.has(key);
+    const entry = this.entries.get(key);
+    if (!entry) return false;
+    if (this.isExpired(entry)) {
+      this.entries.delete(key);
+      return false;
+    }
+    return true;
   }
 
   generateId(length = 8): string {

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
-import { nowIso } from "../../core/db/nowIso.js";
 import type { AiHistoryDatabase } from "../../core/db/types.js";
 import type { ChatMessage } from "./chatTypes.js";
 
@@ -44,7 +43,7 @@ export class AiHistoryStore {
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId);
     if (since) {
-      query = query.where("created_at", ">", since.toISOString() as unknown as Date);
+      query = query.where("created_at", ">", since);
     }
     const rows = await query.execute();
     return rows.filter((row) => shouldIncludeHistoryMeta(row.meta, mode)).length;
@@ -62,9 +61,10 @@ export class AiHistoryStore {
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)
       .orderBy("created_at", "desc")
+      .orderBy("role", "asc")
       .limit(maxRows);
     if (since) {
-      query = query.where("created_at", ">", since.toISOString() as unknown as Date);
+      query = query.where("created_at", ">", since);
     }
     const rows = await query.execute();
     return [...rows].reverse().filter((row) => shouldIncludeHistoryMeta(row.meta, "optimizer"));
@@ -82,9 +82,10 @@ export class AiHistoryStore {
       .select(["role", "content", "meta"])
       .where("guild_id", "=", guildId)
       .where("user_id", "=", userId)
-      .orderBy("created_at", "asc");
+      .orderBy("created_at", "asc")
+      .orderBy("role", "desc");
     if (since) {
-      query = query.where("created_at", ">", since.toISOString() as unknown as Date);
+      query = query.where("created_at", ">", since);
     }
     const rows = await query.execute();
 
@@ -105,31 +106,30 @@ export class AiHistoryStore {
     assistantContent: string,
     metaValue: Record<string, unknown> = {},
   ): Promise<void> {
-    const now = nowIso() as unknown as Date;
-    const meta = JSON.stringify(metaValue) as unknown as Record<string, unknown>;
+    const userCreatedAt = new Date();
+    const assistantCreatedAt = new Date(userCreatedAt.getTime() + 1);
     await this.db
       .insertInto("ai_history")
-      .values({
-        id: randomUUID(),
-        guild_id: guildId,
-        user_id: userId,
-        role: "user",
-        content: userContent.slice(0, 4000),
-        meta,
-        created_at: now,
-      })
-      .execute();
-    await this.db
-      .insertInto("ai_history")
-      .values({
-        id: randomUUID(),
-        guild_id: guildId,
-        user_id: userId,
-        role: "assistant",
-        content: assistantContent.slice(0, 4000),
-        meta,
-        created_at: now,
-      })
+      .values([
+        {
+          id: randomUUID(),
+          guild_id: guildId,
+          user_id: userId,
+          role: "user",
+          content: userContent.slice(0, 4000),
+          meta: metaValue,
+          created_at: userCreatedAt,
+        },
+        {
+          id: randomUUID(),
+          guild_id: guildId,
+          user_id: userId,
+          role: "assistant",
+          content: assistantContent.slice(0, 4000),
+          meta: metaValue,
+          created_at: assistantCreatedAt,
+        },
+      ])
       .execute();
   }
 
