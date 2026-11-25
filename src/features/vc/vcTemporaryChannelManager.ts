@@ -1,59 +1,31 @@
 import {
-  ActionRowBuilder,
   ChannelType,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
   type CategoryChannel,
   type Client,
   type Guild,
-  type Message,
-  type MessageEditOptions,
   type VoiceBasedChannel,
   type VoiceChannel,
   type VoiceState,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
 import type { AppConfig } from "../../core/config.js";
-import { getPermanentUiVersion } from "../../core/releaseVersions.js";
+import { isDiscordUnknownChannel } from "../../core/discordErrors.js";
 import type pino from "pino";
 import { setTimeout as delay } from "node:timers/promises";
-import { PANEL_KIND_VC_CREATOR } from "../panels/constants.js";
-import { tryDeleteBotPanelMessage } from "../panels/panelDiscordOps.js";
-import { ensurePanelMessageRow, savePanelMessageRow } from "../panels/panelMessageStore.js";
-import {
-  buildVcCreatorMainPayload,
-  buildVcRenameModalCustomId,
-  VC_NAME_MODAL_PREFIX,
-} from "./vcCreatorUi.js";
-import { messageComponentsHaveCustomId } from "../panels/componentPanelPayload.js";
 import type { VcTempPersistence } from "./vcTempPersistence.js";
 
 const GRACE_NO_JOIN_MS = 24 * 60 * 60 * 1000;
 const EMPTY_DELETE_DEBOUNCE_MS = 1000;
-// REST: Unknown Channel
-
-const DISCORD_API_UNKNOWN_CHANNEL = 10_003;
-
-function isDiscordUnknownChannel(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && Number((err as { code: unknown }).code) === DISCORD_API_UNKNOWN_CHANNEL;
-}
 
 type ActiveVcMeta = {
   createdAtMs: number;
   userEverJoined: boolean;
 };
 
-// サーバー上のボイスチャンネルを表示順で列挙
-
 function getSortedVoiceChannels(guild: Guild): VoiceChannel[] {
   return [...guild.channels.cache.values()]
     .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice)
     .sort((a, b) => a.rawPosition - b.rawPosition);
 }
-
-// 既存の通常ボイスチャンネルが属するカテゴリを1つ選ぶ（先頭のカテゴリ付きVCの親）。
-// カテゴリなしのVCのみの場合は null（作成時は親なしで同列に置く）。
 
 function resolveDefaultVoiceCategory(guild: Guild): CategoryChannel | null {
   for (const vc of getSortedVoiceChannels(guild)) {
@@ -134,8 +106,6 @@ export class VcTemporaryChannelManager {
       void this.maybeDeleteEmptyVcById(leftId);
     }
   }
-
-    // 起動時: 保存済みの一時VCをメモリへ載せ、空室なら削除処理へ回す
 
   async restoreFromDatabase(expectedGuildId: string): Promise<void> {
     const rows = await this.persistence.listTracked();
@@ -319,149 +289,4 @@ export class VcTemporaryChannelManager {
       return { ok: false, error: "api_error" };
     }
   }
-}
-
-export function buildVcNameModal(genre: string): ModalBuilder {
-  return new ModalBuilder()
-    .setCustomId(`${VC_NAME_MODAL_PREFIX}${genre}`)
-    .setTitle("VC名の入力")
-    .addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("vc_name_input")
-          .setLabel("VCの名前 2から30文字")
-          .setPlaceholder("例: 雑談VC")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMinLength(2)
-          .setMaxLength(30),
-      ),
-    );
-}
-
-export function buildVcRenameModal(channelId: string, genre: string, beforeName: string): ModalBuilder {
-  const prefix = `[${genre}]:`;
-  return new ModalBuilder()
-    .setCustomId(buildVcRenameModalCustomId(channelId, genre))
-    .setTitle("VC名変更")
-    .addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("vc_name_before_display")
-          .setLabel("変更前VC名（確認用）")
-          .setStyle(TextInputStyle.Short)
-          .setValue(beforeName.slice(0, 30))
-          .setRequired(false)
-          .setMaxLength(30),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("vc_name_after_input")
-          .setLabel("変更後VC名")
-          .setStyle(TextInputStyle.Short)
-          .setValue(prefix)
-          .setPlaceholder(`${prefix}雑談VC`)
-          .setRequired(true)
-          .setMinLength(Math.min(prefix.length, 30))
-          .setMaxLength(30),
-      ),
-    );
-}
-
-// メッセージが当 Bot の VC 作成パネルか（再接続スキャン用）
-
-export function vcPanelMessageHasOpenButton(message: Message<boolean>): boolean {
-  return messageComponentsHaveCustomId(message.components, new Set(["open_vc_modal"]));
-}
-
-export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<boolean> {
-  const kind = PANEL_KIND_VC_CREATOR;
-  const codeVer = getPermanentUiVersion(kind);
-  let row = await ensurePanelMessageRow(ctx, guild.id, kind, channelId);
-
-  if (row.channel_id !== channelId) {
-    if (row.message_id) {
-      await tryDeleteBotPanelMessage(ctx, guild, row.channel_id, row.message_id);
-    }
-    await savePanelMessageRow(ctx, row.id, channelId, "", { ...row.data, status: "pending" });
-    row = { ...row, channel_id: channelId, message_id: "", data: { ...row.data, status: "pending" } };
-  }
-
-  const ch = await guild.channels.fetch(channelId).catch(() => null);
-  if (!ch?.isTextBased()) {
-    ctx.log.warn({ channelId, guildId: guild.id, panelKind: kind }, "USER panel channel missing or not text (VC creator panel)");
-    await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
-      ...row.data,
-      status: "error",
-      last_error: "channel_missing",
-    });
-    return false;
-  }
-
-  const payload = buildVcCreatorMainPayload();
-  const editPayload = { ...payload, content: null } satisfies MessageEditOptions;
-  const botId = ctx.client.user?.id ?? "";
-
-  if (row.message_id) {
-    const msg = await ch.messages.fetch(row.message_id).catch(() => null);
-    if (msg && msg.author?.id === botId && vcPanelMessageHasOpenButton(msg)) {
-      if (row.data.ui_version === codeVer) {
-        return true;
-      }
-      try {
-        await msg.edit(editPayload);
-        await savePanelMessageRow(ctx, row.id, channelId, msg.id, {
-          ui_version: codeVer,
-          status: "sent",
-          last_sent_at: new Date().toISOString(),
-        });
-      } catch (e) {
-        ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "VC creator panel edit failed");
-        return false;
-      }
-      return true;
-    }
-  }
-
-  const recent = await ch.messages.fetch({ limit: 50 }).catch(() => null);
-  if (recent && botId) {
-    const existing = recent.find((m) => m.author?.id === botId && vcPanelMessageHasOpenButton(m));
-    if (existing) {
-      try {
-        if (row.data.ui_version !== codeVer) {
-          await existing.edit(editPayload);
-        }
-        await savePanelMessageRow(ctx, row.id, channelId, existing.id, {
-          ui_version: codeVer,
-          status: "sent",
-          last_sent_at: new Date().toISOString(),
-        });
-      } catch (e) {
-        ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "VC creator panel reconnect edit failed");
-        return false;
-      }
-      ctx.log.debug({ messageId: existing.id }, "VC creator UI reconnected via scan");
-      return true;
-    }
-  }
-
-  try {
-    const sent = await ch.send(payload);
-    await savePanelMessageRow(ctx, row.id, channelId, sent.id, {
-      ui_version: codeVer,
-      status: "sent",
-      last_sent_at: new Date().toISOString(),
-    });
-    ctx.log.debug({ messageId: sent.id }, "VC creator UI sent");
-  } catch (e) {
-    const err = e instanceof Error ? e.message : String(e);
-    await savePanelMessageRow(ctx, row.id, channelId, row.message_id, {
-      ...row.data,
-      status: "error",
-      last_error: err.slice(0, 500),
-    });
-    ctx.log.error({ err: e, guildId: guild.id, panelKind: kind }, "VC creator UI send failed");
-    return false;
-  }
-  return true;
 }

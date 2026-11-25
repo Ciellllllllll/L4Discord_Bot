@@ -1,4 +1,4 @@
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -74,7 +74,7 @@ function buildConfirmEmbed(invokerId: string, targetId: string, channelId: strin
     .setTimestamp(new Date());
 }
 
-function buildResultEmbed(title: string, description: string, _color?: number): ComponentCardBuilder {
+function buildResultEmbed(title: string, description: string): ComponentCardBuilder {
   return new ComponentCardBuilder().setTitle(title).setDescription(description).setTimestamp(new Date());
 }
 
@@ -225,7 +225,6 @@ export async function handleAfkDisconnectButton(
           buildResultEmbed(
           "AFKユーザー切断確認",
           "確認の有効期限が切れたため、操作を終了しました。",
-          0x95a5a6,
         ),
         ],
         buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
@@ -237,7 +236,7 @@ export async function handleAfkDisconnectButton(
   if (payload.action === "cancel") {
     await interaction.update({
       ...componentCardsPayload(
-        [buildResultEmbed("AFKユーザー切断確認", "切断操作を取り消しました。", 0x95a5a6)],
+        [buildResultEmbed("AFKユーザー切断確認", "切断操作を取り消しました。")],
         buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
       ),
     });
@@ -248,7 +247,7 @@ export async function handleAfkDisconnectButton(
   if (!guild) {
     await interaction.update({
       ...componentCardsPayload(
-        [buildResultEmbed("AFKユーザー切断失敗", "サーバー情報を取得できませんでした。", 0xe74c3c)],
+        [buildResultEmbed("AFKユーザー切断失敗", "サーバー情報を取得できませんでした。")],
         buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
       ),
     });
@@ -267,7 +266,7 @@ export async function handleAfkDisconnectButton(
   } catch {
     await interaction.editReply({
       ...componentCardsPayload(
-        [buildResultEmbed("AFKユーザー切断失敗", "ユーザー情報を取得できませんでした。", 0xe74c3c)],
+        [buildResultEmbed("AFKユーザー切断失敗", "ユーザー情報を取得できませんでした。")],
         buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
       ),
     });
@@ -281,7 +280,6 @@ export async function handleAfkDisconnectButton(
           buildResultEmbed(
           "AFKユーザー切断中止",
           "実行者と対象ユーザーが同じVCに接続していないため、操作を終了しました。",
-          0x95a5a6,
         ),
         ],
         buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
@@ -297,7 +295,6 @@ export async function handleAfkDisconnectButton(
           buildResultEmbed(
           "AFKユーザー切断失敗",
           "BOTに対象VCでメンバーを移動する権限がないため、切断できません。",
-          0xe74c3c,
         ),
         ],
         buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
@@ -314,7 +311,7 @@ export async function handleAfkDisconnectButton(
     const errorText = err instanceof DiscordAPIError ? `Discord API: ${err.message}` : "Discord APIで切断に失敗しました。";
     await interaction.editReply({
       ...componentCardsPayload(
-        [buildResultEmbed("AFKユーザー切断失敗", errorText, 0xe74c3c)],
+        [buildResultEmbed("AFKユーザー切断失敗", errorText)],
         buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),
       ),
     });
@@ -330,7 +327,6 @@ export async function handleAfkDisconnectButton(
         buildResultEmbed(
         "AFKユーザー切断完了",
         `<@${payload.targetId}> を <#${disconnectedFromChannelId}> から切断しました。`,
-        0x2ecc71,
       ),
       ],
       buildConfirmRows(payload.invokerId, payload.targetId, payload.createdAtMs, true),

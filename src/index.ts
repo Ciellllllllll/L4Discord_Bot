@@ -7,7 +7,7 @@ if (process.platform === "win32") {
 }
 
 import { PostgresVcRankingRepository } from "./adapters/legacyDb/postgresVcRankingRepository.js";
-import { createDiscordClient } from "./bot/createClient.js";
+import { CLIENT_INTENT_NAMES, createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
 import { closeDatabaseRuntime, createDatabaseRuntime } from "./bot/databaseRuntime.js";
 import { registerRuntimeHandlers } from "./bot/registerRuntimeHandlers.js";
@@ -63,20 +63,7 @@ async function main(): Promise<void> {
   } = runtime;
 
   const client = createDiscordClient();
-  log.debug(
-    {
-      intents: [
-        "Guilds",
-        "GuildMessages",
-        "MessageContent",
-        "GuildMembers",
-        "GuildModeration",
-        "GuildVoiceStates",
-        "DirectMessages",
-      ],
-    },
-    "discord client created",
-  );
+  log.debug({ intents: CLIENT_INTENT_NAMES }, "discord client created");
   log.info("Discord client created successfully.");
   const vcTemp = new VcTemporaryChannelManager(
     log,

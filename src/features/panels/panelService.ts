@@ -25,7 +25,7 @@ import {
   reminderHubPanelMessageMatches,
 } from "../reminders/reminderHubPayload.js";
 import { reconcileAutoModPanel } from "../moderation/autoModerationPanel.js";
-import { reconcileVcCreatorPanel } from "../vc/vcTemporaryChannelManager.js";
+import { reconcileVcCreatorPanel } from "../vc/vcCreatorPanel.js";
 import { buildUserContactPanelPayload, userContactPanelMessageMatches } from "./userPanelsPayload.js";
 import { serializePanelState, type PanelMessageState } from "./panelState.js";
 

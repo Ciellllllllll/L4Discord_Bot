@@ -1,4 +1,4 @@
-import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../../core/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,

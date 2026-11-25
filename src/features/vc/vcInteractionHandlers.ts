@@ -16,7 +16,8 @@ import {
   VC_RENAME_BUTTON_ID,
 } from "./vcCreatorUi.js";
 import { runNologToggleAndBuildEmbed, trySendNologEmbedInChannel } from "../messageLog/messageLogNolog.js";
-import { buildVcNameModal, buildVcRenameModal, vcCreatorErrText, vcRenameErrText } from "./vcTemporaryChannelManager.js";
+import { buildVcNameModal, buildVcRenameModal } from "./vcCreatorPanel.js";
+import { vcCreatorErrText, vcRenameErrText } from "./vcTemporaryChannelManager.js";
 
 async function resolveCurrentVoiceChannel(
   interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,

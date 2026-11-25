@@ -22,6 +22,7 @@ import { handleEmojiGuardMessage, handleEmojiGuardReaction } from "../features/m
 import { reconcilePanelsForGuild } from "../features/panels/panelService.js";
 import { handlePacchiMessage } from "../features/pacchi/pacchi.message-handler.js";
 import { startReminderScheduler } from "../features/reminders/reminderScheduler.js";
+import { finalizeDueBokeruRounds } from "../features/bokeru/bokeru.js";
 import { handleSenryuMessage } from "../features/senryu/senryu.message-handler.js";
 import { initKuromojiTokenizer } from "../features/senryu/senryu.kuromoji.js";
 import { trackStampMessage, trackStampReaction } from "../features/stamps/trackReaction.js";
@@ -31,7 +32,6 @@ import { endOpenVcSessionForMemberPostgres, reconcileVcTimeSessionsAtReadyPostgr
 import { reconcileWerewolfGames } from "../features/werewolf/werewolfGame.js";
 import { handleZigAutoReply } from "../features/zig/zigAutoReply.js";
 import { routeButton, routeChannelSelectMenu, routeModal, routeStringSelectMenu } from "../interactions/handleComponents.js";
-import { handleExtendedAutoReplies } from "../message/extendedAutoReply.js";
 import { handlePrefixMessage } from "../message/prefixHandlers.js";
 import { handleAiChatMonitorMessage } from "../features/ai/aiQueryService.js";
 import { hydrateMessageIfPartial, ingestMessageCreatePostgres, ingestMessageDeletePostgres, ingestMessageUpdatePostgres } from "../features/messageLog/messageLogsCore.js";
@@ -394,7 +394,9 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
         log,
       }),
       startPresence: (getUptimeSeconds) => startPresence(client, log, getUptimeSeconds),
-      startReminder: () => startReminderScheduler(ctx),
+      startReminder: () => startReminderScheduler(ctx, 30_000, () => {
+        void finalizeDueBokeruRounds(ctx).catch((e) => ctx.log.error({ err: e }, "bokeru sweep failed"));
+      }),
       startVxTwitterPreviewCleanup: () => {
         return startPreviewStateCleanup({
           deleteCommon: () => Promise.all([
@@ -486,28 +488,34 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
     }
   });
 
+  const getMessageLogOptions = async (guildId: string) => {
+    const s = await getGuildSettingsData(db, guildId);
+    return {
+      targetGuildId: config.GUILD_ID,
+      excludedChannelIds: s.message_log_excluded_channel_ids ?? [],
+      botUserId: client.user?.id ?? "",
+    };
+  };
+
+  const archiveAttachmentsIfEnabled = (message: Parameters<typeof scheduleArchiveMessageAttachmentsPostgres>[2]) => {
+    if (!config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) return;
+    scheduleArchiveMessageAttachmentsPostgres(
+      messageAttachmentPgPool,
+      config.MESSAGE_ATTACHMENT_FILES_DIR,
+      message,
+      log,
+    );
+  };
+
   client.on("messageCreate", async (message) => {
     try {
       if (!message.guild && !message.author.bot) {
         if (await handleModmailDmMessage(ctx, message)) return;
       }
       if (message.guildId === config.GUILD_ID && !message.author.bot) {
-        const s = await getGuildSettingsData(db, message.guildId);
-        const ex = s.message_log_excluded_channel_ids ?? [];
-        const messageLogOptions = {
-          targetGuildId: config.GUILD_ID,
-          excludedChannelIds: ex,
-          botUserId: client.user?.id ?? "",
-        };
+        const messageLogOptions = await getMessageLogOptions(message.guildId);
         await ingestMessageCreatePostgres(messageLogPgPool, message, messageLogOptions);
-        if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-          scheduleArchiveMessageAttachmentsPostgres(
-            messageAttachmentPgPool,
-            config.MESSAGE_ATTACHMENT_FILES_DIR,
-            message,
-            log,
-          );
-        }
+        archiveAttachmentsIfEnabled(message);
         await trackStampMessage(message, ctx);
         if (await routeModmailGuildThreadMessage(message, ctx)) return;
       }
@@ -516,7 +524,6 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
       if (await handlePacchiMessage(ctx, message)) return;
       await runUtilitiesMessageChain(utilitiesBundle, message);
       if (await handleSenryuMessage(ctx, message)) return;
-      if (await handleExtendedAutoReplies(message, ctx)) return;
       if (await handleAiChatMonitorMessage(message, ctx)) return;
       await handleAutoModerationMessage(message, ctx);
       await handleEmojiGuardMessage(message, ctx);
@@ -531,22 +538,9 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
       const message = newMessage;
       if (!message.guildId || message.author?.bot) return;
       if (message.guildId !== config.GUILD_ID) return;
-      const s = await getGuildSettingsData(db, message.guildId);
-      const ex = s.message_log_excluded_channel_ids ?? [];
-      const messageLogOptions = {
-        targetGuildId: config.GUILD_ID,
-        excludedChannelIds: ex,
-        botUserId: client.user?.id ?? "",
-      };
+      const messageLogOptions = await getMessageLogOptions(message.guildId);
       await ingestMessageUpdatePostgres(messageLogPgPool, message, messageLogOptions);
-      if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        scheduleArchiveMessageAttachmentsPostgres(
-          messageAttachmentPgPool,
-          config.MESSAGE_ATTACHMENT_FILES_DIR,
-          message,
-          log,
-        );
-      }
+      archiveAttachmentsIfEnabled(message);
     } catch (err) {
       log.error({ err }, "messageUpdate");
     }
@@ -556,24 +550,11 @@ export async function registerRuntimeHandlers(ctx: BotContext): Promise<RuntimeH
     void utilitiesBundle.expansions.onDelete(message).catch((err) => log.warn({ err }, "link expansion delete failed"));
     try {
       if (!message.guildId || message.guildId !== config.GUILD_ID) return;
-      const s = await getGuildSettingsData(db, message.guildId);
-      const ex = s.message_log_excluded_channel_ids ?? [];
+      const messageLogOptions = await getMessageLogOptions(message.guildId);
       const target = await hydrateMessageIfPartial(message);
       await cancelPendingRepliesBySource(ctx, target.id);
-      const messageLogOptions = {
-        targetGuildId: config.GUILD_ID,
-        excludedChannelIds: ex,
-        botUserId: client.user?.id ?? "",
-      };
       await ingestMessageDeletePostgres(messageLogPgPool, target, messageLogOptions);
-      if (config.MESSAGE_ATTACHMENT_ARCHIVE_ENABLED) {
-        scheduleArchiveMessageAttachmentsPostgres(
-          messageAttachmentPgPool,
-          config.MESSAGE_ATTACHMENT_FILES_DIR,
-          target,
-          log,
-        );
-      }
+      archiveAttachmentsIfEnabled(target);
     } catch (err) {
       log.error({ err }, "messageDelete");
     }

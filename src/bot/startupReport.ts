@@ -22,11 +22,6 @@ export class StartupReport {
     }
   }
 
-  recordFailure(component: string, err: unknown): void {
-    this.failedComponents.push(component);
-    this.log.error({ err, component, guildId: this.guildId }, "startup task failed");
-  }
-
   logSummary(): void {
     if (this.failedComponents.length === 0) {
       this.log.info(

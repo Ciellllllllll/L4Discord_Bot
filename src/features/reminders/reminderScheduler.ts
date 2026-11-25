@@ -1,9 +1,12 @@
 import type { BotContext } from "../../bot/context.js";
 import { applyDispatchResult, fetchDuePending } from "./reminderHubRepo.js";
 import { sendReminderHubMessage } from "./reminderHubSend.js";
-import { finalizeDueBokeruRounds } from "../bokeru/bokeru.js";
 
-export function startReminderScheduler(ctx: BotContext, intervalMs = 30_000): NodeJS.Timeout {
+export function startReminderScheduler(
+  ctx: BotContext,
+  intervalMs = 30_000,
+  onTick?: () => void,
+): NodeJS.Timeout {
   ctx.log.debug({ intervalMs }, "reminder scheduler started");
   return setInterval(() => {
     void (async () => {
@@ -17,6 +20,6 @@ export function startReminderScheduler(ctx: BotContext, intervalMs = 30_000): No
         ctx.log.info({ count: rows.length }, "reminders delivered");
       }
     })().catch((e) => ctx.log.error({ err: e }, "reminder tick failed"));
-    void finalizeDueBokeruRounds(ctx).catch((e) => ctx.log.error({ err: e }, "bokeru sweep failed"));
+    onTick?.();
   }, intervalMs);
 }
