@@ -24,7 +24,14 @@ export default tseslint.config(
     },
     rules: {
       // Existing code has many fire-and-forget calls; tighten to "error" once they are cleaned up.
-      "@typescript-eslint/no-floating-promises": "warn",
+      "@typescript-eslint/no-floating-promises": [
+        "warn",
+        {
+          allowForKnownSafeCalls: [
+            { from: "package", name: ["test", "describe", "it"], package: "node:test" },
+          ],
+        },
+      ],
     },
   },
 );
