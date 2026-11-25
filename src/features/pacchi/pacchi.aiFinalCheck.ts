@@ -1,10 +1,11 @@
+import { stripOptionalMarkdownFence } from "../../core/text.js";
 import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 import type { ChatMessage } from "../ai/chatTypes.js";
 
 export type PacchiAiFinalCheckVerdict = "accept" | "reject";
 
 export function parsePacchiAiFinalCheckVerdict(raw: string): PacchiAiFinalCheckVerdict | null {
-  const trimmed = raw.trim().replace(/^```[a-zA-Z0-9]*\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
+  const trimmed = stripOptionalMarkdownFence(raw);
   if (!trimmed.startsWith("{")) return null;
   try {
     const parsed = JSON.parse(trimmed) as { verdict?: unknown };

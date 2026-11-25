@@ -1,4 +1,4 @@
-import { ComponentCardBuilder } from "../panels/componentCard.js";
+import { ComponentCardBuilder } from "../../core/componentCard.js";
 
 import type { LolWatcherApiAccount, LolWatcherCompletedGame, LolWatcherLiveGame } from "./lolWatcher.types.js";
 

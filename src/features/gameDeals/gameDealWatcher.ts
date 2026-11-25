@@ -1,12 +1,20 @@
-import type { ButtonInteraction, Client, SendableChannels } from "discord.js";
+import type { ButtonInteraction } from "discord.js";
 import { MessageFlags } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
 import { checkSubscriptions, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
 import { createGameDealRepository } from "./postgresGameDealRepository.js";
 import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealSubscriptionHit } from "./gameDealTypes.js";
+import {
+  chunkGameDealItems as chunkItems,
+  configuredGameDealChannelId,
+  configuredGameDealRoleId,
+  fetchGameDealTextChannel as fetchTextChannel,
+  gameDealAllowedRoleMentions,
+  gameDealRoleMention,
+} from "./gameDealDelivery.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 60 * 1000;
 const DEFAULT_STOP_GRACE_MS = 10_000;
@@ -89,38 +97,6 @@ export function createGameDealWatcherController(options: GameDealWatcherControll
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new DOMException("Game deal watcher stopped", "AbortError");
-}
-
-function chunkItems(items: GameDealFreeItem[], size = 10): GameDealFreeItem[][] {
-  const chunks: GameDealFreeItem[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-
-async function fetchTextChannel(client: Client, channelId: string): Promise<SendableChannels | null> {
-  const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel || !channel.isTextBased() || channel.isDMBased() || !channel.isSendable()) return null;
-  return channel;
-}
-
-function configuredGameDealChannelId(ctx: BotContext): string | null {
-  return ctx.config.GAME_DEAL_CHANNEL_ID?.trim() || null;
-}
-
-function configuredGameDealRoleId(ctx: BotContext): string | null {
-  return ctx.config.GAME_DEAL_NOTIFY_ROLE_ID?.trim() || null;
-}
-
-function gameDealRoleMention(ctx: BotContext): string | undefined {
-  const roleId = configuredGameDealRoleId(ctx);
-  return roleId ? `<@&${roleId}>` : undefined;
-}
-
-function gameDealAllowedRoleMentions(ctx: BotContext): { roles?: string[]; parse: [] } {
-  const roleId = configuredGameDealRoleId(ctx);
-  return roleId ? { roles: [roleId], parse: [] } : { parse: [] };
 }
 
 type SubscriptionNotifyGroup = {

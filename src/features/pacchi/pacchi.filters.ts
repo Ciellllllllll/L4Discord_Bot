@@ -31,10 +31,9 @@ export function containsUnsafeText(input: string): boolean {
   return BLOCKED_WORDS.some((word) => text.toLowerCase().includes(word.toLowerCase()));
 }
 
-export function isLearnableMessage(content: string, hasAttachments: boolean): boolean {
+export function isLearnableMessage(content: string, _hasAttachments: boolean): boolean {
   const text = normalizeText(content);
   if (!text) return false;
-  if (hasAttachments && !text) return false;
   if (text.startsWith("!") || text.startsWith("/")) return false;
   if (text.length <= 1 || text.length >= 200) return false;
   if (/^https?:\/\/\S+$/i.test(text)) return false;

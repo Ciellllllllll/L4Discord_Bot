@@ -1,6 +1,6 @@
 import type { Client, GuildTextBasedChannel } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import { buildLolWatcherCompletedEmbed, buildLolWatcherStartEmbed } from "./lolWatcher.embeds.js";
 import { buildDeepLolDetailUrl, LolWatcherRiotClient } from "./lolWatcher.client.js";

@@ -1,4 +1,4 @@
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -35,54 +35,40 @@ import {
   FlowDeadlineTimers,
   type OpenPollFlow,
   PollFlowStateStore,
-  flowTargetLocks,
-  normalizePollStateRevision,
   saveOpenPollState,
 } from "./flowLifecycle.js";
+import {
+  adminWaitDeadlineMs,
+  createFlowTargetTracker,
+  deletePollFlowMessagesQuietly,
+  disablePollMessage,
+  editPollMessagesStopped,
+  findOpenPollFlowById,
+  formatDurationLabelJa,
+  postPollAdminRequest,
+  type OpenPollFlowRow,
+} from "./pollFlowHelpers.js";
 import { createTwoStagePollRuntime, parsePersistedFlowState, tallyChoices } from "./twoStagePollRuntime.js";
 
-const EXECUTION_LOCK_NAMESPACE = "execution";
 const executionTimers = new FlowDeadlineTimers<ReturnType<typeof setTimeout>>({ setTimeout, clearTimeout });
-const executionFlowTargets = new Map<string, { guildId: string; targetId: string }>();
+const executionTargetTracker = createFlowTargetTracker("execution");
 
-type OpenExecutionFlowRow = {
-  id: string;
-  guild_id: string;
-  status: string;
-  message_id: string | null;
-  state: unknown;
-  state_revision: number;
-  updated_at: Date;
-};
+type OpenExecutionFlowRow = OpenPollFlowRow;
 
 function timerKey(phase: "poll1" | "poll2" | "admin", flowId: string): string {
   return `${phase}:${flowId}`;
 }
 
 function retainExecutionTarget(flowId: string, guildId: string, targetId: string): boolean {
-  const current = executionFlowTargets.get(flowId);
-  if (current) return current.guildId === guildId && current.targetId === targetId;
-  if (!flowTargetLocks.acquire(EXECUTION_LOCK_NAMESPACE, guildId, targetId)) return false;
-  executionFlowTargets.set(flowId, { guildId, targetId });
-  return true;
+  return executionTargetTracker.retain(flowId, guildId, targetId);
 }
 
 function releaseExecutionTarget(flowId: string): void {
-  const target = executionFlowTargets.get(flowId);
-  if (!target) return;
-  flowTargetLocks.release(EXECUTION_LOCK_NAMESPACE, target.guildId, target.targetId);
-  executionFlowTargets.delete(flowId);
+  executionTargetTracker.release(flowId);
 }
 
-/** プロセス終了時に、このランタイムが保持する処刑フローの期限タイマーと対象ロックを解放する。 */
 export async function shutdownExecutionFlowRuntime(): Promise<void> {
   await executionOrchestrator.shutdown();
-}
-
-function adminWaitDeadlineMs(updatedAt: Date, waitSeconds: number): number {
-  const updatedAtMs = new Date(updatedAt).getTime();
-  const base = Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now();
-  return base + waitSeconds * 1000;
 }
 
 function memberHasRoleId(member: GuildMember, roleId: string): boolean {
@@ -99,22 +85,7 @@ export async function findOpenExecutionFlowById(
   ctx: BotContext,
   flowId: string,
 ): Promise<{ row: OpenExecutionFlowRow; state: ExecutionFlowState } | null> {
-  const row = await ctx.db
-    .selectFrom("polls")
-    .select(["id", "guild_id", "status", "message_id", "state", "state_revision", "updated_at"])
-    .where("id", "=", flowId)
-    .where("kind", "=", EXECUTION_FLOW_KIND)
-    .where("status", "=", "open")
-    .executeTakeFirst();
-  if (!row) return null;
-  const stateRevision = normalizePollStateRevision(row.state_revision);
-  if (stateRevision === null) {
-    ctx.log.error({ flowId, guildId: row.guild_id, phase: "invalid_state_revision", stateRevision: row.state_revision }, "execution: ignoring unsafe flow state revision");
-    return null;
-  }
-  const state = parsePollRowState(row);
-  if (!state) return null;
-  return { row: { ...row, state_revision: stateRevision }, state };
+  return findOpenPollFlowById(ctx, flowId, EXECUTION_FLOW_KIND, parseExecutionFlowState, "execution");
 }
 
 async function saveFullState(
@@ -141,14 +112,7 @@ export async function deleteFlowMessagesQuietly(
   messageIds: string[],
   logLabel: string,
 ): Promise<void> {
-  for (const id of messageIds) {
-    try {
-      const m = await channel.messages.fetch(id);
-      if (m) await m.delete();
-    } catch (err) {
-      ctx.log.warn({ err, id, logLabel }, "execution: delete flow message failed");
-    }
-  }
+  await deletePollFlowMessagesQuietly(ctx, channel, messageIds, "execution", logLabel);
 }
 
 function choiceToAction1(c: string): ExecutionAction | null {
@@ -245,19 +209,7 @@ async function editMessagesStopped(
   messages: Array<{ id: string | null | undefined; components: ActionRowBuilder<ButtonBuilder>[] }>,
   heading: string,
 ): Promise<void> {
-  const content = `# **${heading}**`;
-  for (const { id: mid, components } of messages) {
-    if (!mid) continue;
-    try {
-      const m = await channel.messages.fetch(mid);
-      // Components V2 メッセージは content を持てないため、見出しカードへ差し替える
-      await m.edit(m.flags?.has(MessageFlags.IsComponentsV2)
-        ? componentCardsPayload([new ComponentCardBuilder().setDescription(content)], components)
-        : { content, embeds: [], components });
-    } catch (err) {
-      ctx.log.warn({ err, mid }, "execution: edit stopped message failed");
-    }
-  }
+  await editPollMessagesStopped(ctx, channel, messages, heading, "execution");
 }
 
 export async function abortFlow(
@@ -319,17 +271,7 @@ async function postPrecheckRequest(ctx: BotContext, channel: TextChannel, flowId
 }
 
 async function postAdminRequest(ctx: BotContext, channel: TextChannel, flowId: string, body: string): Promise<Message | null> {
-  const adminRoleId = ctx.config.ADMIN_ROLE_ID.trim();
-  try {
-    return await channel.send({
-      content: `${body}\n<@&${adminRoleId}>`,
-      components: approvalRows(flowId, false),
-      allowedMentions: { roles: [adminRoleId] },
-    });
-  } catch (err) {
-    ctx.log.warn({ err, flowId }, "execution: admin request send failed");
-    return null;
-  }
+  return postPollAdminRequest(ctx, channel, flowId, body, approvalRows(flowId, false), "execution");
 }
 
 async function disableExecutionPollMessage(
@@ -337,17 +279,11 @@ async function disableExecutionPollMessage(
   messageId: string | null,
   payload: ReturnType<typeof componentCardsPayload>,
 ): Promise<void> {
-  if (!messageId) return;
-  try {
-    const message = await channel.messages.fetch(messageId).catch(() => null);
-    if (message) await message.edit(payload);
-  } catch {
-    /* UI の無効化失敗は状態確定を巻き戻さない */
-  }
+  await disablePollMessage(channel, messageId, payload);
 }
 
 export function beginPoll1(ctx: BotContext, flowId: string, state: ExecutionFlowState): Promise<boolean> {
-  return executionOrchestrator.beginPoll1(ctx, flowId, state, executionFlowTargets.get(flowId)?.guildId);
+  return executionOrchestrator.beginPoll1(ctx, flowId, state, executionTargetTracker.get(flowId)?.guildId);
 }
 /** 初回の事前承認投稿は、Discord APIの副作用より先にCAS予約を確定する。 */
 export async function beginInitialPrecheck(
@@ -394,11 +330,11 @@ export async function beginInitialPrecheck(
 }
 
 export function transitionPoll1ToNext(ctx: BotContext, flowId: string): Promise<void> {
-  return executionOrchestrator.transitionPoll1(ctx, flowId, executionFlowTargets.get(flowId)?.guildId ?? "unknown");
+  return executionOrchestrator.transitionPoll1(ctx, flowId, executionTargetTracker.get(flowId)?.guildId ?? "unknown");
 }
 
 export function transitionPoll2ToAdmin(ctx: BotContext, flowId: string): Promise<void> {
-  return executionOrchestrator.transitionPoll2(ctx, flowId, executionFlowTargets.get(flowId)?.guildId ?? "unknown");
+  return executionOrchestrator.transitionPoll2(ctx, flowId, executionTargetTracker.get(flowId)?.guildId ?? "unknown");
 }
 const executionOrchestrator = createTwoStagePollRuntime<BotContext, ExecutionFlowState, (typeof POLL1_KEYS)[number], (typeof POLL2_KEYS)[number]>({
   namespace: "execution",
@@ -410,9 +346,7 @@ const executionOrchestrator = createTwoStagePollRuntime<BotContext, ExecutionFlo
   targetId: (state) => state.target_id,
   retainTarget: retainExecutionTarget,
   releaseTarget: releaseExecutionTarget,
-  releaseAllTargets: () => {
-    for (const flowId of [...executionFlowTargets.keys()]) releaseExecutionTarget(flowId);
-  },
+  releaseAllTargets: () => executionTargetTracker.releaseAll(),
   isAdmin: (ctx, member) => isAdmin(member, ctx.config),
   handleOtherApproval: handleExecutionPrecheckApproval,
   approvalComponents: (flowId) => approvalRows(flowId, true),
@@ -455,7 +389,7 @@ const executionOrchestrator = createTwoStagePollRuntime<BotContext, ExecutionFlo
   publishPoll1: async (ctx, flowId, state) => {
     const channel = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
     if (!channel?.isTextBased()) {
-      ctx.log.error({ flowId, phase: state.phase, guildId: executionFlowTargets.get(flowId)?.guildId ?? "unknown" }, "execution: vote channel unavailable");
+      ctx.log.error({ flowId, phase: state.phase, guildId: executionTargetTracker.get(flowId)?.guildId ?? "unknown" }, "execution: vote channel unavailable");
       return { failureHeading: "処刑フロー: 投票チャンネルを取得できませんでした" };
     }
     try {
@@ -468,7 +402,7 @@ const executionOrchestrator = createTwoStagePollRuntime<BotContext, ExecutionFlo
   publishPoll2: async (ctx, flowId, state) => {
     const channel = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
     if (!channel?.isTextBased()) {
-      ctx.log.error({ flowId, phase: state.phase, guildId: executionFlowTargets.get(flowId)?.guildId ?? "unknown" }, "execution: vote channel unavailable");
+      ctx.log.error({ flowId, phase: state.phase, guildId: executionTargetTracker.get(flowId)?.guildId ?? "unknown" }, "execution: vote channel unavailable");
       return { failureHeading: "処刑フロー: 投票チャンネルを取得できませんでした" };
     }
     try {
@@ -481,7 +415,7 @@ const executionOrchestrator = createTwoStagePollRuntime<BotContext, ExecutionFlo
   publishAdmin: async (ctx, flowId, state, text) => {
     const channel = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
     if (channel?.isTextBased()) return postAdminRequest(ctx, channel, flowId, text);
-    ctx.log.error({ flowId, phase: state.phase, guildId: executionFlowTargets.get(flowId)?.guildId ?? "unknown" }, "execution: vote channel unavailable");
+    ctx.log.error({ flowId, phase: state.phase, guildId: executionTargetTracker.get(flowId)?.guildId ?? "unknown" }, "execution: vote channel unavailable");
     return { failureHeading: "処刑フロー: 投票チャンネルを取得できませんでした" };
   },
   disablePoll1: async (ctx, flowId, state) => {
@@ -662,23 +596,13 @@ function actionLabelJa(action: ExecutionAction): string {
   return "BAN";
 }
 
-function durationLabelFromSeconds(sec: number | null): string {
-  if (sec == null) return "";
-  if (sec < 120) return `${sec}秒`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}分`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}時間`;
-  if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}日`;
-  return `${Math.floor(sec / (86400 * 7))}週間`;
-}
-
-/** 監査・キック/BAN/タイムアウト理由・Detecter 通知に渡す日本語の処罰内容（BOT が自動生成） */
 function buildPunishmentDetailJa(state: ExecutionFlowState): string {
   const act = state.resolved_action;
   if (!act) return "処罰";
   if (act === "timeout") {
     const sec = state.duration_seconds;
     if (sec == null) return "タイムアウト";
-    return `タイムアウト（${durationLabelFromSeconds(sec)}）`;
+    return `タイムアウト（${formatDurationLabelJa(sec)}）`;
   }
   if (act === "kick") return "キック";
   return "BAN";
@@ -807,7 +731,7 @@ async function executeApprovedExecution(
   );
   const channel = interaction.channel as TextChannel;
   if (result.ok) {
-    const duration = action === "timeout" ? `（${durationLabelFromSeconds(state.duration_seconds)}）` : "";
+    const duration = action === "timeout" ? `（${formatDurationLabelJa(state.duration_seconds)}）` : "";
     try {
       await channel.send({
         content: `# <@${state.target_id}> を **${actionLabelJa(action)}${duration}** で処刑しました`,

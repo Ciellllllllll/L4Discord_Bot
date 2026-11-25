@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import kuromoji from "kuromoji";
 import type { IpadicToken } from "kuromoji";
 import type pino from "pino";
-import { KATAKANA_ONLY_PATTERN } from "./senryu.constants.js";
+import { KATAKANA_ONLY_PATTERN } from "./senryu.text.js";
 import type { KuromojiToken } from "./senryu.types.js";
 
 const require = createRequire(import.meta.url);

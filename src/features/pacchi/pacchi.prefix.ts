@@ -1,4 +1,4 @@
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import {
   AttachmentBuilder,
   type Message,
@@ -7,7 +7,7 @@ import {
 import { z } from "zod";
 import type { BotContext } from "../../bot/context.js";
 import { isAdmin } from "../../core/permission.js";
-import { readResponseArrayBufferWithLimit } from "../ai/fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../core/http/fetchWithLimits.js";
 import { buildVerifiedPacchiPoem, pacchiVerifiedPoemFailureMessage } from "./pacchi.poem.js";
 import { createPacchiRepositoryForContext } from "./pacchi.repository.js";
 import { formatDuration, RATE_CONFIG } from "./pacchi.reply.js";

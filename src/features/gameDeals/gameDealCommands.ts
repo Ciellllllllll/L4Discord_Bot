@@ -1,27 +1,18 @@
-import { MessageFlags, type ChatInputCommandInteraction, type GuildMember, type SendableChannels } from "discord.js";
+import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import { isAdmin } from "../../core/permission.js";
+import {
+  chunkGameDealItems,
+  configuredGameDealChannelId,
+  fetchGameDealTextChannel,
+  gameDealAllowedRoleMentions,
+  gameDealRoleMention,
+} from "./gameDealDelivery.js";
 import { parseGameStoreLink, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
 import { createGameDealRepository } from "./postgresGameDealRepository.js";
 import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealScanResult } from "./gameDealTypes.js";
-
-function chunkItems(items: GameDealFreeItem[], size = 10): GameDealFreeItem[][] {
-  const chunks: GameDealFreeItem[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-
-function configuredGameDealChannelId(ctx: BotContext): string | null {
-  return ctx.config.GAME_DEAL_CHANNEL_ID?.trim() || null;
-}
-
-function configuredGameDealRoleId(ctx: BotContext): string | null {
-  return ctx.config.GAME_DEAL_NOTIFY_ROLE_ID?.trim() || null;
-}
 
 async function ensureGameDealCommandChannel(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<string | null> {
   const channelId = configuredGameDealChannelId(ctx);
@@ -39,32 +30,16 @@ async function ensureGameDealCommandChannel(interaction: ChatInputCommandInterac
   return channelId;
 }
 
-function gameDealRoleMention(ctx: BotContext): string | undefined {
-  const roleId = configuredGameDealRoleId(ctx);
-  return roleId ? `<@&${roleId}>` : undefined;
-}
-
-function gameDealAllowedMentions(ctx: BotContext): { roles?: string[]; parse: [] } {
-  const roleId = configuredGameDealRoleId(ctx);
-  return roleId ? { roles: [roleId], parse: [] } : { parse: [] };
-}
-
-async function fetchGameDealChannel(interaction: ChatInputCommandInteraction, channelId: string): Promise<SendableChannels | null> {
-  const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
-  if (!channel || !channel.isTextBased() || channel.isDMBased() || !channel.isSendable()) return null;
-  return channel;
-}
-
 async function sendGameDealItemsToChannel(
   interaction: ChatInputCommandInteraction,
   items: GameDealFreeItem[],
   ctx: BotContext,
   channelId: string,
 ): Promise<boolean> {
-  const channel = await fetchGameDealChannel(interaction, channelId);
+  const channel = await fetchGameDealTextChannel(interaction.client, channelId);
   if (!channel) return false;
   const roleMention = gameDealRoleMention(ctx);
-  const allowedMentions = gameDealAllowedMentions(ctx);
+  const allowedMentions = gameDealAllowedRoleMentions(ctx);
   if (roleMention) {
     await channel.send({ content: roleMention, allowedMentions });
   }
@@ -77,7 +52,7 @@ async function sendGameDealItemsToChannel(
     }
     return true;
   }
-  for (const chunk of chunkItems(items)) {
+  for (const chunk of chunkGameDealItems(items)) {
     await channel.send({
       ...componentCardsPayload(chunk.map((item) => item.embed)),
       allowedMentions: { parse: [] },

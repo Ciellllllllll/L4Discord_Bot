@@ -1,23 +1,11 @@
 import type { AppConfig } from "../../core/config.js";
+import { stripOptionalMarkdownFence } from "../../core/text.js";
 import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 import type { ChatMessage } from "../ai/chatTypes.js";
 import { resolveReading } from "./senryu.kuromoji.js";
 import type { KuromojiToken, SenryuCandidate } from "./senryu.types.js";
 
 export type SenryuAiReviewVerdict = "accept" | "reject";
-
-function stripOptionalMarkdownFence(s: string): string {
-  let t = String(s || "").trim();
-  if (t.startsWith("```")) {
-    t = t
-      .replace(/^```[a-zA-Z0-9]*\s*\n?/, "")
-      .replace(/\n?```\s*$/, "")
-      .trim();
-  }
-  return t;
-}
-
-// 単体テスト用
 
 export function parseSenryuAiReviewVerdict(raw: string): SenryuAiReviewVerdict | null {
   const trimmed = stripOptionalMarkdownFence(raw);
@@ -34,22 +22,8 @@ export function parseSenryuAiReviewVerdict(raw: string): SenryuAiReviewVerdict |
   return null;
 }
 
-// kuromoji トークン列のうち検出区間だけを、API 入力向けに短く整形する（Kagome の生 JSON は送らない）。
-
 export function formatKuromojiSpanForAiReview(tokens: KuromojiToken[], candidate: SenryuCandidate): string {
-  const { start, end } = candidate.tokenSpan;
-  const slice = tokens.slice(Math.max(0, start), Math.min(tokens.length, end));
-  const lines = slice.map((t) => {
-    const r = resolveReading(t);
-    const reading = r ?? (t.reading.trim() || t.surface);
-    const pos = t.pos[0] ?? "*";
-    return `${t.surface}\t${reading}\t${pos}`;
-  });
-  return [
-    `候補: ${candidate.formatted}`,
-    "形態素（表層形<TAB>読み/表記<TAB>品詞大分類）:",
-    ...lines,
-  ].join("\n");
+  return [`候補: ${candidate.formatted}`, formatSenryuMorphemeTableForAiReview(tokens, candidate)].join("\n");
 }
 
 export function formatSenryuMorphemeTableForAiReview(tokens: KuromojiToken[], candidate: SenryuCandidate): string {
@@ -106,8 +80,6 @@ function buildSenryuReviewSystemPrompt(): string {
 export type SenryuAiReviewResult =
   | { ok: true; verdict: SenryuAiReviewVerdict; ms: number }
   | { ok: false; err: string };
-
-// 選択中のAI providerで候補を審査する。
 
 export async function reviewSenryuCandidateWithAi(
   config: AppConfig,

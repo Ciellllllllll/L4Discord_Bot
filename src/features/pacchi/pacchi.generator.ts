@@ -72,16 +72,7 @@ function fallbackReply(fixed: () => string, previous: string | undefined): strin
   return previous === "えっと" ? "たぶん" : "えっと";
 }
 
-export function buildPacchiGeneratedReply(
-  repo: PacchiRepositoryLike,
-  guildId: string,
-  mode: "template" | "slot-template" | "learned-pattern" | "mixed",
-  preferWord = false,
-): Promise<string> {
-  return buildPacchiGeneratedReplyAsync(repo, guildId, mode, preferWord);
-}
-
-async function buildPacchiGeneratedReplyAsync(
+export async function buildPacchiGeneratedReply(
   repo: PacchiRepositoryLike,
   guildId: string,
   mode: "template" | "slot-template" | "learned-pattern" | "mixed",

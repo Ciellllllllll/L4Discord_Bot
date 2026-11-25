@@ -1,5 +1,5 @@
 import type { ActionRowBuilder, ButtonBuilder } from "discord.js";
-import type { ComponentCardBuilder } from "../panels/componentCard.js";
+import type { ComponentCardBuilder } from "../../core/componentCard.js";
 
 export type GameDealPlatform = "steam" | "epic";
 

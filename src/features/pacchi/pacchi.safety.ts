@@ -1,6 +1,5 @@
 const urlPattern = /https?:\/\/\S+/i;
 const mentionPattern = /<[@#][!&]?\d+>|<@&\d+>/;
-const customEmojiOnlyPattern = /^(?:\s*<a?:[A-Za-z0-9_~]+:\d+>\s*)+$/;
 const customEmojiPattern = /<a?:[A-Za-z0-9_~]+:\d+>/;
 const codePattern = /```|`[^`]+`/s;
 const personalInfoPattern = /\b\d{3}-\d{4}|\b\d{2,4}-\d{2,4}-\d{3,4}\b|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
@@ -14,7 +13,6 @@ export function isUnsafeForPacchiLearning(content: string): boolean {
   if (urlPattern.test(text)) return true;
   if (mentionPattern.test(text)) return true;
   if (customEmojiPattern.test(text)) return true;
-  if (customEmojiOnlyPattern.test(text)) return true;
   if (codePattern.test(text)) return true;
   if (personalInfoPattern.test(text)) return true;
   if (symbolOnlyPattern.test(text)) return true;

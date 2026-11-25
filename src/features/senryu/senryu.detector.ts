@@ -1,4 +1,4 @@
-import { countAmbiguousInReading, countMora } from "./senryu.counter.js";
+import { countAmbiguousInReading, countMora } from "./senryu.text.js";
 import { isDigitOnlyToken, isSkippableInterwordToken, resolveReading } from "./senryu.kuromoji.js";
 import type { KuromojiToken, SenryuCandidate } from "./senryu.types.js";
 

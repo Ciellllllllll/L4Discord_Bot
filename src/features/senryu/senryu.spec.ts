@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import type { Message } from "discord.js";
-import { countAmbiguousInReading, countMora } from "./senryu.counter.js";
+import {
+  containsDiscordTokens,
+  containsSpoiler,
+  countAmbiguousInReading,
+  countMora,
+  normalizeSenryuText,
+  replySenryu,
+  stripSpoilerMarkers,
+} from "./senryu.text.js";
 import {
   buildSenryuAiReviewUserBlock,
   formatKuromojiSpanForAiReview,
@@ -12,11 +20,8 @@ import {
   pickSenryuCandidate,
   senryuCandidate575MismatchScore,
 } from "./senryu.detector.js";
-import { replySenryu } from "./senryu.reply.js";
 import { senryuCandidateMatchesJsHaiku575 } from "./senryu.jsHaikuVerify.js";
-import { normalizeSenryuText } from "./senryu.normalizer.js";
 import { buildSenryuReviewContextExcerpt } from "./senryu.reviewContext.js";
-import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
 import type { KuromojiToken } from "./senryu.types.js";
 
 function tok(

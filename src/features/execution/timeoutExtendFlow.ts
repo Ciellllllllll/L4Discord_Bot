@@ -1,4 +1,4 @@
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -32,75 +32,43 @@ import { parseTimeoutExtendFlowState } from "./timeoutExtendFlow.types.js";
 import {
   FlowDeadlineTimers,
   type OpenPollFlow,
-  flowTargetLocks,
-  normalizePollStateRevision,
 } from "./flowLifecycle.js";
+import {
+  adminWaitDeadlineMs,
+  buildApprovedAuditReason,
+  createFlowTargetTracker,
+  deletePollFlowMessagesQuietly,
+  disablePollMessage,
+  editPollMessagesStopped,
+  findOpenPollFlowById,
+  formatDurationLabelJa,
+  postPollAdminRequest,
+  type OpenPollFlowRow,
+} from "./pollFlowHelpers.js";
 import { createTwoStagePollRuntime, parsePersistedFlowState, tallyChoices } from "./twoStagePollRuntime.js";
 
-const TIMEOUT_EXTEND_LOCK_NAMESPACE = "timeout-extend";
 const timeoutExtendTimers = new FlowDeadlineTimers<ReturnType<typeof setTimeout>>({ setTimeout, clearTimeout });
-const timeoutExtendFlowTargets = new Map<string, { guildId: string; targetId: string }>();
+const timeoutExtendTargetTracker = createFlowTargetTracker("timeout-extend");
 
-type OpenTimeoutExtendFlowRow = {
-  id: string;
-  guild_id: string;
-  status: string;
-  message_id: string | null;
-  state: unknown;
-  state_revision: number;
-  updated_at: Date;
-};
+type OpenTimeoutExtendFlowRow = OpenPollFlowRow;
 
 function retainTimeoutExtendTarget(flowId: string, guildId: string, targetId: string): boolean {
-  const current = timeoutExtendFlowTargets.get(flowId);
-  if (current) return current.guildId === guildId && current.targetId === targetId;
-  if (!flowTargetLocks.acquire(TIMEOUT_EXTEND_LOCK_NAMESPACE, guildId, targetId)) return false;
-  timeoutExtendFlowTargets.set(flowId, { guildId, targetId });
-  return true;
+  return timeoutExtendTargetTracker.retain(flowId, guildId, targetId);
 }
 
 function releaseTimeoutExtendTarget(flowId: string): void {
-  const target = timeoutExtendFlowTargets.get(flowId);
-  if (!target) return;
-  flowTargetLocks.release(TIMEOUT_EXTEND_LOCK_NAMESPACE, target.guildId, target.targetId);
-  timeoutExtendFlowTargets.delete(flowId);
+  timeoutExtendTargetTracker.release(flowId);
 }
 
-/** プロセス終了時に、このランタイムが保持する延長フローの期限タイマーと対象ロックを解放する。 */
 export async function shutdownTimeoutExtendFlowRuntime(): Promise<void> {
   await timeoutExtendOrchestrator.shutdown();
-}
-
-function teAdminWaitDeadlineMs(updatedAt: Date, waitSeconds: number): number {
-  const updatedAtMs = new Date(updatedAt).getTime();
-  const base = Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now();
-  return base + waitSeconds * 1000;
-}
-
-function parsePollRowState(row: { state: unknown }): TimeoutExtendFlowState | null {
-  return parsePersistedFlowState(row.state, parseTimeoutExtendFlowState);
 }
 
 export async function findOpenTimeoutExtendFlowById(
   ctx: BotContext,
   flowId: string,
 ): Promise<{ row: OpenTimeoutExtendFlowRow; state: TimeoutExtendFlowState } | null> {
-  const row = await ctx.db
-    .selectFrom("polls")
-    .select(["id", "guild_id", "status", "message_id", "state", "state_revision", "updated_at"])
-    .where("id", "=", flowId)
-    .where("kind", "=", TIMEOUT_EXTEND_FLOW_KIND)
-    .where("status", "=", "open")
-    .executeTakeFirst();
-  if (!row) return null;
-  const stateRevision = normalizePollStateRevision(row.state_revision);
-  if (stateRevision === null) {
-    ctx.log.error({ flowId, guildId: row.guild_id, phase: "invalid_state_revision", stateRevision: row.state_revision }, "timeoutExtend: ignoring unsafe flow state revision");
-    return null;
-  }
-  const state = parsePollRowState(row);
-  if (!state) return null;
-  return { row: { ...row, state_revision: stateRevision }, state };
+  return findOpenPollFlowById(ctx, flowId, TIMEOUT_EXTEND_FLOW_KIND, parseTimeoutExtendFlowState, "timeoutExtend");
 }
 
 export async function deleteTeFlowMessagesQuietly(
@@ -109,36 +77,17 @@ export async function deleteTeFlowMessagesQuietly(
   messageIds: string[],
   logLabel: string,
 ): Promise<void> {
-  for (const id of messageIds) {
-    try {
-      const m = await channel.messages.fetch(id);
-      if (m) await m.delete();
-    } catch (err) {
-      ctx.log.warn({ err, id, logLabel }, "timeoutExtend: delete flow message failed");
-    }
-  }
+  await deletePollFlowMessagesQuietly(ctx, channel, messageIds, "timeoutExtend", logLabel);
 }
 
 const TIMEOUT_EXTEND_REASON_BASE = "/タイムアウト延長フロー";
 
 function buildTimeoutExtendAuditReason(approverUserId: string, detailJa: string): string {
-  const text = `${TIMEOUT_EXTEND_REASON_BASE}（${detailJa}）。管理者が承認。`;
-  const suffix = ` approved_by=${approverUserId}`;
-  const full = `${text}${suffix}`;
-  const max = 512;
-  if (full.length <= max) return full;
-  const keep = max - suffix.length;
-  return `${text.slice(0, Math.max(0, keep))}${suffix}`;
+  return buildApprovedAuditReason(TIMEOUT_EXTEND_REASON_BASE, detailJa, approverUserId);
 }
 
-function durationLabelJa(sec: number | null): string {
-  if (sec == null) return "";
-  if (sec < 120) return `${sec}秒`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}分`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}時間`;
-  if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}日`;
-  return `${Math.floor(sec / (86400 * 7))}週間`;
-}
+const teAdminWaitDeadlineMs = adminWaitDeadlineMs;
+const durationLabelJa = formatDurationLabelJa;
 
 function buildPoll1Embed(state: TimeoutExtendFlowState, poll1DeadlineMs: number, pollEnded = false): ComponentCardBuilder {
   const counts = tallyChoices(state.votes_poll1, [...TE_POLL1_KEYS]);
@@ -211,19 +160,7 @@ async function editTeMessagesStopped(
   messages: Array<{ id: string | null | undefined; components: ActionRowBuilder<ButtonBuilder>[] }>,
   heading: string,
 ): Promise<void> {
-  const content = `# **${heading}**`;
-  for (const { id: mid, components } of messages) {
-    if (!mid) continue;
-    try {
-      const m = await channel.messages.fetch(mid);
-      // Components V2 メッセージは content を持てないため、見出しカードへ差し替える
-      await m.edit(m.flags?.has(MessageFlags.IsComponentsV2)
-        ? componentCardsPayload([new ComponentCardBuilder().setDescription(content)], components)
-        : { content, embeds: [], components });
-    } catch (err) {
-      ctx.log.warn({ err, mid }, "timeoutExtend: edit stopped message failed");
-    }
-  }
+  await editPollMessagesStopped(ctx, channel, messages, heading, "timeoutExtend");
 }
 
 export async function abortTeFlow(
@@ -251,17 +188,7 @@ export async function reconcileTimeoutExtendFlows(ctx: BotContext): Promise<void
 }
 
 async function postTeAdminRequest(ctx: BotContext, channel: TextChannel, flowId: string, body: string): Promise<Message | null> {
-  const adminRoleId = ctx.config.ADMIN_ROLE_ID.trim();
-  try {
-    return await channel.send({
-      content: `${body}\n<@&${adminRoleId}>`,
-      components: teApprovalRows(flowId, false),
-      allowedMentions: { roles: [adminRoleId] },
-    });
-  } catch (err) {
-    ctx.log.warn({ err, flowId }, "timeoutExtend: admin request send failed");
-    return null;
-  }
+  return postPollAdminRequest(ctx, channel, flowId, body, teApprovalRows(flowId, false), "timeoutExtend");
 }
 
 async function disableTimeoutExtendPollMessage(
@@ -269,13 +196,7 @@ async function disableTimeoutExtendPollMessage(
   messageId: string | null,
   payload: ReturnType<typeof componentCardsPayload>,
 ): Promise<void> {
-  if (!messageId) return;
-  try {
-    const message = await channel.messages.fetch(messageId).catch(() => null);
-    if (message) await message.edit(payload);
-  } catch {
-    /* UI の無効化失敗は状態確定を巻き戻さない */
-  }
+  await disablePollMessage(channel, messageId, payload);
 }
 
 export function beginTePoll1(ctx: BotContext, flowId: string, guildId: string, state: TimeoutExtendFlowState): Promise<boolean> {
@@ -298,9 +219,7 @@ const timeoutExtendOrchestrator = createTwoStagePollRuntime<BotContext, TimeoutE
   targetId: (state) => state.target_id,
   retainTarget: retainTimeoutExtendTarget,
   releaseTarget: releaseTimeoutExtendTarget,
-  releaseAllTargets: () => {
-    for (const flowId of [...timeoutExtendFlowTargets.keys()]) releaseTimeoutExtendTarget(flowId);
-  },
+  releaseAllTargets: () => timeoutExtendTargetTracker.releaseAll(),
   isAdmin: (ctx, member) => isAdmin(member, ctx.config),
   approvalComponents: (flowId) => teApprovalRows(flowId, true),
   canExecuteFinal: (state) => state.resolved_extend === "extend" || state.resolved_extend === "release",
@@ -343,7 +262,7 @@ const timeoutExtendOrchestrator = createTwoStagePollRuntime<BotContext, TimeoutE
   publishPoll1: async (ctx, flowId, state) => {
     const channel = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
     if (!channel?.isTextBased()) {
-      ctx.log.error({ flowId, phase: state.phase, guildId: timeoutExtendFlowTargets.get(flowId)?.guildId ?? "unknown" }, "timeoutExtend: vote channel unavailable");
+      ctx.log.error({ flowId, phase: state.phase, guildId: timeoutExtendTargetTracker.get(flowId)?.guildId ?? "unknown" }, "timeoutExtend: vote channel unavailable");
       return { failureHeading: "タイムアウト延長フロー: 投票チャンネルを取得できませんでした" };
     }
     try {
@@ -356,7 +275,7 @@ const timeoutExtendOrchestrator = createTwoStagePollRuntime<BotContext, TimeoutE
   publishPoll2: async (ctx, flowId, state) => {
     const channel = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
     if (!channel?.isTextBased()) {
-      ctx.log.error({ flowId, phase: state.phase, guildId: timeoutExtendFlowTargets.get(flowId)?.guildId ?? "unknown" }, "timeoutExtend: vote channel unavailable");
+      ctx.log.error({ flowId, phase: state.phase, guildId: timeoutExtendTargetTracker.get(flowId)?.guildId ?? "unknown" }, "timeoutExtend: vote channel unavailable");
       return { failureHeading: "タイムアウト延長フロー: 投票チャンネルを取得できませんでした" };
     }
     try {
@@ -369,7 +288,7 @@ const timeoutExtendOrchestrator = createTwoStagePollRuntime<BotContext, TimeoutE
   publishAdmin: async (ctx, flowId, state, text) => {
     const channel = (await ctx.client.channels.fetch(state.channel_id).catch(() => null)) as TextChannel | null;
     if (channel?.isTextBased()) return postTeAdminRequest(ctx, channel, flowId, text);
-    ctx.log.error({ flowId, phase: state.phase, guildId: timeoutExtendFlowTargets.get(flowId)?.guildId ?? "unknown" }, "timeoutExtend: vote channel unavailable");
+    ctx.log.error({ flowId, phase: state.phase, guildId: timeoutExtendTargetTracker.get(flowId)?.guildId ?? "unknown" }, "timeoutExtend: vote channel unavailable");
     return { failureHeading: "タイムアウト延長フロー: 投票チャンネルを取得できませんでした" };
   },
   disablePoll1: async (ctx, flowId, state) => {

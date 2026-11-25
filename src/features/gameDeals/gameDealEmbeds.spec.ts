@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { ButtonStyle, ComponentType, type APIButtonComponentWithURL, type APISectionComponent } from "discord.js";
-import { componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import { buildSteamFreeEventEmbed } from "./gameDealEmbeds.js";
 import type { SteamFreeEvent } from "./gameDealTypes.js";
 

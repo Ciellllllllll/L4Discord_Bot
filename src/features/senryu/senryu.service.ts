@@ -11,16 +11,19 @@ import {
 import {
   isChannelMutedBySettings,
   isChannelMutedForSenryu,
-  isDetectionOptedOut,
   muteChannelForSenryuPersisted,
 } from "./senryu.filters.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { buildSenryuAiReviewUserBlock, reviewSenryuCandidateWithAi } from "./senryu.aiReview.js";
 import { buildSenryuReviewContextExcerpt } from "./senryu.reviewContext.js";
 import { senryuCandidateMatchesJsHaiku575 } from "./senryu.jsHaikuVerify.js";
-import { normalizeSenryuText } from "./senryu.normalizer.js";
-import { containsDiscordTokens, containsSpoiler, stripSpoilerMarkers } from "./senryu.regex.js";
-import { replySenryu } from "./senryu.reply.js";
+import {
+  containsDiscordTokens,
+  containsSpoiler,
+  normalizeSenryuText,
+  replySenryu,
+  stripSpoilerMarkers,
+} from "./senryu.text.js";
 import type { SenryuRepository } from "./senryu.repository.js";
 import type { SenryuCandidate } from "./senryu.types.js";
 
@@ -113,10 +116,6 @@ export async function runSenryuPipeline(
   }
   if (await isSenryuChannelMuted(ctx, message)) {
     logSkip("channel_muted");
-    return false;
-  }
-  if (await isDetectionOptedOut(message.guild.id, message.author.id)) {
-    logSkip("user_opted_out");
     return false;
   }
   if (containsDiscordTokens(content)) {

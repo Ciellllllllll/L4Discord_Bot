@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { ButtonStyle, ComponentType, type APIButtonComponentWithURL, type APISectionComponent } from "discord.js";
-import { componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import { buildEpicFreeEmbed } from "./epicFreeEmbeds.js";
 import type { EpicFreeCandidate } from "./epicFreeTypes.js";
 

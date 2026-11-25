@@ -17,13 +17,13 @@ function scanSummary(result: Awaited<ReturnType<typeof scanLolWatcher>>): string
   return `${base}\nエラー: ${result.errors.slice(0, 5).join(" | ")}`.slice(0, 1900);
 }
 
-function ensureLolWatcherAdmin(
+async function ensureLolWatcherAdmin(
   interaction: ChatInputCommandInteraction,
   ctx: BotContext,
   member: GuildMember | null,
-): boolean {
+): Promise<boolean> {
   if (member && isAdmin(member, ctx.config)) return true;
-  void interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
+  await interaction.reply({ content: "権限がありません。", flags: MessageFlags.Ephemeral });
   return false;
 }
 
@@ -33,11 +33,11 @@ export async function handleLolWatchCommand(
   member: GuildMember | null,
 ): Promise<void> {
   const subcommand = interaction.options.getSubcommand(true);
-  if ((subcommand === "list" || subcommand === "scan_now") && !ensureLolWatcherAdmin(interaction, ctx, member)) return;
+  if ((subcommand === "list" || subcommand === "scan_now") && !(await ensureLolWatcherAdmin(interaction, ctx, member))) return;
   if (!ctx.config.DEEPLOL_WATCHER_ENABLED) {
     const message = "lol watcher は無効です。DEEPLOL_WATCHER_ENABLED=true で有効化してください。";
     if (subcommand === "scan_now") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await interaction.editReply(message);
     } else {
       await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
@@ -98,7 +98,7 @@ export async function handleLolWatchCommand(
     return;
   }
   if (subcommand === "scan_now") {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const controller = getLolWatcherController();
     if (controller?.isRunning()) {
       await interaction.editReply("lol watcher は実行中です。");

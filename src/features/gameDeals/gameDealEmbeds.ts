@@ -1,13 +1,13 @@
-import { ComponentCardBuilder } from "../panels/componentCard.js";
+import { ComponentCardBuilder } from "../../core/componentCard.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
 } from "discord.js";
+import { EPIC_GAMES_STORE_LOGO_URL } from "../epic/epicFreeEmbeds.js";
 import type { GameDealSubscriptionHit, SteamFreeEvent } from "./gameDealTypes.js";
 
-export const EPIC_GAMES_STORE_LOGO_URL =
-  "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Epic_Games_Store_logo_2023_vertical_white.svg/330px-Epic_Games_Store_logo_2023_vertical_white.svg.png";
+export { EPIC_GAMES_STORE_LOGO_URL };
 export const STEAM_LOGO_URL =
   "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/330px-Steam_icon_logo.svg.png";
 

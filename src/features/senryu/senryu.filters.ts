@@ -36,7 +36,3 @@ export async function muteChannelForSenryuPersisted(
   await upsertGuildSettingsData(db, guildId, { senryu_muted_channel_ids: next });
   return next;
 }
-
-export async function isDetectionOptedOut(_guildId: string, _userId: string): Promise<boolean> {
-  return false;
-}
