@@ -2,9 +2,8 @@ name: Deploy release to VPS
 
 on:
   push:
-    branches:
-      - release
-  workflow_dispatch:
+    tags:
+      - "v*.*.*"
 
 concurrency:
   group: deploy-release
@@ -20,15 +19,37 @@ jobs:
       image: ${{ steps.image.outputs.name }}
 
     steps:
-      - name: Require release branch
-        if: github.ref != 'refs/heads/release'
+      - name: Validate release tag format
         shell: bash
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          echo "This workflow must run from the release branch." >&2
-          exit 1
+          if [[ "$RELEASE_REF" != refs/tags/* ]]; then
+            echo "This workflow must run from a version tag (e.g. v2.2.0)." >&2
+            exit 1
+          fi
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$RELEASE_TAG' does not match vX.Y.Z format." >&2
+            exit 1
+          fi
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require tag on master branch
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/master:refs/remotes/origin/master"
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/master; then
+            echo "Tag '$RELEASE_TAG' ($RELEASE_SHA) is not on the master branch." >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -81,6 +102,7 @@ jobs:
     env:
       BOT_IMAGE: ${{ needs.publish.outputs.image }}:${{ github.sha }}
       RELEASE_SHA: ${{ github.sha }}
+      RELEASE_TAG: ${{ github.ref_name }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -91,7 +113,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          envs: BOT_IMAGE,RELEASE_SHA,GHCR_TOKEN
+          envs: BOT_IMAGE,RELEASE_SHA,RELEASE_TAG,GHCR_TOKEN
           script: |
             set -Eeuo pipefail
 
@@ -101,6 +123,10 @@ jobs:
             fi
             if ! printf '%s\n' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
               echo "Unexpected release SHA: $RELEASE_SHA" >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "Unexpected release tag: $RELEASE_TAG" >&2
               exit 1
             fi
             test "${BOT_IMAGE##*:}" = "$RELEASE_SHA"
@@ -126,17 +152,20 @@ jobs:
             }
 
             check_release_sha() {
-              run_git fetch origin release
-              fetched_release_sha=$(run_git rev-parse FETCH_HEAD)
-              if [ "$fetched_release_sha" != "$RELEASE_SHA" ]; then
-                echo "release moved to $fetched_release_sha; refusing stale deployment for $RELEASE_SHA" >&2
+              run_git fetch origin "+refs/heads/master:refs/remotes/origin/master" "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+              fetched_tag_sha=$(run_git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
+              if [ "$fetched_tag_sha" != "$RELEASE_SHA" ]; then
+                echo "tag $RELEASE_TAG points to $fetched_tag_sha; refusing deployment for $RELEASE_SHA" >&2
+                exit 1
+              fi
+              if ! run_git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/master; then
+                echo "commit $RELEASE_SHA ($RELEASE_TAG) is not on origin/master; refusing deployment" >&2
                 exit 1
               fi
             }
 
             check_release_sha
-            run_git checkout release
-            run_git reset --hard "$RELEASE_SHA"
+            run_git checkout --force --detach "$RELEASE_SHA"
 
             image_env=/opt/L4_DiscordBot/.deploy-bot-image.env
             printf 'BOT_IMAGE=%s\n' "$BOT_IMAGE" > "$image_env"
