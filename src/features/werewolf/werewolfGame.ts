@@ -1,8 +1,6 @@
-import { ComponentCardBuilder, componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import {
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   ChannelType,
   MessageFlags,
   PermissionFlagsBits,
@@ -17,7 +15,6 @@ import {
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import type { BotContext } from "../../bot/context.js";
-import { nowIso } from "../../core/db/nowIso.js";
 import { isAdmin } from "../../core/permission.js";
 import {
   ROLE_LABELS,
@@ -27,7 +24,6 @@ import {
   canUseRoleThreadAction,
   checkWinner,
   createInitialWerewolfState,
-  parseWerewolfState,
   resolveMajorityRandom,
   resolveVotes,
   type WerewolfPhase,
@@ -37,9 +33,34 @@ import {
   type WerewolfThreadRole,
   type WerewolfWinner,
 } from "./werewolfState.js";
+import {
+  findOpenWerewolfGameForChannel,
+  findWerewolfGameById,
+  insertWerewolfGame,
+  listActiveWerewolfGames,
+  markWerewolfEnded,
+  saveWerewolfState,
+  type LoadedWerewolfGame,
+} from "./werewolfRepository.js";
+import {
+  WEREWOLF_BUTTON_PREFIX,
+  WEREWOLF_SELECT_PREFIX,
+  buildDawnMessage,
+  buildLobbyRows,
+  buildRoleThreadIntro,
+  buildVoteResultMessage,
+  errorCard,
+  formatMentions,
+  lobbyCard,
+  nightPlaceholder,
+  nightPrompt,
+  parseWerewolfButtonId,
+  parseWerewolfSelectId,
+  statusCard,
+  truncateSelectLabel,
+  werewolfCard,
+} from "./werewolfUi.js";
 
-const BUTTON_PREFIX = "ww:";
-const SELECT_PREFIX = "wws:";
 const NIGHT_MS = 2 * 60_000;
 const DAY_MS = 5 * 60_000;
 const VOTE_MS = 2 * 60_000;
@@ -50,21 +71,26 @@ const REQUIRED_PERMISSIONS = [
   PermissionFlagsBits.ManageThreads,
 ];
 
-type WerewolfGameRow = {
-  id: string;
-  guild_id: string;
-  channel_id: string;
-  host_id: string;
-  phase: string;
-  state: unknown;
-};
-
-type LoadedGame = {
-  row: WerewolfGameRow;
-  state: WerewolfState;
-};
-
 const timers = new Map<string, NodeJS.Timeout>();
+
+function replyError(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | StringSelectMenuInteraction,
+  message: string,
+  suppressMentions = false,
+) {
+  return interaction.reply({
+    ...componentCardsPayload([errorCard(message)]),
+    flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    ...(suppressMentions ? { allowedMentions: { parse: [] as const } } : {}),
+  });
+}
+
+function replyStatus(interaction: ButtonInteraction | StringSelectMenuInteraction, message: string) {
+  return interaction.reply({
+    ...componentCardsPayload([statusCard(message)]),
+    flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+  });
+}
 
 export async function handleWerewolfCreate(
   interaction: ChatInputCommandInteraction,
@@ -72,69 +98,53 @@ export async function handleWerewolfCreate(
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("権限がありません。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "権限がありません。");
     return;
   }
   const channel = interaction.channel;
   if (!channel || channel.isDMBased() || !channel.isTextBased() || channel.isThread()) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("人狼チャンネルで実行してください。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "人狼チャンネルで実行してください。");
     return;
   }
   if (ctx.config.BOT_PROFILE === "production") {
     const allowedChannelId = ctx.config.WEREWOLF_CHANNEL_ID?.trim();
     if (!allowedChannelId) {
-      await interaction.reply({
-        ...componentCardsPayload([errorEmbed("production では WEREWOLF_CHANNEL_ID を設定してください。")]),
-        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
-      });
+      await replyError(interaction, "production では WEREWOLF_CHANNEL_ID を設定してください。");
       return;
     }
     if (interaction.channelId !== allowedChannelId) {
-      await interaction.reply({
-        ...componentCardsPayload([errorEmbed(`このコマンドは <#${allowedChannelId}> でのみ使用できます。`)]),
-        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
-        allowedMentions: { parse: [] },
-      });
+      await replyError(interaction, `このコマンドは <#${allowedChannelId}> でのみ使用できます。`, true);
       return;
     }
   }
   if (!hasWerewolfPermissions(member.guild.members.me, channel as TextChannel)) {
-    await interaction.reply({
-      ...componentCardsPayload([errorEmbed("BOTにプライベートスレッド作成・スレッド送信・スレッド管理権限が必要です。")]),
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
-    });
+    await replyError(interaction, "BOTにプライベートスレッド作成・スレッド送信・スレッド管理権限が必要です。");
     return;
   }
 
-  const existing = await findOpenGameForChannel(ctx, interaction.guildId!, interaction.channelId);
+  const existing = await findOpenWerewolfGameForChannel(ctx.db, interaction.guildId!, interaction.channelId);
   if (existing) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("このチャンネルには進行中の人狼セッションがあります。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "このチャンネルには進行中の人狼セッションがあります。");
     return;
   }
 
   const id = randomUUID();
   const state = createInitialWerewolfState({ channelId: interaction.channelId, hostId: interaction.user.id });
-  await ctx.db
-    .insertInto("werewolf_games")
-    .values({
-      id,
-      guild_id: interaction.guildId!,
-      channel_id: interaction.channelId,
-      host_id: interaction.user.id,
-      phase: state.phase,
-      state: JSON.stringify(state) as unknown as Record<string, unknown>,
-      created_at: nowIso() as unknown as Date,
-      updated_at: nowIso() as unknown as Date,
-    })
-    .execute();
+  await insertWerewolfGame(ctx.db, {
+    id,
+    guildId: interaction.guildId!,
+    channelId: interaction.channelId,
+    hostId: interaction.user.id,
+    state,
+  });
 
   await interaction.reply({
-    ...componentCardsPayload([lobbyEmbed(state, false)], buildLobbyRows(id, false)),
+    ...componentCardsPayload([lobbyCard(state, false)], buildLobbyRows(id, false)),
     allowedMentions: { parse: [] },
   });
   const message = await interaction.fetchReply();
   state.lobbyMessageId = message.id;
-  await saveState(ctx, id, state);
+  await saveWerewolfState(ctx.db, id, state);
 }
 
 export async function handleWerewolfEnd(
@@ -143,36 +153,36 @@ export async function handleWerewolfEnd(
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("権限がありません。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "権限がありません。");
     return;
   }
-  const game = await findOpenGameForChannel(ctx, interaction.guildId!, interaction.channelId);
+  const game = await findOpenWerewolfGameForChannel(ctx.db, interaction.guildId!, interaction.channelId);
   if (!game) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("終了対象のゲームがありません。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "終了対象のゲームがありません。");
     return;
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await finishGame(ctx, game.row.id, game.state, "管理者がゲームを終了しました。", undefined);
-  await interaction.editReply({ ...componentCardsPayload([statusEmbed("このチャンネルの人狼セッションを終了しました。")]) });
+  await interaction.editReply({ ...componentCardsPayload([statusCard("このチャンネルの人狼セッションを終了しました。")]) });
 }
 
 export async function handleWerewolfButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  if (!interaction.customId.startsWith(BUTTON_PREFIX)) return false;
-  const parsed = parseButtonId(interaction.customId);
+  if (!interaction.customId.startsWith(WEREWOLF_BUTTON_PREFIX)) return false;
+  const parsed = parseWerewolfButtonId(interaction.customId);
   if (!parsed) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("無効な操作です。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "無効な操作です。");
     return true;
   }
-  const game = await findGameById(ctx, parsed.sessionId);
+  const game = await findWerewolfGameById(ctx.db, parsed.sessionId);
   if (!game || game.row.guild_id !== interaction.guildId) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("このボタンは期限切れです。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "このボタンは期限切れです。");
     return true;
   }
   if (parsed.action === "join") return handleJoin(interaction, ctx, game);
   if (parsed.action === "leave") return handleLeave(interaction, ctx, game);
   if (parsed.action === "start") return handleStart(interaction, ctx, game);
   if (parsed.action === "cancel") return handleCancel(interaction, ctx, game);
-  await interaction.reply({ ...componentCardsPayload([errorEmbed("無効な操作です。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await replyError(interaction, "無効な操作です。");
   return true;
 }
 
@@ -180,82 +190,73 @@ export async function handleWerewolfStringSelect(
   interaction: StringSelectMenuInteraction,
   ctx: BotContext,
 ): Promise<boolean> {
-  if (!interaction.customId.startsWith(SELECT_PREFIX)) return false;
-  const parsed = parseSelectId(interaction.customId);
+  if (!interaction.customId.startsWith(WEREWOLF_SELECT_PREFIX)) return false;
+  const parsed = parseWerewolfSelectId(interaction.customId);
   if (!parsed) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("無効な操作です。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "無効な操作です。");
     return true;
   }
-  const game = await findGameById(ctx, parsed.sessionId);
+  const game = await findWerewolfGameById(ctx.db, parsed.sessionId);
   const targetUserId = interaction.values[0];
   if (!game || game.row.guild_id !== interaction.guildId || !targetUserId) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("この操作は期限切れです。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "この操作は期限切れです。");
     return true;
   }
   if (parsed.action === "vote") return handleVote(interaction, ctx, game, targetUserId);
   if (parsed.action === "night") return handleNightAction(interaction, ctx, game, parsed.role, targetUserId);
-  await interaction.reply({ ...componentCardsPayload([errorEmbed("無効な操作です。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await replyError(interaction, "無効な操作です。");
   return true;
 }
 
 export async function reconcileWerewolfGames(ctx: BotContext): Promise<void> {
-  const rows = await ctx.db
-    .selectFrom("werewolf_games")
-    .select(["id", "guild_id", "channel_id", "host_id", "phase", "state"])
-    .where("phase", "!=", "ended")
-    .execute();
-  for (const row of rows) {
-    const state = parseWerewolfState(row.state);
-    if (!state || !state.deadlineAt) continue;
+  for (const { row, state } of await listActiveWerewolfGames(ctx.db)) {
+    if (!state.deadlineAt) continue;
     scheduleDeadline(ctx, row.id, state);
   }
 }
 
-async function handleJoin(interaction: ButtonInteraction, ctx: BotContext, game: LoadedGame): Promise<boolean> {
+async function handleJoin(interaction: ButtonInteraction, ctx: BotContext, game: LoadedWerewolfGame): Promise<boolean> {
   if (!validatePublicInteraction(interaction, game.state, "lobby")) return replyRejected(interaction);
   if (!game.state.participants.includes(interaction.user.id)) {
     game.state.participants.push(interaction.user.id);
-    await saveState(ctx, game.row.id, game.state);
+    await saveWerewolfState(ctx.db, game.row.id, game.state);
   }
   await updateLobbyMessage(interaction, game.row.id, game.state);
-  await interaction.reply({ ...componentCardsPayload([statusEmbed("参加しました。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await replyStatus(interaction, "参加しました。");
   return true;
 }
 
-async function handleLeave(interaction: ButtonInteraction, ctx: BotContext, game: LoadedGame): Promise<boolean> {
+async function handleLeave(interaction: ButtonInteraction, ctx: BotContext, game: LoadedWerewolfGame): Promise<boolean> {
   if (!validatePublicInteraction(interaction, game.state, "lobby")) return replyRejected(interaction);
   game.state.participants = game.state.participants.filter((id) => id !== interaction.user.id);
-  await saveState(ctx, game.row.id, game.state);
+  await saveWerewolfState(ctx.db, game.row.id, game.state);
   await updateLobbyMessage(interaction, game.row.id, game.state);
-  await interaction.reply({ ...componentCardsPayload([statusEmbed("参加を取り消しました。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await replyStatus(interaction, "参加を取り消しました。");
   return true;
 }
 
-async function handleStart(interaction: ButtonInteraction, ctx: BotContext, game: LoadedGame): Promise<boolean> {
+async function handleStart(interaction: ButtonInteraction, ctx: BotContext, game: LoadedWerewolfGame): Promise<boolean> {
   if (!validatePublicInteraction(interaction, game.state, "lobby")) return replyRejected(interaction);
   const member = interaction.member && "roles" in interaction.member ? (interaction.member as GuildMember) : null;
   if (interaction.user.id !== game.state.hostId && (!member || !isAdmin(member, ctx.config))) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("開始できるのはホストまたは管理者だけです。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "開始できるのはホストまたは管理者だけです。");
     return true;
   }
   const allowSmallGame = ctx.config.BOT_PROFILE === "debug";
   if (!allowSmallGame && game.state.participants.length < 5) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("人狼は5人以上で開始できます。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "人狼は5人以上で開始できます。");
     return true;
   }
   if (game.state.participants.length > 25) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("初回実装では25人まで開始できます。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "初回実装では25人まで開始できます。");
     return true;
   }
   const channel = await fetchTextChannel(ctx, game.row.channel_id);
   if (!channel || !hasWerewolfPermissions(interaction.guild?.members.me ?? null, channel)) {
-    await markEnded(ctx, game.row.id, { ...game.state, phase: "ended" });
+    await markWerewolfEnded(ctx.db, game.row.id, { ...game.state, phase: "ended" });
     await deleteLobbyMessage(ctx, game.state);
-    await interaction.reply({
-      ...componentCardsPayload([errorEmbed("BOTに必要なスレッド権限がないため、人狼セッションを中止しました。")]),
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
-    });
-    await channel?.send({ ...componentCardsPayload([errorEmbed("BOTに必要なスレッド権限がないため、人狼セッションを中止しました。")]) }).catch(() => undefined);
+    await replyError(interaction, "BOTに必要なスレッド権限がないため、人狼セッションを中止しました。");
+    await channel?.send({ ...componentCardsPayload([errorCard("BOTに必要なスレッド権限がないため、人狼セッションを中止しました。")]) }).catch(() => undefined);
     return true;
   }
 
@@ -274,18 +275,18 @@ async function handleStart(interaction: ButtonInteraction, ctx: BotContext, game
     await createRoleThreads(ctx, channel, game.row.id, state);
   } catch (err) {
     ctx.log.error({ err, sessionId: game.row.id }, "werewolf: role thread creation failed");
-    await markEnded(ctx, game.row.id, { ...state, phase: "ended" });
+    await markWerewolfEnded(ctx.db, game.row.id, { ...state, phase: "ended" });
     await deleteLobbyMessage(ctx, state);
-    await channel.send({ ...componentCardsPayload([errorEmbed("役職スレッドの作成に失敗したため、人狼セッションを中止しました。")]) }).catch(() => undefined);
-    await interaction.editReply({ ...componentCardsPayload([errorEmbed("役職スレッドの作成に失敗しました。")]) });
+    await channel.send({ ...componentCardsPayload([errorCard("役職スレッドの作成に失敗したため、人狼セッションを中止しました。")]) }).catch(() => undefined);
+    await interaction.editReply({ ...componentCardsPayload([errorCard("役職スレッドの作成に失敗しました。")]) });
     return true;
   }
 
-  await saveState(ctx, game.row.id, state);
+  await saveWerewolfState(ctx.db, game.row.id, state);
   await deleteLobbyMessage(ctx, state);
   await channel.send({
     ...componentCardsPayload([
-      werewolfEmbed(
+      werewolfCard(
         "人狼ゲーム開始",
         [
           `参加者: ${formatMentions(state.players.map((p) => p.userId))}`,
@@ -297,26 +298,26 @@ async function handleStart(interaction: ButtonInteraction, ctx: BotContext, game
   });
   await postNightUis(ctx, game.row.id, state);
   scheduleDeadline(ctx, game.row.id, state);
-  await interaction.editReply({ ...componentCardsPayload([statusEmbed("ゲームを開始しました。")]) });
+  await interaction.editReply({ ...componentCardsPayload([statusCard("ゲームを開始しました。")]) });
   return true;
 }
 
-async function handleCancel(interaction: ButtonInteraction, ctx: BotContext, game: LoadedGame): Promise<boolean> {
+async function handleCancel(interaction: ButtonInteraction, ctx: BotContext, game: LoadedWerewolfGame): Promise<boolean> {
   if (!validatePublicInteraction(interaction, game.state, "lobby")) return replyRejected(interaction);
   const member = interaction.member && "roles" in interaction.member ? (interaction.member as GuildMember) : null;
   if (interaction.user.id !== game.state.hostId && (!member || !isAdmin(member, ctx.config))) {
-    await interaction.reply({ ...componentCardsPayload([errorEmbed("中止できるのはホストまたは管理者だけです。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    await replyError(interaction, "中止できるのはホストまたは管理者だけです。");
     return true;
   }
   await finishGame(ctx, game.row.id, game.state, "募集を中止しました。", undefined);
-  await interaction.reply({ ...componentCardsPayload([statusEmbed("募集を中止しました。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await replyStatus(interaction, "募集を中止しました。");
   return true;
 }
 
 async function handleVote(
   interaction: StringSelectMenuInteraction,
   ctx: BotContext,
-  game: LoadedGame,
+  game: LoadedWerewolfGame,
   targetUserId: string,
 ): Promise<boolean> {
   if (!validatePublicInteraction(interaction, game.state, "voting")) return replyRejected(interaction);
@@ -324,8 +325,8 @@ async function handleVote(
   const target = game.state.players.find((p) => p.userId === targetUserId);
   if (!voter?.alive || !target?.alive) return replyRejected(interaction);
   game.state.votes[interaction.user.id] = targetUserId;
-  await saveState(ctx, game.row.id, game.state);
-  await interaction.reply({ ...componentCardsPayload([statusEmbed("投票を受け付けました。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await saveWerewolfState(ctx.db, game.row.id, game.state);
+  await replyStatus(interaction, "投票を受け付けました。");
   if (alivePlayers(game.state).every((p) => game.state.votes[p.userId])) {
     await finalizeVoting(ctx, game.row.id);
   }
@@ -335,7 +336,7 @@ async function handleVote(
 async function handleNightAction(
   interaction: StringSelectMenuInteraction,
   ctx: BotContext,
-  game: LoadedGame,
+  game: LoadedWerewolfGame,
   role: WerewolfThreadRole | null,
   targetUserId: string,
 ): Promise<boolean> {
@@ -353,14 +354,14 @@ async function handleNightAction(
   if (role === "werewolf") game.state.nightActions.attack[interaction.user.id] = targetUserId;
   if (role === "seer") game.state.nightActions.inspect[interaction.user.id] = targetUserId;
   if (role === "knight") game.state.nightActions.guard[interaction.user.id] = targetUserId;
-  await saveState(ctx, game.row.id, game.state);
-  await interaction.reply({ ...componentCardsPayload([statusEmbed("夜行動を受け付けました。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await saveWerewolfState(ctx.db, game.row.id, game.state);
+  await replyStatus(interaction, "夜行動を受け付けました。");
 
   if (role === "seer") {
     const target = game.state.players.find((p) => p.userId === targetUserId);
     await (interaction.channel as ThreadChannel | null)?.send({
       ...componentCardsPayload([
-        werewolfEmbed(
+        werewolfCard(
           "占い結果",
           `<@${interaction.user.id}> の占い結果: <@${targetUserId}> は ${target?.role === "werewolf" ? "人狼" : "人狼ではありません"}。`,
         ),
@@ -380,7 +381,7 @@ async function createRoleThreads(
   sessionId: string,
   state: WerewolfState,
 ): Promise<void> {
-  await channel.send({ ...componentCardsPayload([werewolfEmbed("役職スレッド作成", "役職専用プライベートスレッドを作成します。")]), allowedMentions: { parse: [] } });
+  await channel.send({ ...componentCardsPayload([werewolfCard("役職スレッド作成", "役職専用プライベートスレッドを作成します。")]), allowedMentions: { parse: [] } });
   for (const role of THREAD_ROLES) {
     const members = state.players.filter((p) => p.role === role).map((p) => p.userId);
     if (members.length === 0) continue;
@@ -399,7 +400,7 @@ async function createRoleThreads(
     state.rolePrivateThreadIds[role] = thread.id;
     state.roleThreadMembersByRole[role] = members;
     await thread.send({
-      ...componentCardsPayload([werewolfEmbed(`${ROLE_THREAD_LABELS[role]}スレッド`, buildRoleThreadIntro(role, members))]),
+      ...componentCardsPayload([werewolfCard(`${ROLE_THREAD_LABELS[role]}スレッド`, buildRoleThreadIntro(role, members))]),
       allowedMentions: { users: members },
     });
   }
@@ -411,24 +412,23 @@ async function postNightUis(ctx: BotContext, sessionId: string, state: WerewolfS
     if (!threadId) continue;
     const thread = await fetchThread(ctx, threadId);
     if (!thread) continue;
-    const alive = alivePlayers(state);
-    const options = await buildPlayerSelectOptions(ctx, state.werewolfChannelId, alive);
+    const options = await buildPlayerSelectOptions(ctx, state.werewolfChannelId, alivePlayers(state));
     if (options.length === 0) continue;
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId(`${SELECT_PREFIX}night:${role}:${sessionId}`)
+        .setCustomId(`${WEREWOLF_SELECT_PREFIX}night:${role}:${sessionId}`)
         .setPlaceholder(nightPlaceholder(role))
         .addOptions(options.slice(0, 25)),
     );
     await thread.send({
-      ...componentCardsPayload([werewolfEmbed(`夜フェーズ ${state.dayNumber}日目`, nightPrompt(role))], [row]),
+      ...componentCardsPayload([werewolfCard(`夜フェーズ ${state.dayNumber}日目`, nightPrompt(role))], [row]),
       allowedMentions: { parse: [] },
     }).catch((err) => ctx.log.warn({ err, sessionId, role }, "werewolf: post night UI failed"));
   }
 }
 
 async function finalizeNight(ctx: BotContext, sessionId: string): Promise<void> {
-  const game = await findGameById(ctx, sessionId);
+  const game = await findWerewolfGameById(ctx.db, sessionId);
   if (!game || game.state.phase !== "night") return;
   const state = game.state;
   clearDeadline(sessionId);
@@ -451,42 +451,41 @@ async function finalizeNight(ctx: BotContext, sessionId: string): Promise<void> 
   }
   state.phase = "day_discussion";
   state.deadlineAt = new Date(Date.now() + DAY_MS).toISOString();
-  await saveState(ctx, sessionId, state);
+  await saveWerewolfState(ctx.db, sessionId, state);
   const channel = await fetchTextChannel(ctx, state.werewolfChannelId);
   await channel?.send({
-    ...componentCardsPayload([werewolfEmbed("夜明け", `${buildDawnMessage(deaths)}\n昼議論を開始します。5分後に投票へ移ります。`)]),
+    ...componentCardsPayload([werewolfCard("夜明け", `${buildDawnMessage(deaths)}\n昼議論を開始します。5分後に投票へ移ります。`)]),
     allowedMentions: { parse: [] },
   }).catch(() => undefined);
   scheduleDeadline(ctx, sessionId, state);
 }
 
 async function startVoting(ctx: BotContext, sessionId: string): Promise<void> {
-  const game = await findGameById(ctx, sessionId);
+  const game = await findWerewolfGameById(ctx.db, sessionId);
   if (!game || game.state.phase !== "day_discussion") return;
   const state = game.state;
   clearDeadline(sessionId);
   state.phase = "voting";
   state.votes = {};
   state.deadlineAt = new Date(Date.now() + VOTE_MS).toISOString();
-  await saveState(ctx, sessionId, state);
-  const alive = alivePlayers(state);
-  const options = await buildPlayerSelectOptions(ctx, state.werewolfChannelId, alive);
+  await saveWerewolfState(ctx.db, sessionId, state);
+  const options = await buildPlayerSelectOptions(ctx, state.werewolfChannelId, alivePlayers(state));
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId(`${SELECT_PREFIX}vote:${sessionId}`)
+      .setCustomId(`${WEREWOLF_SELECT_PREFIX}vote:${sessionId}`)
       .setPlaceholder("処刑投票の対象を選択")
       .addOptions(options.slice(0, 25)),
   );
   const channel = await fetchTextChannel(ctx, state.werewolfChannelId);
   await channel?.send({
-    ...componentCardsPayload([werewolfEmbed("投票開始", "2分以内に処刑対象を選択してください。")], [row]),
+    ...componentCardsPayload([werewolfCard("投票開始", "2分以内に処刑対象を選択してください。")], [row]),
     allowedMentions: { parse: [] },
   }).catch(() => undefined);
   scheduleDeadline(ctx, sessionId, state);
 }
 
 async function finalizeVoting(ctx: BotContext, sessionId: string): Promise<void> {
-  const game = await findGameById(ctx, sessionId);
+  const game = await findWerewolfGameById(ctx.db, sessionId);
   if (!game || game.state.phase !== "voting") return;
   clearDeadline(sessionId);
   const state = game.state;
@@ -509,10 +508,10 @@ async function finalizeVoting(ctx: BotContext, sessionId: string): Promise<void>
   state.votes = {};
   state.nightActions = { attack: {}, inspect: {}, guard: {} };
   state.deadlineAt = new Date(Date.now() + NIGHT_MS).toISOString();
-  await saveState(ctx, sessionId, state);
+  await saveWerewolfState(ctx.db, sessionId, state);
   const channel = await fetchTextChannel(ctx, state.werewolfChannelId);
   await channel?.send({
-    ...componentCardsPayload([werewolfEmbed("投票結果", `${buildVoteResultMessage(executed)}\n夜フェーズを開始します。`)]),
+    ...componentCardsPayload([werewolfCard("投票結果", `${buildVoteResultMessage(executed)}\n夜フェーズを開始します。`)]),
     allowedMentions: { parse: [] },
   }).catch(() => undefined);
   await postNightUis(ctx, sessionId, state);
@@ -530,7 +529,7 @@ async function finishGame(
   state.phase = "ended";
   state.deadlineAt = null;
   if (winner) state.winner = winner;
-  await markEnded(ctx, sessionId, state);
+  await markWerewolfEnded(ctx.db, sessionId, state);
   await deleteLobbyMessage(ctx, state);
   const channel = await fetchTextChannel(ctx, state.werewolfChannelId);
   const lines = [publicMessage];
@@ -541,7 +540,7 @@ async function finishGame(
       lines.push(`- <@${player.userId}>: ${ROLE_LABELS[player.role]}${player.alive ? "" : "（死亡）"}`);
     }
   }
-  await channel?.send({ ...componentCardsPayload([werewolfEmbed("人狼ゲーム終了", lines.join("\n"))]), allowedMentions: { parse: [] } }).catch(() => undefined);
+  await channel?.send({ ...componentCardsPayload([werewolfCard("人狼ゲーム終了", lines.join("\n"))]), allowedMentions: { parse: [] } }).catch(() => undefined);
   await archiveRoleThreads(ctx, state);
 }
 
@@ -559,7 +558,7 @@ async function archiveRoleThreads(ctx: BotContext, state: WerewolfState): Promis
 function scheduleDeadline(ctx: BotContext, sessionId: string, state: WerewolfState): void {
   clearDeadline(sessionId);
   if (!state.deadlineAt || state.phase === "lobby" || state.phase === "ended") return;
-  const delay = Math.max(0, Date.parse(state.deadlineAt) - Date.now());
+  const delayMs = Math.max(0, Date.parse(state.deadlineAt) - Date.now());
   const timer = setTimeout(() => {
     const task = state.phase === "night"
       ? finalizeNight(ctx, sessionId)
@@ -569,7 +568,7 @@ function scheduleDeadline(ctx: BotContext, sessionId: string, state: WerewolfSta
           ? finalizeVoting(ctx, sessionId)
           : Promise.resolve();
     void task.catch((err) => ctx.log.error({ err, sessionId, phase: state.phase }, "werewolf: deadline task failed"));
-  }, delay);
+  }, delayMs);
   timers.set(sessionId, timer);
 }
 
@@ -577,49 +576,6 @@ function clearDeadline(sessionId: string): void {
   const timer = timers.get(sessionId);
   if (timer) clearTimeout(timer);
   timers.delete(sessionId);
-}
-
-async function findOpenGameForChannel(ctx: BotContext, guildId: string, channelId: string): Promise<LoadedGame | null> {
-  const row = await ctx.db
-    .selectFrom("werewolf_games")
-    .select(["id", "guild_id", "channel_id", "host_id", "phase", "state"])
-    .where("guild_id", "=", guildId)
-    .where("channel_id", "=", channelId)
-    .where("phase", "!=", "ended")
-    .executeTakeFirst();
-  return normalizeLoadedRow(row);
-}
-
-async function findGameById(ctx: BotContext, sessionId: string): Promise<LoadedGame | null> {
-  const row = await ctx.db
-    .selectFrom("werewolf_games")
-    .select(["id", "guild_id", "channel_id", "host_id", "phase", "state"])
-    .where("id", "=", sessionId)
-    .executeTakeFirst();
-  return normalizeLoadedRow(row);
-}
-
-function normalizeLoadedRow(row: WerewolfGameRow | undefined): LoadedGame | null {
-  if (!row) return null;
-  const state = parseWerewolfState(row.state);
-  if (!state) return null;
-  return { row, state };
-}
-
-async function saveState(ctx: BotContext, sessionId: string, state: WerewolfState): Promise<void> {
-  await ctx.db
-    .updateTable("werewolf_games")
-    .set({
-      phase: state.phase,
-      state: JSON.stringify(state) as unknown as Record<string, unknown>,
-      updated_at: nowIso() as unknown as Date,
-    })
-    .where("id", "=", sessionId)
-    .execute();
-}
-
-async function markEnded(ctx: BotContext, sessionId: string, state: WerewolfState): Promise<void> {
-  await saveState(ctx, sessionId, { ...state, phase: "ended", deadlineAt: null });
 }
 
 function validatePublicInteraction(
@@ -631,40 +587,8 @@ function validatePublicInteraction(
 }
 
 async function replyRejected(interaction: ButtonInteraction | StringSelectMenuInteraction): Promise<boolean> {
-  await interaction.reply({ ...componentCardsPayload([errorEmbed("この操作は現在の状態では実行できません。")]), flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+  await replyError(interaction, "この操作は現在の状態では実行できません。");
   return true;
-}
-
-function buildLobbyRows(sessionId: string, disabled: boolean): ActionRowBuilder<ButtonBuilder>[] {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}join:${sessionId}`).setLabel("参加").setStyle(ButtonStyle.Success).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}leave:${sessionId}`).setLabel("退出").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}start:${sessionId}`).setLabel("開始").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}cancel:${sessionId}`).setLabel("中止").setStyle(ButtonStyle.Danger).setDisabled(disabled),
-    ),
-  ];
-}
-
-function werewolfEmbed(title: string, description: string): ComponentCardBuilder {
-  return new ComponentCardBuilder()
-    .setTitle(title)
-    .setDescription(description.slice(0, 4096) || "\u200b")
-}
-
-function statusEmbed(description: string): ComponentCardBuilder {
-  return werewolfEmbed("人狼", description);
-}
-
-function errorEmbed(description: string): ComponentCardBuilder {
-  return werewolfEmbed("人狼エラー", description);
-}
-
-function lobbyEmbed(state: WerewolfState, disabled: boolean): ComponentCardBuilder {
-  return werewolfEmbed(
-    disabled ? "人狼募集終了" : "人狼募集中",
-    `参加者 (${state.participants.length}): ${state.participants.length ? formatMentions(state.participants) : "なし"}`,
-  );
 }
 
 async function updateLobbyMessage(
@@ -674,7 +598,7 @@ async function updateLobbyMessage(
   disabled = false,
 ): Promise<void> {
   await interaction.message.edit({
-    ...componentCardsPayload([lobbyEmbed(state, disabled)], buildLobbyRows(sessionId, disabled)),
+    ...componentCardsPayload([lobbyCard(state, disabled)], buildLobbyRows(sessionId, disabled)),
     allowedMentions: { parse: [] },
   }).catch(() => undefined);
 }
@@ -688,52 +612,16 @@ async function deleteLobbyMessage(ctx: BotContext, state: WerewolfState): Promis
   });
 }
 
-function buildRoleThreadIntro(role: WerewolfThreadRole, members: string[]): string {
-  const base = `あなたの役職は ${ROLE_THREAD_LABELS[role]} です。`;
-  if (role === "werewolf") return `${base}\nこのスレッドで夜の相談と襲撃対象の選択を行ってください。\n対象: ${formatMentions(members)}`;
-  if (role === "seer") return `${base}\nこのスレッドで占い対象を選択してください。`;
-  return `${base}\nこのスレッドで護衛対象を選択してください。`;
-}
-
-function nightPrompt(role: WerewolfThreadRole): string {
-  if (role === "werewolf") return "襲撃対象を選択してください。";
-  if (role === "seer") return "占い対象を選択してください。";
-  return "護衛対象を選択してください。";
-}
-
-function nightPlaceholder(role: WerewolfThreadRole): string {
-  if (role === "werewolf") return "襲撃対象";
-  if (role === "seer") return "占い対象";
-  return "護衛対象";
-}
-
-function buildDawnMessage(deaths: string[]): string {
-  return deaths.length === 0
-    ? "夜が明けました。死亡者はいません。"
-    : `夜が明けました。死亡者: ${formatMentions(deaths)}`;
-}
-
-function buildVoteResultMessage(executed: string | null): string {
-  return executed ? `投票結果: ${formatMentions([executed])} が処刑されました。` : "投票結果: 同票または無投票のため処刑なしです。";
-}
-
 function allNightActionsSubmitted(state: WerewolfState): boolean {
   const alive = alivePlayers(state);
   const aliveByRole = (role: WerewolfRole) => alive.filter((p) => p.role === role);
-  const werewolves = aliveByRole("werewolf");
-  const seers = aliveByRole("seer");
-  const knights = aliveByRole("knight");
-  return werewolves.every((p) => state.nightActions.attack[p.userId])
-    && seers.every((p) => state.nightActions.inspect[p.userId])
-    && knights.every((p) => state.nightActions.guard[p.userId]);
+  return aliveByRole("werewolf").every((p) => state.nightActions.attack[p.userId])
+    && aliveByRole("seer").every((p) => state.nightActions.inspect[p.userId])
+    && aliveByRole("knight").every((p) => state.nightActions.guard[p.userId]);
 }
 
 function alivePlayers(state: WerewolfState): WerewolfPlayer[] {
   return state.players.filter((p) => p.alive);
-}
-
-function formatMentions(userIds: string[]): string {
-  return userIds.map((id) => `<@${id}>`).join(", ");
 }
 
 async function buildPlayerSelectOptions(
@@ -753,31 +641,6 @@ async function buildPlayerSelectOptions(
       .setDescription(`ID: ${player.userId.slice(0, 20)}`)
       .setValue(player.userId);
   }));
-}
-
-function truncateSelectLabel(value: string): string {
-  const normalized = value.trim() || "Unknown";
-  return normalized.length > 100 ? normalized.slice(0, 100) : normalized;
-}
-
-function parseButtonId(customId: string): { action: string; sessionId: string } | null {
-  const parts = customId.split(":");
-  if (parts.length !== 3 || parts[0] !== "ww") return null;
-  return { action: parts[1]!, sessionId: parts[2]! };
-}
-
-function parseSelectId(customId: string): { action: string; role: WerewolfThreadRole | null; sessionId: string } | null {
-  const parts = customId.split(":");
-  if (parts[0] !== "wws") return null;
-  if (parts[1] === "vote" && parts[2]) return { action: "vote", role: null, sessionId: parts[2] };
-  if (parts[1] === "night" && isThreadRole(parts[2]) && parts[3]) {
-    return { action: "night", role: parts[2], sessionId: parts[3] };
-  }
-  return null;
-}
-
-function isThreadRole(value: unknown): value is WerewolfThreadRole {
-  return value === "werewolf" || value === "seer" || value === "knight";
 }
 
 async function fetchTextChannel(ctx: BotContext, channelId: string): Promise<TextChannel | null> {

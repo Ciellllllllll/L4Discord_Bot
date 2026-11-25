@@ -1,5 +1,4 @@
-import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../panels/componentCard.js";
-import { randomUUID } from "node:crypto";
+import { ComponentCardBuilder, componentCardsPayload, type ComponentCardsPayload } from "../../core/componentCard.js";
 import {
   ChannelType,
   type Guild,
@@ -10,7 +9,6 @@ import {
   type User,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { nowIso } from "../../core/db/nowIso.js";
 import {
   attachmentMetaToJson,
   buildForwardDmFiles,
@@ -21,79 +19,55 @@ import { resolveModmailParentChannelId } from "./modmailConstants.js";
 import { logModmailEvent } from "./modmailEventsLog.js";
 import { MODMAIL_USER_SEND_COMMAND } from "./modmailIds.js";
 import { buildModmailCloseRow, buildModmailIntakeCancelRow, buildModmailThreadLinkRow } from "./modmailUi.js";
+import {
+  MM_CLOSED,
+  cancelModmailIntakeRow,
+  closeModmailTicketRow,
+  consumeModmailIntakeRow,
+  deleteModmailRowById,
+  findActiveIntakeByUser,
+  findAnyOpenModmailByUser,
+  findModmailTicketRowById,
+  findOpenModmailByGuildUser,
+  findOpenModmailByThreadId,
+  hasActiveIntakeByGuildUser,
+  insertModmailSkeleton,
+  parseModmailRowData,
+  ticketDisplayCode,
+  updateModmailThreadMetaRow,
+  upsertModmailIntakeRow,
+  type ModmailThreadRow,
+} from "./modmailRepository.js";
+import {
+  buildModmailStartDmPayload,
+  buildModmailThreadSummaryEmbed,
+  buildParentTicketCard,
+  formatDiscordTime,
+  splitDiscordText,
+  trimMax,
+} from "./modmailCards.js";
 
-// select 結果（Kysely の ColumnType と整合させるためのランタイム行型）
-
-export type ModmailThreadRow = {
-  id: string;
-  guild_id: string;
-  user_id: string;
-  channel_id: string | null;
-  thread_id: string | null;
-  status: string;
-  data: unknown;
-  created_at: Date;
+export type { ModmailThreadRow };
+export {
+  MM_CLOSED,
+  buildModmailStartDmPayload,
+  buildModmailThreadSummaryEmbed,
+  parseModmailRowData,
+  ticketDisplayCode,
 };
 
 type RelayChannel = TextChannel | NewsChannel | ThreadChannel;
-
-const INTAKE_PENDING = "PendingFirstMessage";
-const INTAKE_CONSUMED = "Consumed";
-const INTAKE_CANCELLED = "Cancelled";
-const MM_OPEN = "open";
-export const MM_CLOSED = "closed";
-
-function trimMax(text: string, n: number): string {
-  const s = text.trim();
-  if (s.length <= n) return s;
-  return `${s.slice(0, n - 1)}…`;
-}
-
-export function ticketDisplayCode(id: unknown): string {
-  return String(id).replace(/-/g, "").slice(0, 8).toUpperCase();
-}
-
-export function parseModmailRowData(data: unknown): Record<string, unknown> {
-  if (data && typeof data === "object" && !Array.isArray(data)) return data as Record<string, unknown>;
-  if (typeof data === "string") {
-    try {
-      const p = JSON.parse(data) as unknown;
-      if (p && typeof p === "object" && !Array.isArray(p)) return p as Record<string, unknown>;
-    } catch {}
-  }
-  return {};
-}
-
-function formatDiscordTime(isoOrDate: string | Date): string {
-  const ms = new Date(isoOrDate).getTime();
-  if (!Number.isFinite(ms)) return String(isoOrDate);
-  return `<t:${Math.floor(ms / 1000)}:F>`;
-}
-
-function splitDiscord(text: string, n = 1900): string[] {
-  const src = text.trim();
-  if (!src) return [""];
-  const out: string[] = [];
-  let left = src;
-  while (left.length > n) {
-    let cut = left.lastIndexOf("\n", n);
-    if (cut <= 0) cut = n;
-    out.push(left.slice(0, cut));
-    left = left.slice(cut).replace(/^\n+/, "");
-  }
-  out.push(left);
-  return out;
-}
+type StaffThreadResult = { threadId: string; summaryMessageId: string; thread: ThreadChannel };
+export type CreateTicketFromIntakeFormResult = { ok: boolean; message: string };
 
 async function sendLong(channel: RelayChannel, text: string): Promise<void> {
-  for (const chunk of splitDiscord(text)) {
+  for (const chunk of splitDiscordText(text)) {
     await channel.send({ content: chunk || " ", allowedMentions: { parse: [] } });
   }
 }
 
 async function forceAddRoleMembersToThread(guild: Guild, threadId: string, roleId: string): Promise<void> {
-  const role =
-    guild.roles.cache.get(roleId) ?? (await guild.roles.fetch(roleId).catch(() => null));
+  const role = guild.roles.cache.get(roleId) ?? (await guild.roles.fetch(roleId).catch(() => null));
   if (!role) return;
   if (role.members.size === 0) await guild.members.fetch().catch(() => undefined);
   const ch = await guild.channels.fetch(threadId).catch(() => null);
@@ -103,121 +77,28 @@ async function forceAddRoleMembersToThread(guild: Guild, threadId: string, roleI
   }
 }
 
-export function buildModmailThreadSummaryEmbed(row: ModmailThreadRow, data: Record<string, unknown>): ComponentCardBuilder {
-  const code = ticketDisplayCode(row.id);
-  const subject = trimMax(String(data.subject ?? "(未設定)"), 1024);
-  const body = trimMax(String(data.body ?? "(本文なし)"), 1024);
-  return new ComponentCardBuilder()
-    .setTitle(`Modmail-${code}_対応中`)
-    .addFields(
-      { name: "チケットID", value: code, inline: true },
-      { name: "チケット作成日時", value: formatDiscordTime(row.created_at), inline: true },
-      { name: "タイトル", value: subject, inline: false },
-      { name: "相談内容", value: body, inline: false },
-      { name: "現在状態", value: row.status || MM_OPEN, inline: true },
-      { name: "クローズ操作", value: "下のボタンからチケットをクローズできます。", inline: false },
-    )
-    .setTimestamp(new Date());
-}
-
-function buildParentTicketEmbed(row: ModmailThreadRow, data: Record<string, unknown>): ComponentCardBuilder {
-  const code = ticketDisplayCode(row.id);
-  const title = trimMax(String(data.subject ?? `Modmail-${code}`), 256);
-  return new ComponentCardBuilder()
-    .setTitle(title)
-    .setDescription(`Modmail-${code}_対応中`)
-    .setTimestamp(new Date());
-}
-
 export async function upsertModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
-  const ts = nowIso();
-  await ctx.ticketDb
-    .insertInto("modmail_intakes")
-    .values({
-      guild_id: guildId,
-      user_id: userId,
-      status: INTAKE_PENDING,
-      requested_at: ts as unknown as Date,
-      dm_sent_at: ts as unknown as Date,
-      updated_at: ts as unknown as Date,
-    })
-    .onConflict((oc) =>
-      oc.columns(["guild_id", "user_id"]).doUpdateSet({
-        status: INTAKE_PENDING,
-        requested_at: ts as unknown as Date,
-        dm_sent_at: ts as unknown as Date,
-        updated_at: ts as unknown as Date,
-      }),
-    )
-    .execute();
+  await upsertModmailIntakeRow(ctx.ticketDb, guildId, userId);
 }
 
 export async function consumeModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
-  const ts = nowIso();
-  await ctx.ticketDb
-    .updateTable("modmail_intakes")
-    .set({
-      status: INTAKE_CONSUMED,
-      updated_at: ts as unknown as Date,
-    })
-    .where("guild_id", "=", guildId)
-    .where("user_id", "=", userId)
-    .execute();
+  await consumeModmailIntakeRow(ctx.ticketDb, guildId, userId);
 }
 
 export async function cancelModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
-  const ts = nowIso();
-  const result = await ctx.ticketDb
-    .updateTable("modmail_intakes")
-    .set({
-      status: INTAKE_CANCELLED,
-      updated_at: ts as unknown as Date,
-    })
-    .where("guild_id", "=", guildId)
-    .where("user_id", "=", userId)
-    .where("status", "=", INTAKE_PENDING)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return cancelModmailIntakeRow(ctx.ticketDb, guildId, userId);
 }
 
-export async function activeIntakeByGuildUser(
-  ctx: BotContext,
-  guildId: string,
-  userId: string,
-): Promise<boolean> {
-  const row = await ctx.ticketDb
-    .selectFrom("modmail_intakes")
-    .select(["guild_id"])
-    .where("guild_id", "=", guildId)
-    .where("user_id", "=", userId)
-    .where("status", "=", INTAKE_PENDING)
-    .executeTakeFirst();
-  return Boolean(row);
+export async function activeIntakeByGuildUser(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
+  return hasActiveIntakeByGuildUser(ctx.ticketDb, guildId, userId);
 }
 
 export async function activeIntakeByUser(ctx: BotContext, userId: string): Promise<{ guild_id: string } | null> {
-  const row = await ctx.ticketDb
-    .selectFrom("modmail_intakes")
-    .select(["guild_id"])
-    .where("user_id", "=", userId)
-    .where("status", "=", INTAKE_PENDING)
-    .orderBy("updated_at", "desc")
-    .executeTakeFirst();
-  return row ?? null;
+  return findActiveIntakeByUser(ctx.ticketDb, userId);
 }
 
-export async function getOpenModmailByThreadId(
-  ctx: BotContext,
-  threadId: string,
-): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.ticketDb
-    .selectFrom("modmail_threads")
-    .selectAll()
-    .where("thread_id", "=", threadId)
-    .where("status", "=", MM_OPEN)
-    .orderBy("created_at", "desc")
-    .executeTakeFirst();
-  return row as ModmailThreadRow | undefined;
+export async function getOpenModmailByThreadId(ctx: BotContext, threadId: string): Promise<ModmailThreadRow | undefined> {
+  return findOpenModmailByThreadId(ctx.ticketDb, threadId);
 }
 
 export async function openModmailByGuildUser(
@@ -225,96 +106,15 @@ export async function openModmailByGuildUser(
   guildId: string,
   userId: string,
 ): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.ticketDb
-    .selectFrom("modmail_threads")
-    .selectAll()
-    .where("guild_id", "=", guildId)
-    .where("user_id", "=", userId)
-    .where("status", "=", MM_OPEN)
-    .orderBy("created_at", "desc")
-    .executeTakeFirst();
-  return row as ModmailThreadRow | undefined;
+  return findOpenModmailByGuildUser(ctx.ticketDb, guildId, userId);
 }
 
-export async function anyOpenModmailByUser(
-  ctx: BotContext,
-  userId: string,
-): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.ticketDb
-    .selectFrom("modmail_threads")
-    .selectAll()
-    .where("user_id", "=", userId)
-    .where("status", "=", MM_OPEN)
-    .orderBy("created_at", "desc")
-    .executeTakeFirst();
-  return row as ModmailThreadRow | undefined;
-}
-
-async function createModmailSkeleton(
-  ctx: BotContext,
-  guildId: string,
-  userId: string,
-  body: string,
-  subject: string | null,
-  firstDmMessageId: string | null,
-  source: string,
-): Promise<string> {
-  const id = randomUUID();
-  const ts = nowIso();
-  const data = {
-    body: trimMax(body, 1000),
-    subject: subject ? trimMax(subject, 120) : null,
-    source,
-    first_user_dm_message_id: firstDmMessageId,
-  };
-  await ctx.ticketDb
-    .insertInto("modmail_threads")
-    .values({
-      id,
-      guild_id: guildId,
-      user_id: userId,
-      channel_id: null,
-      thread_id: null,
-      status: MM_OPEN,
-      data: JSON.stringify(data) as unknown as Record<string, unknown>,
-      created_at: ts as unknown as Date,
-    })
-    .execute();
-  return id;
-}
-
-async function deleteModmailById(ctx: BotContext, id: string): Promise<void> {
-  await ctx.ticketDb.deleteFrom("modmail_threads").where("id", "=", id).execute();
-}
-
-async function updateModmailThreadMeta(
-  ctx: BotContext,
-  id: string,
-  parentChannelId: string,
-  threadId: string,
-  dataPatch: Record<string, unknown>,
-): Promise<void> {
-  const row = await ctx.ticketDb.selectFrom("modmail_threads").selectAll().where("id", "=", id).executeTakeFirst();
-  if (!row) return;
-  const merged = { ...parseModmailRowData(row.data), ...dataPatch };
-  await ctx.ticketDb
-    .updateTable("modmail_threads")
-    .set({
-      channel_id: parentChannelId,
-      thread_id: threadId,
-      data: JSON.stringify(merged) as unknown as Record<string, unknown>,
-    })
-    .where("id", "=", id)
-    .execute();
+export async function anyOpenModmailByUser(ctx: BotContext, userId: string): Promise<ModmailThreadRow | undefined> {
+  return findAnyOpenModmailByUser(ctx.ticketDb, userId);
 }
 
 export async function getModmailTicketRow(ctx: BotContext, id: string): Promise<ModmailThreadRow | undefined> {
-  const row = await ctx.ticketDb.selectFrom("modmail_threads").selectAll().where("id", "=", id).executeTakeFirst();
-  return row as ModmailThreadRow | undefined;
-}
-
-async function fetchModmailRow(ctx: BotContext, id: string): Promise<ModmailThreadRow | undefined> {
-  return getModmailTicketRow(ctx, id);
+  return findModmailTicketRowById(ctx.ticketDb, id);
 }
 
 export async function closeModmailTicketInDb(
@@ -323,29 +123,8 @@ export async function closeModmailTicketInDb(
   closerId: string,
   reason: string,
 ): Promise<{ ok: boolean; closedAt?: string }> {
-  const row = await fetchModmailRow(ctx, ticketId);
-  if (!row || row.status !== MM_OPEN) return { ok: false };
-  const merged = {
-    ...parseModmailRowData(row.data),
-    closed_at: nowIso(),
-    close_reason: reason,
-    closer_staff_id: closerId,
-  };
-  const result = await ctx.ticketDb
-    .updateTable("modmail_threads")
-    .set({
-      status: MM_CLOSED,
-      data: JSON.stringify(merged) as unknown as Record<string, unknown>,
-    })
-    .where("id", "=", ticketId)
-    .where("status", "=", MM_OPEN)
-    .executeTakeFirst();
-  const n = Number(result.numUpdatedRows ?? 0);
-  if (n === 0) return { ok: false };
-  return { ok: true, closedAt: merged.closed_at as string };
+  return closeModmailTicketRow(ctx.ticketDb, ticketId, closerId, reason);
 }
-
-type StaffThreadResult = { threadId: string; summaryMessageId: string; thread: ThreadChannel };
 
 async function compensateStaffThread(
   ctx: BotContext,
@@ -361,7 +140,7 @@ export async function deleteModmailSkeletonBestEffort(
   modmailId: string,
   threadId?: string,
 ): Promise<void> {
-  await deleteModmailById(ctx, modmailId).catch((err) => {
+  await deleteModmailRowById(ctx.ticketDb, modmailId).catch((err) => {
     ctx.log.warn({ err, modmailId, threadId }, "modmail DB skeleton compensation delete failed");
   });
 }
@@ -374,8 +153,7 @@ export async function createStaffThread(
   const parentId = resolveModmailParentChannelId(ctx.config);
   if (!parentId) return null;
 
-  const parent =
-    guild.channels.cache.get(parentId) ?? (await guild.channels.fetch(parentId).catch(() => null));
+  const parent = guild.channels.cache.get(parentId) ?? (await guild.channels.fetch(parentId).catch(() => null));
   if (!parent) return null;
 
   const data = parseModmailRowData(row.data);
@@ -386,26 +164,14 @@ export async function createStaffThread(
     ...componentCardsPayload([summaryEmbed], [buildModmailCloseRow(row.id)]),
     allowedMentions: { parse: [] } as const,
   };
-
   const adminRoleId = ctx.config.ADMIN_ROLE_ID?.trim();
 
   if (parent.type === ChannelType.GuildText || parent.type === ChannelType.GuildAnnouncement) {
     if (!parent.isTextBased()) return null;
-    const seed = await parent
-      .send({
-        content: `Modmail Ticket #${code}`,
-        allowedMentions: { parse: [] },
-      })
-      .catch(() => null);
+    const seed = await parent.send({ content: `Modmail Ticket #${code}`, allowedMentions: { parse: [] } }).catch(() => null);
     if (!seed) return null;
 
-    const thread = await seed
-      .startThread({
-        name: tname,
-        autoArchiveDuration: 1440,
-        reason: "modmail ticket",
-      })
-      .catch(() => null);
+    const thread = await seed.startThread({ name: tname, autoArchiveDuration: 1440, reason: "modmail ticket" }).catch(() => null);
     await seed.delete().catch(() => undefined);
     if (!thread?.isTextBased()) {
       if (thread) await compensateStaffThread(ctx, thread);
@@ -417,32 +183,21 @@ export async function createStaffThread(
       return null;
     }
 
-    const noticePayload: ComponentCardsPayload & {
-      allowedMentions: { parse: [] };
-    } = {
-      ...componentCardsPayload([buildParentTicketEmbed(row, data)], [buildModmailThreadLinkRow(guild.id, thread.id)]),
+    const noticePayload: ComponentCardsPayload & { allowedMentions: { parse: [] } } = {
+      ...componentCardsPayload([buildParentTicketCard(row, data)], [buildModmailThreadLinkRow(guild.id, thread.id)]),
       allowedMentions: { parse: [] as [] },
     };
     if (adminRoleId) {
-      await parent.send({
-        content: `<@&${adminRoleId}>`,
-        allowedMentions: { roles: [adminRoleId], parse: [] },
-      }).catch(() => undefined);
+      await parent.send({ content: `<@&${adminRoleId}>`, allowedMentions: { roles: [adminRoleId], parse: [] } }).catch(() => undefined);
     }
     await parent.send(noticePayload).catch(() => undefined);
     if (adminRoleId) await forceAddRoleMembersToThread(guild, thread.id, adminRoleId);
-
     return { threadId: thread.id, summaryMessageId: summaryMessage.id, thread };
   }
 
   if (parent.type === ChannelType.GuildForum) {
     const thread = await parent.threads
-      .create({
-        name: tname,
-        autoArchiveDuration: 1440,
-        reason: "modmail ticket",
-        message: summaryPayload,
-      })
+      .create({ name: tname, autoArchiveDuration: 1440, reason: "modmail ticket", message: summaryPayload })
       .catch(() => null);
     if (!thread?.isTextBased()) {
       if (thread) await compensateStaffThread(ctx, thread);
@@ -454,12 +209,7 @@ export async function createStaffThread(
       return null;
     }
     if (adminRoleId) {
-      await thread
-        .send({
-          content: `<@&${adminRoleId}>`,
-          allowedMentions: { roles: [adminRoleId], parse: [] },
-        })
-        .catch(() => undefined);
+      await thread.send({ content: `<@&${adminRoleId}>`, allowedMentions: { roles: [adminRoleId], parse: [] } }).catch(() => undefined);
       await forceAddRoleMembersToThread(guild, thread.id, adminRoleId);
     }
     return { threadId: thread.id, summaryMessageId: starter.id, thread };
@@ -484,12 +234,9 @@ export async function relayUserPayloadToThread(
   const relayCh = thread as RelayChannel;
   const prefix = opts?.isFirstTicketMessage ? "このメッセージでチケットが作成されました。\n\n" : "";
   const cleaned = trimMax(prefix + (body.trim() || "(本文なし)"), 4000);
-  const embed = new ComponentCardBuilder()
-    .setTitle(kind)
-    .setDescription(cleaned)
-    .setTimestamp(new Date());
+  const card = new ComponentCardBuilder().setTitle(kind).setDescription(cleaned).setTimestamp(new Date());
   try {
-    await relayCh.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } });
+    await relayCh.send({ ...componentCardsPayload([card]), allowedMentions: { parse: [] } });
   } catch (e) {
     ctx.log.warn({ err: e, modmailId: row.id }, "relayUserPayloadToThread failed");
     return;
@@ -531,7 +278,7 @@ async function relayModalIntakeToThread(
   if (!thread || !thread.isTextBased()) return;
   const relayCh = thread as RelayChannel;
 
-  const embed = new ComponentCardBuilder()
+  const card = new ComponentCardBuilder()
     .setTitle("フォーム受付")
     .setDescription("この送信でチケットが作成されました。")
     .addFields(
@@ -541,7 +288,7 @@ async function relayModalIntakeToThread(
     )
     .setTimestamp(new Date());
 
-  await relayCh.send({ ...componentCardsPayload([embed]), allowedMentions: { parse: [] } }).catch((e) => {
+  await relayCh.send({ ...componentCardsPayload([card]), allowedMentions: { parse: [] } }).catch((e) => {
     ctx.log.warn({ err: e, modmailId: row.id }, "relayModalIntakeToThread embed failed");
   });
 
@@ -559,19 +306,9 @@ async function relayModalIntakeToThread(
   }
 }
 
-export type CreateTicketFromIntakeFormResult = { ok: boolean; message: string };
-
-// DiscordBOTv2 `ModmailCog.createTicketFromIntakeForm` 相当
-
 export async function createTicketFromIntakeForm(
   ctx: BotContext,
-  params: {
-    guildId: string;
-    userId: string;
-    title: string;
-    body: string;
-    attachments: AttachmentMeta[];
-  },
+  params: { guildId: string; userId: string; title: string; body: string; attachments: AttachmentMeta[] },
 ): Promise<CreateTicketFromIntakeFormResult> {
   const gid = params.guildId.trim();
   const uid = params.userId.trim();
@@ -582,36 +319,34 @@ export async function createTicketFromIntakeForm(
   if (!gid || !uid || !normalizedTitle || !normalizedBody) {
     return { ok: false, message: "タイトルと相談内容を入力してください。" };
   }
-
-  const open = await openModmailByGuildUser(ctx, gid, uid);
-  if (open) {
+  if (await openModmailByGuildUser(ctx, gid, uid)) {
     return { ok: false, message: "現在対応中のチケットがあります。新規作成はできません。" };
   }
-
-  const hasIntake = await activeIntakeByGuildUser(ctx, gid, uid);
-  if (!hasIntake) {
+  if (!(await activeIntakeByGuildUser(ctx, gid, uid))) {
     return { ok: false, message: "サーバー内の「Modmailを始める」から相談を開始してください。" };
   }
 
   const guild = await ctx.client.guilds.fetch(gid).catch(() => null);
   if (!guild) {
-    void logModmailEvent(ctx, "ERROR", {
-      guild_id: gid,
-      user_id: uid,
-      content: normalizedBody,
-      failure_reason: "guild_not_found_for_modal_intake",
-    });
+    void logModmailEvent(ctx, "ERROR", { guild_id: gid, user_id: uid, content: normalizedBody, failure_reason: "guild_not_found_for_modal_intake" });
     return { ok: false, message: "サーバー情報の取得に失敗しました。時間をおいて再度お試しください。" };
   }
 
   let mmId: string;
   try {
-    mmId = await createModmailSkeleton(ctx, gid, uid, normalizedBody, normalizedTitle, null, "modal_intake");
+    mmId = await insertModmailSkeleton(ctx.ticketDb, {
+      guildId: gid,
+      userId: uid,
+      body: normalizedBody,
+      subject: normalizedTitle,
+      firstDmMessageId: null,
+      source: "modal_intake",
+    });
   } catch {
     return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
   }
 
-  const row = await fetchModmailRow(ctx, mmId);
+  const row = await getModmailTicketRow(ctx, mmId);
   if (!row) {
     await deleteModmailSkeletonBestEffort(ctx, mmId);
     return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
@@ -620,13 +355,7 @@ export async function createTicketFromIntakeForm(
   const created = await createStaffThread(ctx, guild, row).catch(() => null);
   if (!created) {
     await deleteModmailSkeletonBestEffort(ctx, mmId);
-    void logModmailEvent(ctx, "ERROR", {
-      ticket_id: mmId,
-      guild_id: gid,
-      user_id: uid,
-      content: normalizedBody,
-      failure_reason: "create_staff_thread_failed",
-    });
+    void logModmailEvent(ctx, "ERROR", { ticket_id: mmId, guild_id: gid, user_id: uid, content: normalizedBody, failure_reason: "create_staff_thread_failed" });
     return { ok: false, message: "チケット作成に失敗しました。時間をおいて再度お試しください。" };
   }
 
@@ -634,13 +363,13 @@ export async function createTicketFromIntakeForm(
   try {
     const parentId = resolveModmailParentChannelId(ctx.config);
     if (!parentId) throw new Error("modmail parent channel is not configured");
-    await updateModmailThreadMeta(ctx, mmId, parentId, created.threadId, {
+    await updateModmailThreadMetaRow(ctx.ticketDb, mmId, parentId, created.threadId, {
       panel_message_id: created.summaryMessageId,
       info_message_id: created.summaryMessageId,
       body: normalizedBody,
       subject: normalizedTitle,
     });
-    full = (await fetchModmailRow(ctx, mmId)) ?? null;
+    full = (await getModmailTicketRow(ctx, mmId)) ?? null;
     if (!full) throw new Error("modmail row missing after staff thread metadata update");
   } catch (err) {
     await compensateStaffThread(ctx, created.thread);
@@ -659,17 +388,18 @@ export async function createTicketFromIntakeForm(
     thread_id: full.thread_id,
     status: full.status,
     content: normalizedBody,
-    extra_json: {
-      source: "modal",
-      title: normalizedTitle,
-      attachment_count: normalizedAttachments.length,
-    },
+    extra_json: { source: "modal", title: normalizedTitle, attachment_count: normalizedAttachments.length },
   });
 
-  return {
-    ok: true,
-    message: `チケットを作成しました。受付番号: ${ticketDisplayCode(full.id)}`,
-  };
+  return { ok: true, message: `チケットを作成しました。受付番号: ${ticketDisplayCode(full.id)}` };
+}
+
+function parseUserSendCommand(content: string): string | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith(MODMAIL_USER_SEND_COMMAND)) return null;
+  const rest = trimmed.slice(MODMAIL_USER_SEND_COMMAND.length);
+  if (rest && !/^\s/.test(rest)) return null;
+  return rest.trim();
 }
 
 export async function handleModmailDmMessage(ctx: BotContext, message: Message): Promise<boolean> {
@@ -712,17 +442,7 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
       return true;
     }
 
-    if (hasAttach) {
-      await relayUserPayloadToThread(
-        ctx,
-        open,
-        "User DM 受信",
-        body || "(添付)",
-        attach,
-      );
-      return true;
-    }
-    await relayUserPayloadToThread(ctx, open, "User DM 受信", body, []);
+    await relayUserPayloadToThread(ctx, open, "User DM 受信", hasAttach ? body || "(添付)" : body, hasAttach ? attach : []);
     return true;
   }
 
@@ -748,47 +468,17 @@ export async function handleModmailDmMessage(ctx: BotContext, message: Message):
       ...componentCardsPayload(
         [
           new ComponentCardBuilder()
-          .setTitle("お問い合わせ受付待機中")
-          .setDescription(
-            "まだチケットは作成されていません。先ほど送信した受付メッセージの「チケットを作成」ボタンから内容を入力してください。",
-          )
-          .setTimestamp(new Date()),
+            .setTitle("お問い合わせ受付待機中")
+            .setDescription(
+              "まだチケットは作成されていません。先ほど送信した受付メッセージの「チケットを作成」ボタンから内容を入力してください。",
+            )
+            .setTimestamp(new Date()),
         ],
         [buildModmailIntakeCancelRow(intake.guild_id, message.author.id)],
       ),
     })
     .catch(() => undefined);
   return true;
-}
-
-function parseUserSendCommand(content: string): string | null {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith(MODMAIL_USER_SEND_COMMAND)) {
-    return null;
-  }
-  const rest = trimmed.slice(MODMAIL_USER_SEND_COMMAND.length);
-  if (rest && !/^\s/.test(rest)) {
-    return null;
-  }
-  return rest.trim();
-}
-
-export function buildModmailStartDmPayload(rows: unknown[]): ComponentCardsPayload {
-  return componentCardsPayload(
-    [
-      new ComponentCardBuilder()
-      .setTitle("お問い合わせ受付")
-      .setDescription(
-        [
-          "お問い合わせ受付です。",
-          "下の「チケットを作成」ボタンからタイトル・詳細・任意の添付を入力すると、スタッフ側にチケットが作成されます。",
-          "チケット作成前の通常メッセージはスタッフ側に送信されません。",
-        ].join("\n"),
-      )
-      .setTimestamp(new Date()),
-    ],
-    rows as never,
-  );
 }
 
 export async function sendModmailStartDm(user: User, rows: unknown[]): Promise<void> {

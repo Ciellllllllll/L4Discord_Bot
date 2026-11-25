@@ -1,6 +1,6 @@
 import type { Message } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
-import { componentCardsPayload } from "../panels/componentCard.js";
+import { componentCardsPayload } from "../../core/componentCard.js";
 import {
   allPendingReplies,
   setReplyConfirmMessageId,

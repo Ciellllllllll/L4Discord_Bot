@@ -1,17 +1,14 @@
 import {
   ActionRowBuilder,
-  ActionRowBuilder as IntakeActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   FileUploadBuilder,
   LabelBuilder,
-  ModalBuilder as IntakeModalBuilder,
+  ModalBuilder,
+  TextInputBuilder,
   TextInputStyle,
-  TextInputBuilder as IntakeTextInputBuilder,
 } from "discord.js";
 import { buildThreePartId, MM_IDS } from "./modmailIds.js";
-
-// DM: 「チケットを作成」→モーダル（DiscordBOTv2 `modmail_ticket_start:` 相当）
 
 export function buildModmailTicketCreateRow(ctxId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -43,24 +40,21 @@ export function buildModmailThreadLinkRow(
   );
 }
 
-// Modmail 受付モーダル。
-// 添付は Label + FileUpload で追加する。
-
-export function buildModmailIntakeTicketModal(ctxId: string): IntakeModalBuilder {
-  return new IntakeModalBuilder()
+export function buildModmailIntakeTicketModal(ctxId: string): ModalBuilder {
+  return new ModalBuilder()
     .setCustomId(`${MM_IDS.TICKET_SUBMIT_PREFIX}${ctxId}`)
     .setTitle("チケットを作成")
     .addComponents(
-      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
-        new IntakeTextInputBuilder()
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
           .setCustomId(MM_IDS.MODAL_INTAKE_TITLE)
           .setLabel("タイトル")
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMaxLength(120),
       ),
-      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
-        new IntakeTextInputBuilder()
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
           .setCustomId(MM_IDS.MODAL_INTAKE_BODY)
           .setLabel("詳細")
           .setStyle(TextInputStyle.Paragraph)
@@ -89,7 +83,6 @@ export function buildModmailCloseRow(ticketId: string): ActionRowBuilder<ButtonB
   );
 }
 
-/** ユーザー DM: 本文＋添付を1モーダルで送信（旧 DM の「添付ファイルを送信」ボタンは互換のためハンドラのみ残す） */
 export function buildModmailUserReplyRow(ticketId: string, userId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -116,17 +109,13 @@ export function buildModmailConfirmRow(replyId: string, authorStaffId: string): 
   );
 }
 
-/**
- * スタッフ（!reply 承認前の「ファイルを添付」）および旧ユーザー添付ボタン用。
- * {@link buildModmailIntakeTicketModal} と同じ builders のみ（FileUpload 付きモーダルの showModal 互換）。
- */
-export function buildModmailAttachmentUploadModal(customId: string, title = "ファイルを添付"): IntakeModalBuilder {
-  return new IntakeModalBuilder()
+export function buildModmailAttachmentUploadModal(customId: string, title = "ファイルを添付"): ModalBuilder {
+  return new ModalBuilder()
     .setCustomId(customId)
     .setTitle(title.slice(0, 45))
     .addComponents(
-      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
-        new IntakeTextInputBuilder()
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
           .setCustomId(MM_IDS.ATTACHMENT_MODAL_NOTE_ID)
           .setLabel("メモ（任意）")
           .setStyle(TextInputStyle.Short)
@@ -146,19 +135,14 @@ export function buildModmailAttachmentUploadModal(customId: string, title = "フ
     );
 }
 
-/**
- * ユーザー DM の「返信する」用モーダル（本文 + 任意添付を1つに統合）。
- * TextInput を先に置く（FileUpload のみのモーダルより DM で開きやすい）。
- * 構成は {@link buildModmailIntakeTicketModal} と同じ builders のみ。
- * （discord.js の ModalBuilder と Label/FileUpload を混ぜると DM で showModal が失敗することがある）
- */
-export function buildModmailUserReplyModal(customId: string): IntakeModalBuilder {
-  return new IntakeModalBuilder()
+// TextInput を先に置く（FileUpload のみのモーダルより DM で開きやすいため）。
+export function buildModmailUserReplyModal(customId: string): ModalBuilder {
+  return new ModalBuilder()
     .setCustomId(customId)
     .setTitle("返信する")
     .addComponents(
-      new IntakeActionRowBuilder<IntakeTextInputBuilder>().addComponents(
-        new IntakeTextInputBuilder()
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
           .setCustomId("reply_body")
           .setLabel("メッセージ")
           .setStyle(TextInputStyle.Paragraph)
