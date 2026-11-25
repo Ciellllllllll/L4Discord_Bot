@@ -1,6 +1,6 @@
 import type { AppConfig } from "../../core/config.js";
-import { fetchWithLimits } from "./fetchWithLimits.js";
-import type { ChatMessage } from "./deepseek.js";
+import { fetchWithLimits } from "../../core/http/fetchWithLimits.js";
+import { sanitizeAiText, type ChatMessage } from "./chatTypes.js";
 
 export type LocalLlmResult = {
   content: string;
@@ -14,14 +14,6 @@ export type LocalLlmRequestOptions = {
   model?: string;
   sanitizeOutput?: boolean;
 };
-
-function sanitizeAiText(text: string): string {
-  return String(text || "")
-    .trim()
-    .replace(/@everyone/g, "@\u200beveryone")
-    .replace(/@here/g, "@\u200bhere")
-    .replace(/<@(?:!?|&)\d+>/g, (match) => match.replace("<@", "<@\u200b"));
-}
 
 export async function localLlmChat(
   config: AppConfig,

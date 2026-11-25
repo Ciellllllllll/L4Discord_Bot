@@ -1,5 +1,5 @@
 import { AiRequestError } from "./aiRequestError.js";
-import { fetchWithLimits, type FetchWithLimitsOptions } from "./fetchWithLimits.js";
+import { fetchWithLimits, type FetchWithLimitsOptions } from "../../core/http/fetchWithLimits.js";
 
 export type OpenAiUsageConfig = {
   adminKey: string;

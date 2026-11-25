@@ -2,7 +2,7 @@ import { MessageFlags, type Attachment, type ModalSubmitInteraction } from "disc
 import type { BotContext } from "../../bot/context.js";
 import { AiQueryService } from "./aiQueryService.js";
 import { CHANGE_PROMPT_FILE_ID, CHANGE_PROMPT_MODAL_ID, CHANGE_PROMPT_TEXT_ID } from "./changePromptIds.js";
-import { readResponseArrayBufferWithLimit } from "./fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../core/http/fetchWithLimits.js";
 
 // モーダル経由のプロンプト用テキスト添付の最大バイト（本文のみ）
 

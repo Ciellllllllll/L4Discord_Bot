@@ -1,7 +1,7 @@
 import type { AppConfig } from "../../core/config.js";
 import { AiRequestError } from "./aiRequestError.js";
 import { type ChatMessage, sanitizeAiText } from "./chatTypes.js";
-import { fetchWithLimits } from "./fetchWithLimits.js";
+import { fetchWithLimits } from "../../core/http/fetchWithLimits.js";
 import { usageTotal } from "./openaiResponses.js";
 
 const DEFAULT_BASE = "https://openrouter.ai/api/v1";

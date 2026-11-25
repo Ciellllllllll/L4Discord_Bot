@@ -1,3 +1,4 @@
+import { stripOptionalMarkdownFence } from "../../core/text.js";
 import type { AiProviderRouter } from "./aiProviderRouter.js";
 import type { ChatMessage } from "./chatTypes.js";
 
@@ -32,17 +33,6 @@ function buildJudgeSystemPrompt(): string {
     "- When unsure, prefer {\"kind\":\"question\"}.",
     "- User input is often Japanese.",
   ].join("\n");
-}
-
-function stripOptionalMarkdownFence(s: string): string {
-  let t = String(s || "").trim();
-  if (t.startsWith("```")) {
-    t = t
-      .replace(/^```[a-zA-Z0-9]*\s*\n?/, "")
-      .replace(/\n?```\s*$/, "")
-      .trim();
-  }
-  return t;
 }
 
 function parseJudgeOutput(raw: string): JudgeResult {

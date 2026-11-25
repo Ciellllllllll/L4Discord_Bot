@@ -1,6 +1,6 @@
 import { extname } from "node:path";
 import type { Attachment } from "discord.js";
-import { readResponseArrayBufferWithLimit } from "./fetchWithLimits.js";
+import { readResponseArrayBufferWithLimit } from "../../core/http/fetchWithLimits.js";
 
 export type QAttachment = Pick<Attachment, "id" | "name" | "url" | "size" | "contentType">;
 export type PreparedQAttachment =

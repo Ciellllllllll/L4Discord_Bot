@@ -1,5 +1,5 @@
 import type { AppConfig } from "../../core/config.js";
-import { fetchWithLimits } from "./fetchWithLimits.js";
+import { fetchWithLimits } from "../../core/http/fetchWithLimits.js";
 import { type ChatMessage, sanitizeAiText } from "./chatTypes.js";
 import { setTimeout as delay } from "node:timers/promises";
 

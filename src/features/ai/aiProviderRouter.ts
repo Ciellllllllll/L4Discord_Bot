@@ -391,6 +391,16 @@ export class AiProviderRouter {
       : this.config.OPENAI_MODEL_GPT54_MINI;
   }
 
+  private async settleFailedReservation(reservationId: string, typed: AiRequestError): Promise<void> {
+    if (typed.usageTotalTokens !== undefined) {
+      await this.budget.settle(reservationId, typed.usageTotalTokens);
+    } else if (releaseOnFailure(typed)) {
+      await this.budget.release(reservationId);
+    } else {
+      await this.budget.consumeEstimate(reservationId);
+    }
+  }
+
   private async attemptOpenRouter(
     messages: ChatMessage[],
     options: AiRouterChatOptions,
@@ -422,13 +432,7 @@ export class AiProviderRouter {
       const typed = error instanceof AiRequestError
         ? error
         : new AiRequestError("invalid_response", "OpenRouter adapter returned an unexpected error.", { cause: error });
-      if (typed.usageTotalTokens !== undefined) {
-        await this.budget.settle(reservationId, typed.usageTotalTokens);
-      } else if (releaseOnFailure(typed)) {
-        await this.budget.release(reservationId);
-      } else {
-        await this.budget.consumeEstimate(reservationId);
-      }
+      await this.settleFailedReservation(reservationId, typed);
       if (typed.kind === "caller_abort" || typed.kind === "configuration") throw typed;
       return { ok: false, reason: "openrouter_failed" };
     }
@@ -477,13 +481,7 @@ export class AiProviderRouter {
       const typed = error instanceof AiRequestError
         ? error
         : new AiRequestError("invalid_response", "OpenAI adapter returned an unexpected error.", { cause: error });
-      if (typed.usageTotalTokens !== undefined) {
-        await this.budget.settle(reservationId, typed.usageTotalTokens);
-      } else if (releaseOnFailure(typed)) {
-        await this.budget.release(reservationId);
-      } else {
-        await this.budget.consumeEstimate(reservationId);
-      }
+      await this.settleFailedReservation(reservationId, typed);
       if (typed.kind === "caller_abort") throw typed;
       const fallbackReason = fallbackForOpenAiError(typed);
       if (!fallbackReason) throw typed;
