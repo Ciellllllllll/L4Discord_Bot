@@ -1,6 +1,7 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { extractJson } from "./deepseekJson.mjs";
 import { readDeepSeekStream } from "./deepseekStream.mjs";
 
 const {
@@ -445,29 +446,6 @@ function buildDiffForPrompt(files) {
   });
 
   return truncateText(chunks.join("\n\n---\n\n"), maxDiffChars);
-}
-
-function extractJson(text) {
-  const trimmed = String(text ?? "").trim();
-
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    return JSON.parse(trimmed);
-  }
-
-  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-
-  if (fenceMatch) {
-    return JSON.parse(fenceMatch[1].trim());
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
-  }
-
-  throw new Error("DeepSeek response did not contain JSON.");
 }
 
 async function requestDeepSeekReview(diffText, options = {}) {
