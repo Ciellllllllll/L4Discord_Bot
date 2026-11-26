@@ -1,8 +1,8 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData, upsertGuildSettingsData } from "../../core/guildSettings.js";
 
 export async function getAiThinkingEnabled(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "db">,
   guildId: string,
   userId: string,
 ): Promise<boolean> {
@@ -17,7 +17,7 @@ export async function getAiThinkingEnabled(
 }
 
 export async function setAiThinkingEnabled(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "db">,
   guildId: string,
   userId: string,
   enabled: boolean,

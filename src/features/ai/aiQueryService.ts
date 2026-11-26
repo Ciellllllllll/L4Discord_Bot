@@ -3,8 +3,6 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  MessageFlags,
-  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Guild,
   type GuildMember,
@@ -14,8 +12,11 @@ import {
   type TextBasedChannel,
 } from "discord.js";
 import type { AppConfig } from "../../core/config.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+import type { IVcRankingRepository } from "../../adapters/legacyDb/vcRankingRepository.js";
 import type { ChatMessage } from "./chatTypes.js";
+import type { VcTemporaryChannelManager } from "../vc/vcTemporaryChannelManager.js";
+import type { AiProviderRouter } from "./aiProviderRouter.js";
 import { getAiThinkingEnabled } from "./thinkingSettings.js";
 import { classifyUserIntent } from "./queryJudge.js";
 import { runAiSlashCommand } from "./aiCommandExecution.js";
@@ -67,7 +68,7 @@ function formatModelMetadata(answer: QuestionAnswer): string {
   return `-# 使用モデル: ${providerLabel[answer.provider]} / \`${model}\``;
 }
 
-function safeStrip(text: string): string {
+export function safeStrip(text: string): string {
   return String(text || "").trim();
 }
 
@@ -101,11 +102,17 @@ function localLlmQueueForConfig(config: AppConfig): LocalLlmQueue {
   return queue;
 }
 
+// /q サービスが使う依存。メソッドごとに部分集合を使うが、呼び出し先 (runAiSlashCommand や
+// 履歴管理パネル) が vcTemp / vcRanking / db も必要とするため、クラス全体ではこの統合セットを受け取る。
+export type AiQueryServiceDeps =
+  & Pick<CoreDeps, "config" | "db" | "aiHistoryDb" | "log" | "client">
+  & { aiRouter: AiProviderRouter; vcTemp: VcTemporaryChannelManager; vcRanking: IVcRankingRepository };
+
 export class AiQueryService {
   private readonly promptStore: UserPromptStore;
   private readonly historyStore: AiHistoryStore;
 
-  constructor(private readonly ctx: BotContext) {
+  constructor(private readonly ctx: AiQueryServiceDeps) {
     this.promptStore = new UserPromptStore({
       basePromptPath: ctx.config.PROMPT_FILE_PATH,
       userPromptDir: ctx.config.USER_PROMPT_DIR,
@@ -465,77 +472,4 @@ export class AiQueryService {
       allowedMentions: { parse: [], repliedUser: false },
     });
   }
-}
-
-export async function handleAiChatMonitorMessage(message: Message, ctx: BotContext): Promise<boolean> {
-  if (!ctx.config.CHAT_MONITOR_ENABLED) return false;
-  if (message.author.bot || !message.guild || message.guildId !== ctx.config.GUILD_ID) return false;
-  const botId = ctx.client.user?.id;
-  if (!botId) return false;
-
-  const mentioned = message.mentions.users.has(botId);
-  let repliedToBot = false;
-  if (message.reference?.messageId) {
-    repliedToBot = await message.channel.messages
-      .fetch(message.reference.messageId)
-      .then((m) => m.author?.id === botId)
-      .catch(() => false);
-  }
-  if (!mentioned && !repliedToBot) return false;
-
-  const content = safeStrip(message.content.replace(new RegExp(`<@!?${botId}>`, "g"), "").trim());
-  if (!content) return false;
-
-  try {
-    const svc = new AiQueryService(ctx);
-    await svc.routeMonitorMessage(message, content);
-  } catch (e) {
-    ctx.log.warn({ err: e }, "chat monitor reply failed");
-  }
-  return true;
-}
-
-export async function handleAiHistoryClearButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  if (!interaction.customId.startsWith(HISTORY_CLEAR_Q_PREFIX)) return false;
-  const parts = interaction.customId.slice(HISTORY_CLEAR_Q_PREFIX.length).split(":");
-  if (parts.length !== 2) return false;
-  const [guildId, ownerId] = parts;
-  if (!/^\d+$/.test(guildId) || !/^\d+$/.test(ownerId)) return false;
-
-  if (interaction.user.id !== ownerId) {
-    await interaction.reply({ content: "この履歴は /q 実行ユーザーのみ削除できます。", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-  if (interaction.guildId !== guildId) {
-    await interaction.reply({ content: "このボタンは別サーバー用です。", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-
-  const svc = new AiQueryService(ctx);
-  await svc.clearHistory(guildId, ownerId);
-  void sendOrReconnectAiHistoryAdminPanel(ctx).catch(() => undefined);
-  await interaction.reply({ content: "あなたの会話履歴を削除しました。", flags: MessageFlags.Ephemeral });
-  return true;
-}
-
-export async function handleShowPromptApplyButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
-  if (interaction.customId !== SHOW_PROMPT_APPLY_BUTTON_ID) return false;
-  const embed = interaction.message.embeds[0];
-  const prompt = safeStrip(embed?.description ?? "");
-  if (!prompt || prompt === "プロンプトが空です。") {
-    await interaction.reply({ content: "適用できるプロンプトが見つかりません。", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-  if (embed?.footer?.text?.includes("一部のみ表示")) {
-    await interaction.reply({
-      content: "このプロンプトは表示上限で省略されているため適用できません。",
-      flags: MessageFlags.Ephemeral,
-    });
-    return true;
-  }
-
-  const svc = new AiQueryService(ctx);
-  svc.replaceUserPromptFromChangePromptCommand(interaction.user.id, interaction.user.username, prompt);
-  await interaction.reply({ content: "このプロンプトをあなたの /q に適用しました。", flags: MessageFlags.Ephemeral });
-  return true;
 }

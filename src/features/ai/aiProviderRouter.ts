@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { currentUtcDate, deepSeekModel, fallbackForOpenAiError, nextUtcMidnight, releaseOnFailure, reservationEstimate, shouldTryMiniAfterTerra } from "./aiRouterHelpers.js";
+import type { AiFallbackReason, AiTask } from "./aiRouterTypes.js";
 import type { AppConfig } from "../../core/config.js";
 import type {
   AiProviderBudgetRepository,
@@ -12,36 +14,7 @@ import { OpenAiUsageClient, type OpenAiUsageSnapshot } from "./openaiUsage.js";
 import { openRouterChat, type OpenRouterRequestOptions, type OpenRouterResult } from "./openrouter.js";
 import type { AiProvider, AiRoutePreference, OpenAiModelPreference } from "./providerTypes.js";
 
-export type AiTask =
-  | "answer"
-  | "judge"
-  | "prompt_optimizer"
-  | "prompt_generator"
-  | "senryu_review"
-  | "pacchi_final_check"
-  | "vx_translation"
-  | "preview_translation"
-  | "preview_summary"
-  | "ping";
-
-export type AiFallbackReason =
-  | "manual_deepseek"
-  | "task_policy_deepseek"
-  | "openai_unconfigured"
-  | "openrouter_unconfigured"
-  | "openrouter_failed"
-  | "openrouter_budget_threshold"
-  | "usage_unavailable"
-  | "budget_threshold"
-  | "openai_unauthorized"
-  | "openai_model_unavailable"
-  | "openai_408"
-  | "openai_429"
-  | "openai_server_error"
-  | "openai_network"
-  | "openai_timeout"
-  | "openai_invalid_response"
-  | "openai_model_fallback";
+export type { AiFallbackReason, AiTask } from "./aiRouterTypes.js";
 
 export type AiChatResult = {
   content: string;
@@ -122,55 +95,6 @@ const TASK_MAX_OUTPUT: Record<AiTask, number> = {
   ping: 1_024,
 };
 
-function nextUtcMidnight(usageDate?: string): string {
-  const date = usageDate ?? new Date().toISOString().slice(0, 10);
-  return new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString();
-}
-
-function currentUtcDate(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function reservationEstimate(messages: ChatMessage[], maxOutputTokens: number): number {
-  const inputBytes = Buffer.byteLength(JSON.stringify(messages), "utf8");
-  return Math.max(1, inputBytes + 1_024 + maxOutputTokens);
-}
-
-function deepSeekModel(config: RouterConfig, task: AiTask): string | undefined {
-  if (task === "prompt_generator") return "deepseek-v4-pro";
-  if (task === "senryu_review") return config.SENRYU_AI_REVIEW_MODEL ?? config.DEEPSEEK_MODEL;
-  return undefined;
-}
-
-function fallbackForOpenAiError(error: AiRequestError): AiFallbackReason | undefined {
-  if (error.kind === "network") return "openai_network";
-  if (error.kind === "timeout") return "openai_timeout";
-  if (error.kind === "invalid_response") return "openai_invalid_response";
-  if (error.kind === "configuration") return "openai_unconfigured";
-  if (error.kind !== "http_status") return undefined;
-  if (error.apiCode && new Set([
-    "model_not_found",
-    "model_not_available",
-    "unsupported_model",
-    "permission_denied",
-  ]).has(error.apiCode)) return "openai_model_unavailable";
-  if (error.status === 401 || error.status === 403) return "openai_unauthorized";
-  if (error.status === 404) return "openai_model_unavailable";
-  if (error.status === 408) return "openai_408";
-  if (error.status === 429) return "openai_429";
-  if (error.status !== undefined && error.status >= 500) return "openai_server_error";
-  return undefined;
-}
-
-function releaseOnFailure(error: AiRequestError): boolean {
-  if (error.kind === "configuration") return true;
-  if (error.kind !== "http_status" || error.status === undefined) return false;
-  return error.status >= 400 && error.status < 500 && error.status !== 408;
-}
-
-function shouldTryMiniAfterTerra(reason: AiFallbackReason): boolean {
-  return reason === "openai_model_unavailable" || reason === "openai_unauthorized";
-}
 
 type OpenAiAttemptOutcome =
   | { ok: true; result: AiChatResult }

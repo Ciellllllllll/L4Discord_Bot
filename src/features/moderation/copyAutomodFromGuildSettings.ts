@@ -1,10 +1,10 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { nowIso } from "../../core/db/nowIso.js";
 
 // 旧 guild_settings.data.automod_settings から専用 DB へ 1 回だけ移行（行が無い場合のみ）。
 
-export async function copyAutomodFromGuildSettingsIfMissing(ctx: BotContext, guildId: string): Promise<void> {
+export async function copyAutomodFromGuildSettingsIfMissing(ctx: Pick<CoreDeps, "automodDb" | "db">, guildId: string): Promise<void> {
   const existing = await ctx.automodDb
     .selectFrom("automod_guild_settings")
     .select("guild_id")

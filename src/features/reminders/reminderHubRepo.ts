@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import type { RemindersRow } from "../../core/db/types.js";
 import { getReminderDb } from "./reminderDb.js";
 import { normalizeEventType, type ReminderEvType, type ReminderStoredData } from "./reminderHubTypes.js";
 
-function rdb(ctx: BotContext) {
+// ReminderHubRepo が使う依存。
+type ReminderHubRepoDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
+
+function rdb(ctx: ReminderHubRepoDeps) {
   return getReminderDb(ctx);
 }
 
@@ -76,7 +79,7 @@ function toView(row: RemindersRow): ReminderHubRowView {
 }
 
 export async function createReminderHubEntry(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   input: {
     guildId: string;
     authorId: string;
@@ -116,7 +119,7 @@ export async function createReminderHubEntry(
 }
 
 export async function listActiveByType(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   guildId: string,
   authorId: string,
   evType: ReminderEvType,
@@ -139,7 +142,7 @@ export async function listActiveByType(
 }
 
 export async function getActiveForAuthor(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   guildId: string,
   authorId: string,
   id: string,
@@ -156,7 +159,7 @@ export async function getActiveForAuthor(
 }
 
 export async function getReminderRowById(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   id: string,
 ): Promise<RemindersRow | null> {
   const row = await rdb(ctx)
@@ -168,7 +171,7 @@ export async function getReminderRowById(
 }
 
 export async function getReminderRowForAuthor(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   guildId: string,
   authorId: string,
   id: string,
@@ -185,7 +188,7 @@ export async function getReminderRowForAuthor(
 }
 
 export async function updateReminderHubChannel(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   guildId: string,
   authorId: string,
   id: string,
@@ -203,7 +206,7 @@ export async function updateReminderHubChannel(
 }
 
 export async function updateReminderHubContentAndChannel(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   input: {
     guildId: string;
     authorId: string;
@@ -249,7 +252,7 @@ export async function updateReminderHubContentAndChannel(
 }
 
 export async function cancelReminderForAuthor(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   guildId: string,
   authorId: string,
   id: string,
@@ -266,7 +269,7 @@ export async function cancelReminderForAuthor(
 }
 
 export async function fetchDuePending(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   nowIsoStr: string,
   limit: number,
   excludeIds: readonly string[] = [],
@@ -324,7 +327,7 @@ export type ReminderDispatchUpdateResult = {
 };
 
 export async function applyDispatchResult(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   row: RemindersRow,
   forceNow: boolean,
   db = rdb(ctx),
@@ -363,7 +366,7 @@ export async function applyDispatchResult(
 }
 
 export async function cancelUndeliverableReminder(
-  ctx: BotContext,
+  ctx: ReminderHubRepoDeps,
   row: RemindersRow,
   db = rdb(ctx),
 ): Promise<number> {

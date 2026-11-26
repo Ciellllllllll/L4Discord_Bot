@@ -1,7 +1,10 @@
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
-import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
+import { looksLikePrefixCommandLine } from "../../core/commandLike.js";
+
+// DogApiResponder が使う依存。
+type DogApiResponderDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 const DOG_TRIGGER_PATTERN = /犬|いぬ|inu|dog/i;
 
@@ -22,7 +25,7 @@ export function isValidDogApiImageResponse(data: unknown): data is Required<DogA
   return response.status === "success" && typeof response.message === "string" && /^https?:\/\//i.test(response.message);
 }
 
-async function fetchDogImageUrl(ctx: BotContext): Promise<string | null> {
+async function fetchDogImageUrl(ctx: DogApiResponderDeps): Promise<string | null> {
   const response = await fetch(ctx.config.DOGCEO_IMAGE_RANDOM_URL, {
     headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(ctx.config.DOGCEO_REQUEST_TIMEOUT_MS),
@@ -39,7 +42,7 @@ async function fetchDogImageUrl(ctx: BotContext): Promise<string | null> {
 }
 
 export class DogApiResponder {
-  constructor(private readonly ctx: BotContext) {}
+  constructor(private readonly ctx: DogApiResponderDeps) {}
 
   async onMessage(message: Message): Promise<void> {
     if (!this.ctx.config.DOGCEO_ENABLED) {

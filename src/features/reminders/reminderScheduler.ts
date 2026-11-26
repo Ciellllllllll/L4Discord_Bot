@@ -1,4 +1,5 @@
-import type { BotContext } from "../../bot/context.js";
+import type pino from "pino";
+import type { CoreDeps } from "../../core/deps.js";
 import { withReminderDispatchLock } from "./reminderDispatchLock.js";
 import {
   clearPendingDispatchUpdate,
@@ -25,6 +26,9 @@ import {
   isRecurringReminder,
 } from "./reminderHubRepo.js";
 import { sendReminderHubMessage, type ReminderSendResult } from "./reminderHubSend.js";
+
+// ReminderScheduler が使う依存。startReminderScheduler の ctx 用。
+type ReminderSchedulerContext = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 const MAX_CONSECUTIVE_FAILURES = 5;
 const SINGLE_REMINDER_MAX_RETRY_WINDOW_MS = 24 * 60 * 60_000;
@@ -65,7 +69,7 @@ export type ApplyPendingDispatchUpdateDeps = {
  * すでに dispatch lock を保持している状態で、指定した pending DB 更新を 1 件適用する。
  */
 export async function applyPendingDispatchUpdate(
-  ctx: BotContext,
+  ctx: ReminderSchedulerContext,
   pending: PendingDispatchUpdate,
   deps: ApplyPendingDispatchUpdateDeps = {},
 ): Promise<void> {
@@ -125,7 +129,7 @@ export async function applyPendingDispatchUpdate(
 }
 
 export type ReminderSchedulerHandle = {
-  stop(timeoutMs?: number, log?: Pick<BotContext["log"], "warn">): Promise<void>;
+  stop(timeoutMs?: number, log?: Pick<pino.Logger, "warn">): Promise<void>;
 };
 
 function isReminderSchedulerHandle(
@@ -136,7 +140,7 @@ function isReminderSchedulerHandle(
 
 export async function stopReminderScheduler(
   target: ReminderSchedulerHandle | NodeJS.Timeout,
-  log: Pick<BotContext["log"], "warn">,
+  log: Pick<pino.Logger, "warn">,
   clearTimer: (t: NodeJS.Timeout) => void = clearInterval,
   timeoutMs = DEFAULT_STOP_TIMEOUT_MS,
 ): Promise<void> {
@@ -164,7 +168,7 @@ export type ReminderSchedulerDeps = {
 };
 
 export function startReminderScheduler(
-  ctx: BotContext,
+  ctx: ReminderSchedulerContext,
   intervalMs = 30_000,
   onTick?: () => void,
   deps: ReminderSchedulerDeps = {},
@@ -418,7 +422,7 @@ export function startReminderScheduler(
   }, intervalMs);
 
   return {
-    async stop(timeoutMs = DEFAULT_STOP_TIMEOUT_MS, log: Pick<BotContext["log"], "warn"> = ctx.log): Promise<void> {
+    async stop(timeoutMs = DEFAULT_STOP_TIMEOUT_MS, log: Pick<pino.Logger, "warn"> = ctx.log): Promise<void> {
       stopping = true;
       clearInterval(timer);
       const inFlight = activeTickPromise;

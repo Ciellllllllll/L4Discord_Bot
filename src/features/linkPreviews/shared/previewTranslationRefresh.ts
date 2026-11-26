@@ -1,5 +1,6 @@
 import type { Message } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
+import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { PreviewDocument } from "./previewDocument.js";
 import type { PreviewTranslationStateV1 } from "./previewState.repository.js";
 import type { PreviewDocumentTranslations } from "./previewTranslationGate.js";
@@ -48,7 +49,7 @@ function toV1State(
 
 export async function refreshPreviewTranslationState(
   message: Pick<Message, "id" | "components">,
-  ctx: Pick<BotContext, "config" | "log" | "aiRouter"> & Partial<Pick<BotContext, "mainPgPool">>,
+  ctx: Pick<CoreDeps, "config" | "log"> & { aiRouter?: AiProviderRouter } & Partial<Pick<CoreDeps, "mainPgPool">>,
   guildId: string,
   channelId: string,
   deps: RefreshPreviewDeps = {},

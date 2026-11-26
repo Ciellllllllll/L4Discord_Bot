@@ -9,7 +9,8 @@ import {
   createPostgresMainKysely,
   createPostgresTicketKysely,
 } from "../core/db/kysely.js";
-import { migrateLegacyBooleanColumns, type LegacyBooleanColumn } from "../core/db/legacyBooleanColumns.js";
+import { migrateLegacyBooleanColumns } from "../core/db/legacyBooleanColumns.js";
+import { LEGACY_FLAG_COLUMNS } from "../core/db/legacyFlagColumns.js";
 import { createPgPool } from "../core/db/postgres.js";
 import { ensurePostgresMainSchema } from "../core/db/postgresMainSchema.js";
 import { applyPostgresMigrations, type PostgresMigration } from "../core/db/postgresMigrations.js";
@@ -36,19 +37,9 @@ import { ensurePostgresSenryuSchema } from "../features/senryu/senryu.repository
 import { ensurePostgresTicketDatabaseSchema } from "../features/tickets/ticketDbSchema.js";
 import { ensurePostgresVcTempSchema } from "../features/vc/vcTempPersistence.js";
 import { ensurePostgresVcTimeSchema } from "../features/vc/vcTimeSchema.js";
-import { ensurePostgresYouTubeWatcherSchema, migratePostgresYouTubeVideoCacheReferences, migratePostgresYouTubeWatcherDurableMedia } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
+import { ensurePostgresYouTubeWatcherSchema, migratePostgresYouTubeWatcherDurableMedia } from "../features/youtubeWatcher/youtubeWatcher.repository.js";
+import { migratePostgresYouTubeVideoCacheReferences } from "../features/youtube/youtubeVideoCache.repository.js";
 import { ensurePostgresBokeruSchema } from "../features/bokeru/bokeruRepository.js";
-
-/**
- * SQLite から移したときに bigint で作られ、コードは boolean を書き込むフラグ列。
- * version 11 は pacchi の設定列だけを直していた。
- */
-export const LEGACY_FLAG_COLUMNS: readonly LegacyBooleanColumn[] = [
-  { table: "pacchi_lexicon", column: "is_proper_noun", defaultValue: false },
-  { table: "pacchi_lexicon", column: "is_oov", defaultValue: false },
-  { table: "senryu_records", column: "spoiler", defaultValue: null },
-  { table: "lol_watcher_accounts", column: "enabled", defaultValue: true },
-];
 
 export type DatabaseRuntime = {
   db: Kysely<Database>;

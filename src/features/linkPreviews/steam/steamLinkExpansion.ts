@@ -5,7 +5,7 @@ import {
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import { SteamExchangeRateRepository } from "../../steam/steamExchangeRateRepository.js";
@@ -47,7 +47,7 @@ export type SteamPreviewPayload = MessageCreateOptions & {
 
 export type SteamPreviewBuildOptions = SteamStoreFetchOptions & {
   client?: Pick<SteamStoreClient, "fetchPagePreview">;
-  mainPgPool?: BotContext["mainPgPool"];
+  mainPgPool?: CoreDeps["mainPgPool"];
   exchangeRate?: number | null | (() => Promise<number | null>);
   config?: Pick<AppConfig, "DEEPSEEK_API_KEY"> & Partial<AppConfig>;
   log?: LoggerLike;
@@ -153,8 +153,8 @@ export async function buildSteamReplyPayloads(
 
 export type SendSteamExpansionDeps = {
   replyExpansion?: ExpansionReply;
-  db: BotContext["db"];
-  mainPgPool?: BotContext["mainPgPool"];
+  db: CoreDeps["db"];
+  mainPgPool?: CoreDeps["mainPgPool"];
   config: AppConfig;
   log: LoggerLike;
   aiRouter?: AiProviderRouter;

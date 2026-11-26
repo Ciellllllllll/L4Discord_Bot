@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type pino from "pino";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
 import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
 import { ensurePostgresGameDealSchema } from "./postgresGameDealRepository.js";
@@ -116,7 +116,7 @@ async function run(): Promise<boolean> {
         info() {},
         warn() {},
       } as unknown as pino.Logger,
-    } as unknown as BotContext;
+    } as unknown as Pick<CoreDeps, "log" | "mainPgPool">;
     const items = await scanSteamNowFullDiscountItems(ctx);
     const parsedSearchUrl = new URL(searchUrl!);
     assert.equal(parsedSearchUrl.searchParams.get("hwtype"), "0");

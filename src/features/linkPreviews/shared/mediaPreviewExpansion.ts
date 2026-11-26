@@ -6,7 +6,7 @@ import type {
   MessageCreateOptions,
   MessageFlags,
 } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { LocalLlmQueue } from "../../ai/localLlmQueue.js";
@@ -68,7 +68,7 @@ export type MediaPreviewExpansionOptions<T extends { url: string }> = {
   maxTargets: number;
   build: (target: T) => Promise<MediaPreviewPayload | MessageCreateOptions | undefined>;
   replyExpansion?: ExpansionReply;
-  db: BotContext["db"];
+  db: CoreDeps["db"];
   log: LoggerLike;
   saveState?: typeof savePreviewTranslationState;
   /** テスト用。省略時はプロセス全体で共有するキューを使う */

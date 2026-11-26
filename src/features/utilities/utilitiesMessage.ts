@@ -1,16 +1,19 @@
 import type { Message, PartialMessage } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { CatApiResponder } from "./catApiResponder.js";
 import { DogApiResponder } from "./dogApiResponder.js";
 import { KeywordResponder } from "./keywordResponder.js";
 import { LeaveNotifierMessageHandler } from "./leaveNotifier.js";
 import { ColdLaughHandler } from "./coldLaugh.js";
-import { LinkPreviewMessageHandler } from "../linkPreviews/linkPreviewMessageHandler.js";
-import { LinkExpansionTracker } from "../linkPreviews/shared/linkExpansionTracker.js";
-import { LinkExpansionRepository } from "../linkPreviews/shared/linkExpansionRepository.js";
+import type { LinkPreviewMessageHandler } from "../linkPreviews/linkPreviewMessageHandler.js";
+import type { LinkExpansionTracker } from "../linkPreviews/shared/linkExpansionTracker.js";
+import type pino from "pino";
+
+// UtilitiesMessage が使う依存。
+type UtilitiesMessageDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 export type UtilitiesMessageBundle = {
-  log: Pick<BotContext["log"], "warn">;
+  log: Pick<pino.Logger, "warn">;
   expansions: LinkExpansionTracker;
   coldLaugh: ColdLaughHandler;
   linkPreview: LinkPreviewMessageHandler;
@@ -20,27 +23,23 @@ export type UtilitiesMessageBundle = {
   leaveNotifierMessages: LeaveNotifierMessageHandler;
 };
 
-export function createUtilitiesMessageHandlers(ctx: BotContext): UtilitiesMessageBundle {
-  const repository = new LinkExpansionRepository(ctx.mainPgPool, () => {
-    if (!ctx.client.user) throw new Error("Discord client is not ready");
-    return ctx.client.user.id;
-  });
-  const expansions = new LinkExpansionTracker(ctx, repository, async (message) => {
-    const results = await Promise.allSettled([
-      bundle.linkPreview.onMessage(message), bundle.leaveNotifierMessages.onMessage(message),
-    ]);
-    const failure = results.find((result) => result.status === "rejected");
-    if (failure?.status === "rejected") throw failure.reason;
-  }, (message) => bundle.linkPreview.releaseEmbeds(message));
+// LinkPreviewMessageHandler / LinkExpansionTracker / LinkExpansionRepository の生成は
+// bot/linkPreviewRuntime.ts の createLinkPreviewRuntime が行う。ここでは受け取って束ねるだけ。
+export type UtilitiesMessageLinkParts = {
+  expansions: LinkExpansionTracker;
+  linkPreview: LinkPreviewMessageHandler;
+};
+
+export function createUtilitiesMessageHandlers(ctx: UtilitiesMessageDeps, link: UtilitiesMessageLinkParts): UtilitiesMessageBundle {
   const bundle: UtilitiesMessageBundle = {
     log: ctx.log,
-    expansions,
+    expansions: link.expansions,
     coldLaugh: new ColdLaughHandler(ctx),
-    linkPreview: new LinkPreviewMessageHandler(ctx, { replyExpansion: expansions.reply, deferExpansion: expansions.defer }),
+    linkPreview: link.linkPreview,
     catApiResponder: new CatApiResponder(ctx),
     dogApiResponder: new DogApiResponder(ctx),
     keywordResponder: new KeywordResponder(ctx),
-    leaveNotifierMessages: new LeaveNotifierMessageHandler(ctx, expansions.reply),
+    leaveNotifierMessages: new LeaveNotifierMessageHandler(ctx, link.expansions.reply),
   };
   return bundle;
 }

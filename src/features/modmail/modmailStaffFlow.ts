@@ -7,7 +7,7 @@ import {
   PermissionFlagsBits,
   PermissionsBitField,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import { getAppealById, getAppealHoldByThreadId } from "../appeals/appealService.js";
 import {
@@ -15,7 +15,7 @@ import {
   buildForwardDmFiles,
   parseAttachmentMetadata,
   serializeAttachmentsFromMessage,
-} from "./modmailAttachmentUtils.js";
+} from "../../core/discordAttachments.js";
 import { logModmailEvent } from "./modmailEventsLog.js";
 import { MODMAIL_REPLY_COMMAND } from "./modmailIds.js";
 import {
@@ -55,7 +55,7 @@ export async function isModmailStaff(
   guild: Guild,
   userId: string,
   member: GuildMember | APIInteractionGuildMember | null,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config">,
 ): Promise<boolean> {
   const roleId = ctx.config.ADMIN_ROLE_ID?.trim();
   if (member && !("guild" in member)) {
@@ -100,7 +100,7 @@ export function confirmReplyText(reply: {
   ].join("\n");
 }
 
-export async function confirmReplyTextResolved(ctx: BotContext, reply: ModmailReplyRow): Promise<string> {
+export async function confirmReplyTextResolved(ctx: Pick<CoreDeps, "ticketDb">, reply: ModmailReplyRow): Promise<string> {
   let appealCode: string | undefined;
   if (reply.appeal_id) {
     const a = await getAppealById(ctx, reply.appeal_id);
@@ -110,7 +110,7 @@ export async function confirmReplyTextResolved(ctx: BotContext, reply: ModmailRe
 }
 
 export async function editModmailConfirmMessage(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "client">,
   reply: {
     guild_id: string;
     thread_id: string;
@@ -138,7 +138,8 @@ export async function editModmailConfirmMessage(
   await msg.edit({ content: text, components: [] }).catch(() => undefined);
 }
 
-export async function cancelPendingRepliesBySource(ctx: BotContext, sourceMessageId: string): Promise<void> {
+// modmail 側の保留返信キャンセル。appeals からは CancelPendingModmailReplies 型を通して使う。
+export async function cancelPendingRepliesBySource(ctx: Pick<CoreDeps, "ticketDb" | "log" | "client">, sourceMessageId: string): Promise<void> {
   const rows = await pendingRepliesBySource(ctx, sourceMessageId);
   const at = nowIso();
   for (const row of rows) {
@@ -153,7 +154,7 @@ export async function cancelPendingRepliesBySource(ctx: BotContext, sourceMessag
 }
 
 export async function cancelPendingRepliesByTicket(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb" | "log" | "client">,
   ticketId: string,
   reason: string,
   closerId: string,
@@ -176,7 +177,7 @@ export async function cancelPendingRepliesByTicket(
   }
 }
 
-export async function cancelPendingRepliesByAppeal(ctx: BotContext, appealId: string): Promise<void> {
+export async function cancelPendingRepliesByAppeal(ctx: Pick<CoreDeps, "ticketDb" | "log" | "client">, appealId: string): Promise<void> {
   const rows = await pendingRepliesByAppealId(ctx, appealId);
   const at = nowIso();
   for (const row of rows) {
@@ -191,7 +192,7 @@ export async function cancelPendingRepliesByAppeal(ctx: BotContext, appealId: st
 }
 
 export async function approveModmailReply(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb" | "log" | "client">,
   replyId: string,
   staffId: string,
   confirmInteractionMessage: Message | null,
@@ -326,7 +327,7 @@ export async function approveModmailReply(
 }
 
 export async function rejectModmailReply(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb" | "log" | "client">,
   replyId: string,
   staffId: string,
   confirmInteractionMessage: Message | null,
@@ -346,7 +347,7 @@ export async function rejectModmailReply(
 }
 
 export async function closeModmailTicketFull(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb" | "log" | "client">,
   input: { ticketId: string; guildId: string; threadId: string; closerId: string; reason: string },
 ): Promise<{ ok: boolean; message: string }> {
   const res = await closeModmailTicketInDb(ctx, input.ticketId, input.closerId, input.reason);
@@ -393,7 +394,7 @@ export async function closeModmailTicketFull(
   return { ok: true, message: `チケット ${ticketDisplayCode(input.ticketId)} をクローズしました。` };
 }
 
-export async function handleModmailStaffReplyCommand(message: Message, ctx: BotContext): Promise<boolean> {
+export async function handleModmailStaffReplyCommand(message: Message, ctx: Pick<CoreDeps, "config" | "ticketDb" | "log">): Promise<boolean> {
   if (!message.guild || !message.channel?.isThread()) return false;
   if (!message.content.trim().startsWith(MODMAIL_REPLY_COMMAND)) return false;
 
@@ -470,7 +471,7 @@ export async function handleModmailStaffReplyCommand(message: Message, ctx: BotC
   return true;
 }
 
-export async function routeModmailGuildThreadMessage(message: Message, ctx: BotContext): Promise<boolean> {
+export async function routeModmailGuildThreadMessage(message: Message, ctx: Pick<CoreDeps, "config" | "ticketDb" | "log">): Promise<boolean> {
   if (!message.guild || message.author.bot) return false;
   if (message.content.trim().startsWith(MODMAIL_REPLY_COMMAND)) {
     if (!message.channel?.isThread()) return false;

@@ -1,12 +1,14 @@
 import type { ExpansionReply } from "./shared/linkExpansionTracker.js";
 import { MessageFlags, type Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type pino from "pino";
+import type { CoreDeps } from "../../core/deps.js";
+import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
-import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
+import { looksLikePrefixCommandLine } from "../../core/commandLike.js";
 import {
   cacheYouTubeVideoForPost,
   saveYouTubeVideoCacheReferenceForPost,
-} from "../youtubeWatcher/youtubeVideoCache.service.js";
+} from "../youtube/youtubeVideoCache.service.js";
 import {
   buildTwitterReplyPayloads,
   expandTwitterLinks,
@@ -21,10 +23,10 @@ import {
   buildYouTubeReplyPayloads,
   prepareYouTubeLinkExpansion,
   sendYouTubeLinkExpansion,
-  waitForNativeYouTubeEmbed,
   type YouTubePreviewBuildOptions,
 } from "./youtube/youtubeLinkExpansion.js";
 import { collectYouTubeReplyTargets } from "./youtube/youtubePreviewSource.js";
+import { waitForNativeYouTubeEmbed } from "./youtube/youtubeNativeEmbedWait.js";
 import { collectGithubReplyTargets } from "./github/githubPreviewSource.js";
 import {
   buildGithubReplyPayloads,
@@ -38,7 +40,7 @@ import { expandInstagramLinks } from "./instagram/instagramLinkExpansion.js";
 import { collectInstagramReplyTargets } from "./instagram/instagramPreviewSource.js";
 import { buildWebReplyPayloads, sendWebLinkExpansion, type WebPreviewBuildResult } from "./web/webLinkExpansion.js";
 import { collectWebReplyTargets, extractWebLinks, MAX_WEB_PREVIEWS } from "./web/webPreviewSource.js";
-import { resolveYouTubeVideoMedia } from "../utilities/youtubeVideoMedia.js";
+import { resolveYouTubeVideoMedia } from "../youtube/youtubeVideoMedia.js";
 import { LateEmbedWatcher } from "./shared/lateEmbedWatcher.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "./youtube/youtubeMediaAttachment.js";
 import {
@@ -73,7 +75,7 @@ function attachmentSizeLimitForMessage(message: Message): number {
  */
 export async function suppressLateEmbeds(
   message: Pick<Message, "id" | "fetch">,
-  log: Pick<BotContext["log"], "warn">,
+  log: Pick<pino.Logger, "warn">,
 ): Promise<void> {
   try {
     const latest = await message.fetch(true);
@@ -82,6 +84,11 @@ export async function suppressLateEmbeds(
     log.warn({ err: String(err), messageId: message.id }, "late embed suppression failed");
   }
 }
+
+// リンクプレビュー処理が使う依存。aiRouter は翻訳に使う。
+export type LinkPreviewHandlerDeps =
+  & Pick<CoreDeps, "config" | "db" | "log" | "client" | "mainPgPool">
+  & { aiRouter: AiProviderRouter };
 
 type LinkPreviewMessageHandlerDeps = {
   replyExpansion?: ExpansionReply;
@@ -115,7 +122,7 @@ export class LinkPreviewMessageHandler {
   private readonly deps: Required<LinkPreviewMessageHandlerDeps>;
   private readonly tracked: boolean;
 
-  constructor(private readonly ctx: BotContext, deps: LinkPreviewMessageHandlerDeps = {}) {
+  constructor(private readonly ctx: LinkPreviewHandlerDeps, deps: LinkPreviewMessageHandlerDeps = {}) {
     this.tracked = Boolean(deps.replyExpansion);
     this.deps = {
       replyExpansion: deps.replyExpansion ?? ((message, _key, payload) => message.reply(payload)),

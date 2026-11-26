@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { startExecutionFlow } from "./executionFlow.js";
-import { startTimeoutExtendFlow } from "./timeoutExtendFlow.js";
+import { startExecutionFlow } from "./executionFlowEntry.js";
+import { startTimeoutExtendFlow } from "./timeoutExtendFlowEntry.js";
 
 function createDb() {
   const updates: Record<string, unknown>[] = [];

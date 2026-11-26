@@ -1,7 +1,10 @@
 import type { Message, MessageReaction, PartialMessageReaction, User } from "discord.js";
 import { sql } from "kysely";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
+
+// TrackReaction が使う依存。
+type TrackReactionDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 type StampUsageItem = {
   id: string;
@@ -36,7 +39,7 @@ function countUsageItems(items: StampUsageItem[]): Array<StampUsageItem & { coun
 }
 
 async function incrementStampUsage(
-  ctx: BotContext,
+  ctx: TrackReactionDeps,
   guildId: string,
   userId: string,
   item: StampUsageItem,
@@ -98,7 +101,7 @@ function extractStickerUsageFromMessage(message: Message): StampUsageItem[] {
   }));
 }
 
-export async function trackStampMessage(message: Message, ctx: BotContext): Promise<void> {
+export async function trackStampMessage(message: Message, ctx: TrackReactionDeps): Promise<void> {
   if (!message.guildId || message.author.bot) return;
 
   const items = countUsageItems([
@@ -114,7 +117,7 @@ export async function trackStampMessage(message: Message, ctx: BotContext): Prom
 export async function trackStampReaction(
   reaction: MessageReaction | PartialMessageReaction,
   user: User,
-  ctx: BotContext,
+  ctx: TrackReactionDeps,
 ): Promise<void> {
   if (user.bot || !reaction.message.guildId) return;
   const guildId = reaction.message.guildId;

@@ -11,10 +11,13 @@ import {
   isStructuralReminderDeliveryError,
 } from "../../core/discordErrors.js";
 
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import type { RemindersRow } from "../../core/db/types.js";
 import { EVENT_META, normalizeEventType, type ReminderEvType } from "./reminderHubTypes.js";
 import { reminderRowStoredData } from "./reminderHubRepo.js";
+
+// ReminderHubSend が使う依存。
+type ReminderHubSendDeps = Pick<CoreDeps, "config" | "client" | "log">;
 
 export type StructuralReminderDeliveryErrorCode =
   | "GUILD_NOT_FOUND"
@@ -91,7 +94,7 @@ function shouldFallbackToDmOnChannelError(error: unknown): boolean {
   return isNonTransientDiscordApi4xx(error);
 }
 
-export async function sendReminderHubMessage(ctx: BotContext, row: RemindersRow): Promise<ReminderSendResult> {
+export async function sendReminderHubMessage(ctx: ReminderHubSendDeps, row: RemindersRow): Promise<ReminderSendResult> {
   const data = reminderRowStoredData(row);
   const ev = normalizeEventType(data.ev_type);
   const label = EVENT_META[ev].label;
@@ -139,7 +142,7 @@ export async function sendReminderHubMessage(ctx: BotContext, row: RemindersRow)
 }
 
 async function dmFallback(
-  ctx: BotContext,
+  ctx: ReminderHubSendDeps,
   row: RemindersRow,
   payload: ReturnType<typeof componentCardsPayload> & { allowedMentions: { parse: never[] } },
   channelError: unknown,

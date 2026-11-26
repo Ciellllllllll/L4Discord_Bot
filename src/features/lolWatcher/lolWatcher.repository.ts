@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import type { PgQueryable } from "../../core/db/postgres.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import type {
   LolWatcherAccount,
@@ -69,7 +69,7 @@ function toActiveGame(row: ActiveGameRow): LolWatcherActiveGame {
 
 export type LolWatcherRepositoryLike = PostgresLolWatcherRepository;
 
-export function createLolWatcherRepository(ctx: BotContext): PostgresLolWatcherRepository {
+export function createLolWatcherRepository(ctx: Pick<CoreDeps, "mainPgPool">): PostgresLolWatcherRepository {
   return new PostgresLolWatcherRepository(ctx.mainPgPool);
 }
 

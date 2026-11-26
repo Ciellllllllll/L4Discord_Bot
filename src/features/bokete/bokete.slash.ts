@@ -1,5 +1,5 @@
 import { AttachmentBuilder, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import { fetchBoketePost, type FetchBoketePostOptions } from "./boketeClient.js";
 
@@ -9,7 +9,7 @@ const RESTRICTED_CHANNEL_MESSAGE = "このコマンドは指定スレッドで�
 
 export async function handleBoketeSlash(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log">,
   options: Pick<FetchBoketePostOptions, "fetcher"> = {},
 ): Promise<void> {
   if (interaction.channelId !== BOKETE_THREAD_ID) {

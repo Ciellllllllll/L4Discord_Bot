@@ -4,7 +4,7 @@ import {
   ButtonStyle, ChannelType, Collection, ComponentType, MessageFlags, PermissionFlagsBits,
   type APIEmbed, type APIMessageComponent, type APIMessageTopLevelComponent, type Message,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { buildMessageLinkExpansionPayload, LeaveNotifierMessageHandler } from "./leaveNotifier.js";
 import { CyclicQuoteError, type ExpansionReply } from "../linkPreviews/shared/linkExpansionTracker.js";
 
@@ -118,7 +118,7 @@ function handlerFixture(options: {
       channels: { fetch: async () => { fail("channel"); return source; } },
     },
     log: { warn: (entry: unknown) => warnings.push(entry) },
-  } as unknown as BotContext;
+  } as unknown as Pick<CoreDeps, "config" | "db" | "log" | "client">;
   const message = {
     author: { id: options.authorId ?? "reader", bot: options.authorBot ?? false },
     member: { id: "reader", guild: { id: options.postingGuildId ?? "100" } },

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import { parsePanelState, serializePanelState, type PanelMessageState } from "./panelState.js";
 
@@ -11,7 +11,7 @@ export type PanelMessageRow = {
 };
 
 export async function ensurePanelMessageRow(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "db">,
   guildId: string,
   kind: string,
   channelId: string,
@@ -48,7 +48,7 @@ export async function ensurePanelMessageRow(
 }
 
 export async function savePanelMessageRow(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "db">,
   rowId: string,
   channelId: string,
   messageId: string,
@@ -65,6 +65,6 @@ export async function savePanelMessageRow(
     .execute();
 }
 
-export async function deletePanelMessageRow(ctx: BotContext, rowId: string): Promise<void> {
+export async function deletePanelMessageRow(ctx: Pick<CoreDeps, "db">, rowId: string): Promise<void> {
   await ctx.db.deleteFrom("panel_messages").where("id", "=", rowId).execute();
 }

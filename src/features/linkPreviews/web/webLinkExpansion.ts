@@ -7,7 +7,7 @@ import {
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
@@ -182,7 +182,7 @@ export async function buildWebReplyPayloads(
 
 export type SendWebExpansionDeps = {
   replyExpansion?: ExpansionReply;
-  db: BotContext["db"];
+  db: CoreDeps["db"];
   log: LoggerLike;
   saveState?: typeof savePreviewTranslationState;
 };

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { ComponentType, MessageFlags, type Message, type MessageCreateOptions } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import { isDiscordMissingResourceError } from "../../../core/discordErrors.js";
 import { LinkExpansionRepository, type ExpansionRecord, type ExpansionSource } from "./linkExpansionRepository.js";
 
@@ -65,7 +65,7 @@ export class LinkExpansionTracker {
   private stopped = false;
 
   constructor(
-    private readonly ctx: Pick<BotContext, "client" | "log">,
+    private readonly ctx: Pick<CoreDeps, "client" | "log">,
     private readonly repository: LinkExpansionRepository,
     private readonly render: (message: Message) => Promise<void>,
     /** 外部リンクの展開がすべて無くなったときに、抑制していた元投稿の Embed を戻す */

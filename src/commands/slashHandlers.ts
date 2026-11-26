@@ -27,8 +27,8 @@ import { promptAnonymousSurvey } from "../features/anonymousSurvey/surveyGate.js
 import { handleAnonymousSurveyViewCommand } from "../features/anonymousSurvey/surveyView.js";
 import { handleBokeruSlash } from "../features/bokeru/bokeru.js";
 import { handleBoketeSlash } from "../features/bokete/bokete.slash.js";
-import { startExecutionFlow } from "../features/execution/executionFlow.js";
-import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlow.js";
+import { startExecutionFlow } from "../features/execution/executionFlowEntry.js";
+import { startTimeoutExtendFlow } from "../features/execution/timeoutExtendFlowEntry.js";
 import {
   handleGameNow,
   handleGameOff,

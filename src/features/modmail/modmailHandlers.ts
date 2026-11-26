@@ -1,13 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { MessageFlags, type ButtonInteraction } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { buildModmailTicketCreateRow } from "./modmailUi.js";
 import { openModmailByGuildUser, sendModmailStartDm, upsertModmailIntake } from "./modmailService.js";
 import { pendingModmailTicketContexts } from "./modmailSessions.js";
 
 export async function handleUserPanelModmailStart(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb" | "log">,
 ): Promise<void> {
   if (!interaction.guildId) {
     await interaction.reply({ content: "ギルド内でのみ利用できます。", flags: MessageFlags.Ephemeral });

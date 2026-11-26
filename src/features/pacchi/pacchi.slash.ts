@@ -2,11 +2,15 @@ import { ComponentCardBuilder, componentCardsPayload } from "../../core/componen
 import {
   type ChatInputCommandInteraction,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+
+// pacchi スラッシュコマンドが使う依存。
+type PacchiSlashDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
+
 
 export async function handlePacchiHelp(
   interaction: ChatInputCommandInteraction,
-  _ctx: BotContext,
+  _ctx: PacchiSlashDeps,
 ): Promise<void> {
   const embed = new ComponentCardBuilder()
     .setTitle("ぱっちぃ ヘルプ")

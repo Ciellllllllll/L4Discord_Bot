@@ -7,13 +7,16 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
-import { parseCustomId } from "../../interactions/parseCustomId.js";
+import type { CoreDeps } from "../../core/deps.js";
+import { parseCustomId } from "../../core/parseCustomId.js";
 import { DETECTER_REASON_INPUT_ID, getDetecterService } from "./detecterService.js";
+
+// DetecterService (シングルトン) に渡す依存。サービス自身は config / log / client / db を使う。
+type DetecterDeps = Pick<CoreDeps, "config" | "log" | "client" | "db">;
 
 export async function handleDetecterButton(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: DetecterDeps,
 ): Promise<boolean> {
   const parsed = parseCustomId(interaction.customId);
   if (!parsed || parsed.domain !== "detecter") return false;
@@ -67,7 +70,7 @@ export async function handleDetecterButton(
 
 export async function handleDetecterModal(
   interaction: ModalSubmitInteraction,
-  ctx: BotContext,
+  ctx: DetecterDeps,
 ): Promise<boolean> {
   const parsed = parseCustomId(interaction.customId);
   if (!parsed || parsed.domain !== "detecter") return false;

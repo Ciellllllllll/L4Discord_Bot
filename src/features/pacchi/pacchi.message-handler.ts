@@ -1,5 +1,6 @@
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 import { analyzeMorph, analyzeSenryu } from "../japaneseAnalysis/japaneseAnalysisClient.js";
 import { pacchiAiFinalCheck } from "./pacchi.aiFinalCheck.js";
 import { extractPhrase, extractWords, isLearnableMessage } from "./pacchi.filters.js";
@@ -20,6 +21,9 @@ import { handleWorkEnd, handleWorkStart } from "./pacchi.prefix.js";
 import { buildVerifiedPacchiPoem, pacchiVerifiedPoemFailureMessage } from "./pacchi.poem.js";
 import type { PacchiLearnedEmoji } from "./pacchi.types.js";
 
+// pacchi のメッセージ処理が使う依存。
+export type PacchiMessageDeps = Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool"> & { aiRouter: AiProviderRouter };
+
 const lastSpokeByChannel = new Map<string, number>();
 const lastAutoReplyUserByChannel = new Map<string, string>();
 const pendingChatChannels = new Set<string>();
@@ -38,7 +42,7 @@ type WikipediaSummary = {
   };
 };
 
-function isSelfAuthoredMessage(ctx: BotContext, message: Message): boolean {
+function isSelfAuthoredMessage(ctx: PacchiMessageDeps, message: Message): boolean {
   return message.author.bot || message.author.id === ctx.client.user?.id || Boolean(message.webhookId) || message.system;
 }
 
@@ -55,11 +59,11 @@ function markSpoke(channelId: string): void {
   lastSpokeByChannel.set(channelId, Date.now());
 }
 
-function wikipediaSummaryBaseUrl(ctx: BotContext): string {
+function wikipediaSummaryBaseUrl(ctx: PacchiMessageDeps): string {
   return ctx.config.PACCHI_WIKIPEDIA_API_BASE_URL.replace(/\/+$/, "");
 }
 
-function wikipediaRandomSummaryUrl(ctx: BotContext): string {
+function wikipediaRandomSummaryUrl(ctx: PacchiMessageDeps): string {
   const baseUrl = wikipediaSummaryBaseUrl(ctx);
   if (baseUrl.endsWith("/page/summary")) {
     return `${baseUrl.slice(0, -"/page/summary".length)}/page/random/summary`;
@@ -84,7 +88,7 @@ async function fetchWikipediaSummary(url: string): Promise<WikipediaSummary | nu
   return await response.json() as WikipediaSummary;
 }
 
-async function explainTerm(ctx: BotContext, term: string): Promise<string> {
+async function explainTerm(ctx: PacchiMessageDeps, term: string): Promise<string> {
   const baseUrl = ctx.config.PACCHI_WIKIPEDIA_API_BASE_URL.replace(/\/+$/, "");
   const url = `${baseUrl}/${encodeURIComponent(term)}`;
   try {
@@ -96,7 +100,7 @@ async function explainTerm(ctx: BotContext, term: string): Promise<string> {
   }
 }
 
-async function randomWikipediaReply(ctx: BotContext): Promise<string | null> {
+async function randomWikipediaReply(ctx: PacchiMessageDeps): Promise<string | null> {
   try {
     const data = await fetchWikipediaSummary(wikipediaRandomSummaryUrl(ctx));
     if (!data) return null;
@@ -139,7 +143,7 @@ function isReplyEmojiAvailable(message: Message, emoji: string | null): boolean 
 }
 
 async function maybeAiCheckedPacchiReply(
-  ctx: BotContext,
+  ctx: PacchiMessageDeps,
   repo: PacchiRepositoryLike,
   guildId: string,
   reply: string,
@@ -160,7 +164,7 @@ function extractPacchiSenryuSubmission(content: string): string | null {
 }
 
 async function tryHandlePacchiSenryuSubmission(
-  ctx: BotContext,
+  ctx: PacchiMessageDeps,
   message: Message,
   repo: PacchiRepositoryLike,
   content: string,
@@ -201,7 +205,7 @@ async function tryHandlePacchiSenryuSubmission(
 }
 
 async function learnFromPacchiMessage(
-  ctx: BotContext,
+  ctx: PacchiMessageDeps,
   repo: PacchiRepositoryLike,
   message: Message,
   guildId: string,
@@ -242,7 +246,7 @@ async function learnFromPacchiMessage(
   if (words.length > 0 || phrase) await repo.learn(guildId, words, phrase);
 }
 
-export async function handlePacchiMessage(ctx: BotContext, message: Message): Promise<boolean> {
+export async function handlePacchiMessage(ctx: PacchiMessageDeps, message: Message): Promise<boolean> {
   if (isSelfAuthoredMessage(ctx, message)) return false;
   if (!message.guildId || message.guildId !== ctx.config.GUILD_ID) return false;
 

@@ -12,9 +12,12 @@ import {
   type Message,
   type PartialGuildMember,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
-import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
+import { looksLikePrefixCommandLine } from "../../core/commandLike.js";
+
+// LeaveNotifier が使う依存。
+type LeaveNotifierDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 const MESSAGE_LINK_RE =
   /https?:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/(\d+)\/(\d+)\/(\d+)/g;
@@ -233,7 +236,7 @@ export function buildMessageLinkExpansionPayload(
 }
 
 export async function sendMemberLeaveEmbed(
-  ctx: BotContext,
+  ctx: LeaveNotifierDeps,
   member: GuildMember | PartialGuildMember,
 ): Promise<void> {
   if (member.partial) {
@@ -270,7 +273,7 @@ export async function sendMemberLeaveEmbed(
 }
 
 export class LeaveNotifierMessageHandler {
-  constructor(private readonly ctx: BotContext, private readonly replyExpansion?: ExpansionReply) {}
+  constructor(private readonly ctx: LeaveNotifierDeps, private readonly replyExpansion?: ExpansionReply) {}
 
   hasLinks(message: Message): boolean {
     return Boolean(message.guildId && !message.author?.bot && !looksLikePrefixCommandLine(message.content)

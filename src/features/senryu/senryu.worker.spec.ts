@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { ChannelType } from "discord.js";
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
 import { initKuromojiTokenizer } from "./senryu.kuromoji.js";
 import { runSenryuPipeline } from "./senryu.service.js";
+import type { SenryuServiceDeps } from "./senryu.service.js";
 import type { SenryuRepository } from "./senryu.repository.js";
 import type { SenryuRecord, SavedSenryuRecord } from "./senryu.types.js";
 
@@ -26,7 +26,7 @@ function makeMessage(content: string): Message {
   } as unknown as Message;
 }
 
-function makeCtx(timeoutMs = 100, workerFallbackEnabled = false): BotContext {
+function makeCtx(timeoutMs = 100, workerFallbackEnabled = false): SenryuServiceDeps {
   const logs: unknown[] = [];
   return {
     config: {
@@ -52,7 +52,7 @@ function makeCtx(timeoutMs = 100, workerFallbackEnabled = false): BotContext {
       warn: (...args: unknown[]) => logs.push(args),
       error: (...args: unknown[]) => logs.push(args),
     },
-  } as unknown as BotContext;
+  } as unknown as SenryuServiceDeps;
 }
 
 function makeRepo(): SenryuRepository {

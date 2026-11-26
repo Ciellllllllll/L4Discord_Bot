@@ -5,13 +5,13 @@ import {
   type APIMessageTopLevelComponent,
   type ButtonInteraction,
 } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
-import { PostgresYouTubeWatcherRepository } from "../../youtubeWatcher/youtubeWatcher.repository.js";
+import type { CoreDeps } from "../../../core/deps.js";
+import { PostgresYouTubeVideoCacheRepository } from "../../youtube/youtubeVideoCache.repository.js";
 import {
   isGoogleVideoMediaUrl,
   resolveYouTubeVideoMediaWithRetry,
-} from "../../utilities/youtubeVideoMedia.js";
-import { replacePreviewMedia } from "../shared/previewRenderer.js";
+} from "../../youtube/youtubeVideoMedia.js";
+import { replacePreviewMedia } from "../../../core/previewMedia.js";
 import { parseYouTubeUrl } from "./youtubePreviewSource.js";
 import {
   downloadYouTubeMediaAttachment,
@@ -135,7 +135,7 @@ async function reportRefreshBusy(interaction: ButtonInteraction): Promise<void> 
 
 export async function handleYouTubeMediaRefresh(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool">,
   deps: YouTubeMediaRefreshDeps = {},
 ): Promise<boolean> {
   if (interaction.customId !== PREVIEW_YOUTUBE_MEDIA_REFRESH_ID) return false;
@@ -211,7 +211,7 @@ export async function handleYouTubeMediaRefresh(
           null,
         );
       } else {
-        await new PostgresYouTubeWatcherRepository(ctx.mainPgPool)
+        await new PostgresYouTubeVideoCacheRepository(ctx.mainPgPool)
           .updateVideoCacheReferenceMedia(
             interaction.message.id,
             "google",

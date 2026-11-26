@@ -1,5 +1,5 @@
 import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { isAdmin } from "../../core/permission.js";
 import { createLolWatcherRepository } from "./lolWatcher.repository.js";
 import { getLolWatcherController, scanLolWatcher, validateAndPrepareLolWatcher } from "./lolWatcher.watcher.js";
@@ -19,7 +19,7 @@ function scanSummary(result: Awaited<ReturnType<typeof scanLolWatcher>>): string
 
 async function ensureLolWatcherAdmin(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">,
   member: GuildMember | null,
 ): Promise<boolean> {
   if (member && isAdmin(member, ctx.config)) return true;
@@ -29,7 +29,7 @@ async function ensureLolWatcherAdmin(
 
 export async function handleLolWatchCommand(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool">,
   member: GuildMember | null,
 ): Promise<void> {
   const subcommand = interaction.options.getSubcommand(true);
@@ -119,7 +119,7 @@ export async function handleLolWatchCommand(
 
 export async function handleLolAdminAddCommand(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">,
   member: GuildMember | null,
 ): Promise<void> {
   if (!ensureLolWatcherAdmin(interaction, ctx, member)) return;
@@ -146,7 +146,7 @@ export async function handleLolAdminAddCommand(
 
 export async function handleLolAdminRemoveCommand(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">,
   member: GuildMember | null,
 ): Promise<void> {
   if (!ensureLolWatcherAdmin(interaction, ctx, member)) return;

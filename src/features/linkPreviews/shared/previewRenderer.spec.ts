@@ -7,8 +7,8 @@ import {
   patchPreviewTextComponents,
   PREVIEW_SHOW_ORIGINAL_ID,
   PREVIEW_SHOW_TRANSLATION_ID,
-  replacePreviewMedia,
 } from "./previewRenderer.js";
+import { replacePreviewMedia } from "../../../core/previewMedia.js";
 
 const document: PreviewDocument = {
   version: 1,

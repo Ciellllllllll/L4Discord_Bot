@@ -14,7 +14,7 @@ import {
   type User,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { normalizeSnowflake } from "../../core/snowflake.js";
@@ -38,6 +38,9 @@ import {
   type PunishmentType,
 } from "./detecterCards.js";
 
+// DetecterService が使う依存。
+export type DetecterServiceDeps = Pick<CoreDeps, "config" | "log" | "client" | "db">;
+
 export const DETECTER_REASON_INPUT_ID = "detecter_reason_text";
 export type { AuditLookupResult, PunishmentEvent };
 export { buildDetecterStatusDisplayText };
@@ -49,7 +52,7 @@ function timeoutUntil(member: GuildMember | PartialGuildMember): Date | null {
 
 let serviceInstance: DetecterService | undefined;
 
-export function getDetecterService(ctx: BotContext): DetecterService {
+export function getDetecterService(ctx: DetecterServiceDeps): DetecterService {
   if (!serviceInstance) serviceInstance = new DetecterService(ctx);
   return serviceInstance;
 }
@@ -65,7 +68,7 @@ export class DetecterService {
   private readonly recentKeys = new TtlStore<number>(10 * 60 * 1000);
   private readonly cleanupTimer: NodeJS.Timeout;
 
-  constructor(private readonly ctx: BotContext) {
+  constructor(private readonly ctx: DetecterServiceDeps) {
     this.pendingEvents = new TtlStore<PunishmentEvent>(ctx.config.DETECTER_PROMPT_TIMEOUT_SEC * 1000);
     this.cleanupTimer = setInterval(() => {
       this.pendingEvents.sweep();

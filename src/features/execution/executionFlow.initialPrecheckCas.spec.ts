@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { startExecutionFlow } from "./executionFlow.js";
+import { startExecutionFlow } from "./executionFlowEntry.js";
 
 function createFixture(updateResults: bigint[]) {
   let row: Record<string, unknown> | undefined;

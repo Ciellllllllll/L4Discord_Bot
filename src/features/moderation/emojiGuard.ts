@@ -5,7 +5,7 @@ import {
   PermissionFlagsBits,
   type User,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 
 const CUSTOM_EMOJI = /<a?:\w+:\d+>/;
@@ -40,7 +40,7 @@ export function messageContainsEmoji(content: string): boolean {
   return CUSTOM_EMOJI.test(content) || UNICODE_EMOJI.test(content);
 }
 
-async function isRestricted(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
+async function isRestricted(ctx: Pick<CoreDeps, "db">, guildId: string, userId: string): Promise<boolean> {
   const s = await getGuildSettingsData(ctx.db, guildId);
   return Boolean(s.emoji_restricted_user_ids?.includes(userId));
 }
@@ -49,7 +49,7 @@ function channelExcluded(settings: Awaited<ReturnType<typeof getGuildSettingsDat
   return Boolean(settings.auto_reply_excluded_channel_ids?.includes(channelId));
 }
 
-export async function handleEmojiGuardMessage(message: Message, ctx: BotContext): Promise<void> {
+export async function handleEmojiGuardMessage(message: Message, ctx: Pick<CoreDeps, "db">): Promise<void> {
   if (!message.guildId || message.author.bot) return;
   if (!(await isRestricted(ctx, message.guildId, message.author.id))) return;
   const s = await getGuildSettingsData(ctx.db, message.guildId);
@@ -63,7 +63,7 @@ export async function handleEmojiGuardMessage(message: Message, ctx: BotContext)
 export async function handleEmojiGuardReaction(
   reaction: MessageReaction | PartialMessageReaction,
   user: User,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "db">,
 ): Promise<void> {
   if (user.bot) return;
   const full = reaction.partial ? await reaction.fetch().catch(() => null) : reaction;

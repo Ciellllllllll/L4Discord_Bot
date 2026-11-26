@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
-import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
+import { looksLikePrefixCommandLine } from "../../core/commandLike.js";
+
+// ColdLaugh が使う依存。
+type ColdLaughDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 export const COLD_LAUGH_KEYWORD =
   "うお,うおｗ,uo,おお,oo,どわー,ったく,かっこよw,えぐー！笑,えぐー！w,えぐー!笑,えぐー!w,冗談ですやん,きちー,おもろいなあ！,おもろいなあ!,ど、どした？,ど、どした?,ちょw,落ち着けw,落ち着け,ええて,必死やんw,すごいなあキミw,すごいなあw,すごいなあキミｗ,すごいなあｗ,怒んなやw,怒んなやｗ,";
@@ -59,7 +62,7 @@ export class ColdLaughHandler {
   private readonly countsReady: Promise<void>;
   private coldLaughCounts: Record<string, number> = {};
 
-  constructor(private readonly ctx: BotContext) {
+  constructor(private readonly ctx: ColdLaughDeps) {
     this.storePath = path.resolve(ctx.config.COLD_LAUGH_STORE_PATH);
     this.countsReady = this.loadCounts();
   }

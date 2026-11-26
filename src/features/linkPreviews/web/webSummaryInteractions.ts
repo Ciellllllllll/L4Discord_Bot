@@ -5,7 +5,8 @@ import {
   type APIMessageTopLevelComponent,
   type ButtonInteraction,
 } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
+import type { AiProviderRouter } from "../../../features/ai/aiProviderRouter.js";
 import { PREVIEW_SUMMARY_ID } from "../shared/previewRenderer.js";
 import { getPreviewSummary, savePreviewSummary } from "../shared/previewSummary.repository.js";
 import {
@@ -70,9 +71,14 @@ function decisionContent(decision: PreviewSummaryDecision): string {
   ].join("\n");
 }
 
+// 要約で使う依存。aiRouter は要約に必須。
+type WebSummaryDeps =
+  & Pick<CoreDeps, "config" | "db" | "log" | "client">
+  & { aiRouter: AiProviderRouter };
+
 async function summarizeUrl(
   url: string,
-  ctx: BotContext,
+  ctx: WebSummaryDeps,
   guildId: string,
   deps: WebSummaryInteractionDeps,
 ): Promise<SummaryOutcome> {
@@ -109,7 +115,7 @@ async function summarizeUrl(
 
 function sharedSummary(
   url: string,
-  ctx: BotContext,
+  ctx: WebSummaryDeps,
   guildId: string,
   deps: WebSummaryInteractionDeps,
 ): Promise<SummaryOutcome> {
@@ -124,7 +130,7 @@ function sharedSummary(
 
 export async function handleWebSummaryInteraction(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: WebSummaryDeps,
   deps: WebSummaryInteractionDeps = {},
 ): Promise<boolean> {
   if (interaction.customId !== PREVIEW_SUMMARY_ID) return false;

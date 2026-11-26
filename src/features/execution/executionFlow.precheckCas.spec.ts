@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { handleExecutionFlowButton } from "./executionFlow.js";
+import { handleExecutionFlowButton } from "./executionFlowEntry.js";
 
 const state = {
   phase: "precheck_pending" as const, invoker_id: "invoker", target_id: "target", channel_id: "channel",

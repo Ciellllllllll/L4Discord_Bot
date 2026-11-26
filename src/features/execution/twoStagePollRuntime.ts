@@ -1,161 +1,31 @@
+import { MessageFlags, type ButtonInteraction, type GuildMember, type TextChannel } from "discord.js";
 import {
-  type FlowDeadlineTimers,
   type OpenPollFlow,
   PollFlowStateStore,
   claimPollAdminApproval,
-  commitClaimedPollTerminal,
-  persistTerminalState,
   remainingDeadlineDelayMs,
   saveOpenPollState,
 } from "./flowLifecycle.js";
-import type { Kysely } from "kysely";
-import type { Database } from "../../core/db/types.js";
 import { nowIso } from "../../core/db/nowIso.js";
-import { MessageFlags, type ButtonInteraction, type GuildMember, type MessageEditOptions, type TextChannel } from "discord.js";
-
-type FlowRuntimeRow = {
-  id: string;
-  guild_id: string;
-  state: unknown;
-  updated_at: Date;
-};
-
-type TwoStagePollState<Poll1Choice extends string, Poll2Choice extends string> = {
-  phase: string;
-  target_id: string;
-  channel_id: string;
-  poll1_message_id: string | null;
-  poll2_message_id: string | null;
-  admin_message_id: string | null;
-  poll1_deadline_ms: number;
-  poll2_deadline_ms: number | null;
-  votes_poll1: Record<string, Poll1Choice>;
-  votes_poll2: Record<string, Poll2Choice>;
-  admin_button_fired: boolean;
-};
-
-type TwoStagePollContext = {
-  db: Kysely<Database>;
-  log: {
-    warn(fields: Record<string, unknown>, message: string): void;
-    error(fields: Record<string, unknown>, message: string): void;
-  };
-};
-
-type PublishedPollMessage = { id: string; delete(): Promise<unknown> };
-type PollPublication = PublishedPollMessage | { failureHeading: string } | null;
-type Poll1Resolution<State> =
-  | { destination: "poll2"; state: State }
-  | { destination: "admin"; state: State; adminText: string };
-type FinalApprovalResult = { ok: boolean };
-
-export function parsePersistedFlowState<T>(value: unknown, parse: (value: unknown) => T | null): T | null {
-  let decoded = value;
-  if (typeof decoded === "string") {
-    try {
-      decoded = JSON.parse(decoded);
-    } catch {
-      return null;
-    }
-  }
-  return parse(decoded);
-}
-
-export function tallyChoices<T extends string>(votes: Readonly<Record<string, string>>, keys: readonly T[]): Record<T, number> {
-  const counts = Object.fromEntries(keys.map((key) => [key, 0])) as Record<T, number>;
-  for (const choice of Object.values(votes)) {
-    if (Object.hasOwn(counts, choice)) counts[choice as T] += 1;
-  }
-  return counts;
-}
-
-export function pickSingleWinner<T extends string>(counts: Readonly<Record<T, number>>, keys: readonly T[]): T | null {
-  let max = 0;
-  let winner: T | null = null;
-  let tied = false;
-  for (const key of keys) {
-    const count = counts[key] ?? 0;
-    if (count > max) {
-      max = count;
-      winner = key;
-      tied = false;
-    } else if (count === max && count > 0) {
-      tied = true;
-    }
-  }
-  return max > 0 && !tied ? winner : null;
-}
-
-type TwoStagePollRuntimeSpec<
-  Context extends TwoStagePollContext,
-  State extends TwoStagePollState<Poll1Choice, Poll2Choice>,
-  Poll1Choice extends string,
-  Poll2Choice extends string,
-> = {
-  namespace: string;
-  kind: string;
-  votePrefix: string;
-  approvalPrefix: string;
-  timers: FlowDeadlineTimers<ReturnType<typeof setTimeout>>;
-  parse(value: unknown): State | null;
-  targetId(state: State): string;
-  retainTarget(flowId: string, guildId: string, targetId: string): boolean;
-  releaseTarget(flowId: string): void;
-  releaseAllTargets(): void;
-  isAdmin(ctx: Context, member: GuildMember): boolean;
-  handleOtherApproval?(
-    interaction: ButtonInteraction,
-    ctx: Context,
-    current: OpenPollFlow<State>,
-    action: "approve" | "deny",
-    controls: {
-      abort(heading: string): Promise<boolean>;
-      beginPoll1(state: State): Promise<boolean>;
-    },
-  ): Promise<boolean>;
-  approvalComponents(flowId: string): MessageEditOptions["components"];
-  canExecuteFinal(state: State): boolean;
-  executeFinal(ctx: Context, interaction: ButtonInteraction, current: OpenPollFlow<State>, approverId: string): Promise<FinalApprovalResult>;
-  notifyDenied(ctx: Context, interaction: ButtonInteraction, current: OpenPollFlow<State>, approverId: string): Promise<void>;
-  cleanupFinal(ctx: Context, interaction: ButtonInteraction, state: State, label: "approve" | "deny"): Promise<void>;
-  afterApproved(ctx: Context, current: OpenPollFlow<State>, approverId: string, result: FinalApprovalResult): void;
-  voteDurationMs(ctx: Context): number;
-  adminWaitMs(ctx: Context): number;
-  toPoll1Pending(state: State, deadlineMs: number): State;
-  poll1Published(state: State, messageId: string): State;
-  resolvePoll1(state: State, winner: Poll1Choice, poll2DeadlineMs: number): Poll1Resolution<State>;
-  poll2Published(state: State, messageId: string): State;
-  resolvePoll2(state: State, winner: Poll2Choice): { state: State; adminText: string };
-  adminPublished(state: State, messageId: string): State;
-  publishPoll1(ctx: Context, flowId: string, state: State): Promise<PollPublication>;
-  publishPoll2(ctx: Context, flowId: string, state: State): Promise<PollPublication>;
-  publishAdmin(ctx: Context, flowId: string, state: State, text: string): Promise<PollPublication>;
-  disablePoll1(ctx: Context, flowId: string, state: State): Promise<void>;
-  disablePoll2(ctx: Context, flowId: string, state: State): Promise<void>;
-  discardMessage(ctx: Context, flowId: string, message: PublishedPollMessage, label: string): Promise<void>;
-  stopMessages(ctx: Context, flowId: string, state: State, heading: string): Promise<void>;
-  poll1Choices: readonly Poll1Choice[];
-  poll2Choices: readonly Poll2Choice[];
-  poll1Labels: Readonly<Record<Poll1Choice, string>>;
-  poll2Labels: Readonly<Record<Poll2Choice, string>>;
-  renderPoll1(state: State, flowId: string): MessageEditOptions;
-  renderPoll2(state: State, flowId: string): MessageEditOptions;
-  adminPending(state: State): boolean;
-  adminDeadline(ctx: Context, row: FlowRuntimeRow, state: State): number;
-  claimed(state: State): boolean;
-  unpublished(state: State): boolean;
-  poll1Deadline(state: State): number | null;
-  poll2Deadline(state: State): number | null;
-  restoredDeadlineExpiredHeading: string;
-  adminTimeoutHeading: string;
-  duplicateTargetHeading: string;
-  unpublishedHeading: string;
-  poll1NoWinnerHeading: string;
-  poll2NoWinnerHeading: string;
-  poll1PublishFailureHeading: string;
-  poll2PublishFailureHeading: string;
-  adminPublishFailureHeading: string;
-};
+import type {
+  FlowRuntimeRow,
+  PublishedPollMessage,
+  TwoStagePollContext,
+  TwoStagePollRuntimeSpec,
+  TwoStagePollState,
+} from "./twoStagePollRuntime.types.js";
+import {
+  type TwoStageControls,
+  abortExpected as abortExpectedImpl,
+  abortOpen as abortOpenImpl,
+  commitClaimedTerminal as commitClaimedTerminalImpl,
+  discardAndAbortUnpublished as discardAndAbortUnpublishedImpl,
+  findStoredOpen as findStoredOpenImpl,
+  listOpenRows as listOpenRowsImpl,
+  persistPublished as persistPublishedImpl,
+  transitionPoll1Open as transitionPoll1OpenImpl,
+  transitionPoll2Open as transitionPoll2OpenImpl,
+} from "./twoStagePollPersistence.js";
 
 /** 二段階投票の復元、期限タイマー、公開操作を一つのランタイムへ束ねる。 */
 export function createTwoStagePollRuntime<
@@ -244,47 +114,9 @@ export function createTwoStagePollRuntime<
     });
   };
 
-  const findStoredOpen = (ctx: Context, flowId: string): Promise<OpenPollFlow<State> | null> =>
-    new PollFlowStateStore(ctx.db).findOpen(flowId, spec.kind, spec.parse);
 
-  const listOpenRows = (ctx: Context): Promise<FlowRuntimeRow[]> => ctx.db
-    .selectFrom("polls")
-    .select(["id", "guild_id", "state", "updated_at"])
-    .where("kind", "=", spec.kind)
-    .where("status", "=", "open")
-    .execute();
-
-  const saveExpected = (
-    ctx: Context,
-    flowId: string,
-    current: OpenPollFlow<State>,
-    nextState: State,
-    messageId: string | null,
-  ): Promise<boolean> => saveOpenPollState({
-    store: new PollFlowStateStore(ctx.db),
-    id: flowId,
-    kind: spec.kind,
-    parse: spec.parse,
-    nextState,
-    messageId,
-    expected: { state: current.state, state_revision: current.stateRevision, rawState: current.rawState },
-  });
-
-  const persistPublished = async (
-    ctx: Context,
-    flowId: string,
-    messageId: string | null,
-    isSameReservation: (state: State) => boolean,
-    published: (state: State) => State,
-  ): Promise<boolean> => {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const current = await findStoredOpen(ctx, flowId);
-      if (!current || !isSameReservation(current.state)) return false;
-      if (await saveExpected(ctx, flowId, current, published(current.state), messageId)) return true;
-    }
-    return false;
-  };
-
+  // 状態保存・公開・状態遷移は twoStagePollPersistence.ts にある。spec と閉じ込めた状態を束ねた
+  // controls を渡す委譲だけを残す。
   const discardAndAbortUnpublished = async (
     ctx: Context,
     flowId: string,
@@ -293,114 +125,50 @@ export function createTwoStagePollRuntime<
     heading: string,
     guildId: string,
     isSameReservation: (state: State) => boolean,
-  ): Promise<void> => {
-    await spec.discardMessage(ctx, flowId, message, label);
-    const advancedReservation = async (current: OpenPollFlow<State>): Promise<OpenPollFlow<State> | null> => {
-      const latest = await findStoredOpen(ctx, flowId);
-      return latest && isSameReservation(latest.state) && latest.stateRevision > current.stateRevision ? latest : null;
-    };
-    const compensate = async (current: OpenPollFlow<State>): Promise<void> => {
-      if (await abortExpected(ctx, flowId, current, heading, guildId)) return;
-      if (closed) return;
-      const latest = await advancedReservation(current);
-      if (!latest) return;
-      spec.timers.schedule(timerKey("compensation", flowId), 0, () => {
-        runTransition(flowId, async () => {
-          try {
-            await compensate(latest);
-          } catch (err) {
-            ctx.log.error({ err, flowId, guildId, phase: "compensation" }, `${spec.namespace}: unpublished compensation failed`);
-          }
-        });
-      });
-    };
-    let current = await findStoredOpen(ctx, flowId);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (!current || !isSameReservation(current.state)) return;
-      if (await abortExpected(ctx, flowId, current, heading, guildId)) return;
-      current = await advancedReservation(current);
-    }
-    if (current) await compensate(current);
+  ): Promise<void> => discardAndAbortUnpublishedImpl(spec, ctx, controls, flowId, message, label, heading, guildId, isSameReservation);
+  const controls: TwoStageControls<Context, State> = {
+    closed: () => closed,
+    timerKey,
+    clearTimers,
+    runTransition,
+    schedulePoll1,
+    schedulePoll2,
+    scheduleAdmin,
+    discardAndAbortUnpublished,
   };
-
-  const abortOpen = async (
+  const transitionPoll1Open = (ctx: Context, flowId: string, guildId: string): Promise<void> => transitionPoll1OpenImpl(spec, ctx, controls, flowId, guildId);
+  const transitionPoll2Open = (ctx: Context, flowId: string, guildId: string): Promise<void> => transitionPoll2OpenImpl(spec, ctx, controls, flowId, guildId);
+  // 状態保存まわりの委譲。
+  const findStoredOpen = (ctx: Context, flowId: string): Promise<OpenPollFlow<State> | null> => findStoredOpenImpl(spec, ctx, flowId);
+  const listOpenRows = (ctx: Context): Promise<FlowRuntimeRow[]> => listOpenRowsImpl(spec, ctx);
+  const persistPublished = async (
+    ctx: Context,
+    flowId: string,
+    messageId: string | null,
+    isSameReservation: (state: State) => boolean,
+    published: (state: State) => State,
+  ): Promise<boolean> => persistPublishedImpl(spec, ctx, flowId, messageId, isSameReservation, published);
+  const abortOpen = (
     ctx: Context,
     flowId: string,
     state: State,
     heading: string,
     guildId = "unknown",
     expected?: OpenPollFlow<State>,
-  ): Promise<boolean> => {
-    let committedState: State | null = null;
-    const result = await persistTerminalState(async () => {
-      const current = await new PollFlowStateStore(ctx.db).cancelOpenFlow({
-        id: flowId,
-        kind: spec.kind,
-        expectedPhase: state.phase,
-        parse: spec.parse,
-        ...(expected ? { expected: { state, stateRevision: expected.stateRevision, rawState: expected.rawState } } : {}),
-        canCancel: (candidate) => candidate.admin_button_fired === false,
-      });
-      if (!current) throw new Error(`${spec.namespace} flow terminal CAS lost`);
-      committedState = current;
-    }, () => {
-      clearTimers(flowId);
-      spec.releaseTarget(flowId);
-    });
-    if (!result.ok) {
-      ctx.log.error({ err: result.error, flowId, phase: state.phase, guildId }, `${spec.namespace}: terminal state persistence failed`);
-      return false;
-    }
-    await spec.stopMessages(ctx, flowId, committedState ?? state, heading);
-    return true;
-  };
-
+  ): Promise<boolean> => abortOpenImpl(spec, ctx, clearTimers, flowId, state, heading, guildId, expected);
   const abortExpected = (
     ctx: Context,
     flowId: string,
     current: OpenPollFlow<State>,
     heading: string,
     guildId: string,
-  ): Promise<boolean> => abortOpen(ctx, flowId, current.state, heading, guildId, current);
-
-  const commitClaimedTerminal = async (
+  ): Promise<boolean> => abortExpectedImpl(spec, ctx, clearTimers, flowId, current, heading, guildId);
+  const commitClaimedTerminal = (
     ctx: Context,
     current: OpenPollFlow<State>,
     terminalPhase: "completed" | "cancelled",
-  ): Promise<boolean> => {
-    const result = await persistTerminalState(async () => {
-      const committed = await commitClaimedPollTerminal({
-        store: new PollFlowStateStore(ctx.db),
-        id: current.id,
-        state: current.state,
-        stateRevision: current.stateRevision,
-        terminalPhase,
-      });
-      if (!committed) throw new Error(`${spec.namespace} flow terminal CAS lost`);
-    }, () => {
-      clearTimers(current.id);
-      spec.releaseTarget(current.id);
-    });
-    if (!result.ok) {
-      ctx.log.error({
-        err: result.error,
-        flowId: current.id,
-        phase: current.state.phase,
-        guildId: current.guildId,
-      }, `${spec.namespace}: terminal state persistence failed`);
-    }
-    return result.ok;
-  };
+  ): Promise<boolean> => commitClaimedTerminalImpl(spec, ctx, clearTimers, current, terminalPhase);
 
-  const retryAfterRevisionAdvance = async (
-    ctx: Context,
-    flowId: string,
-    current: OpenPollFlow<State>,
-    retry: () => void,
-  ): Promise<void> => {
-    const latest = await findStoredOpen(ctx, flowId);
-    if (latest?.state.phase === current.state.phase && latest.stateRevision > current.stateRevision) retry();
-  };
 
   const beginPoll1Open = async (ctx: Context, flowId: string, state: State, guildId = "unknown"): Promise<boolean> => {
     const voteMs = spec.voteDurationMs(ctx);
@@ -431,102 +199,6 @@ export function createTwoStagePollRuntime<
     }
     schedulePoll1(ctx, flowId, guildId, voteMs);
     return true;
-  };
-
-  const transitionPoll1Open = async (ctx: Context, flowId: string, guildId: string): Promise<void> => {
-    const current = await findStoredOpen(ctx, flowId);
-    if (!current || current.state.phase !== "poll1_pending") return;
-    const winner = pickSingleWinner(tallyChoices(current.state.votes_poll1, spec.poll1Choices), spec.poll1Choices);
-    if (winner == null) {
-      const aborted = await abortExpected(ctx, flowId, current, spec.poll1NoWinnerHeading, guildId);
-      if (!aborted) await retryAfterRevisionAdvance(ctx, flowId, current, () => schedulePoll1(ctx, flowId, guildId, 0));
-      return;
-    }
-
-    const voteMs = spec.voteDurationMs(ctx);
-    const resolution = spec.resolvePoll1(current.state, winner, Date.now() + voteMs);
-    if (!await saveExpected(ctx, flowId, current, resolution.state, null)) {
-      schedulePoll1(ctx, flowId, guildId, 0);
-      return;
-    }
-    await spec.disablePoll1(ctx, flowId, current.state);
-
-    if (resolution.destination === "poll2") {
-      const publication = await spec.publishPoll2(ctx, flowId, resolution.state);
-      const message = publication && "id" in publication ? publication : null;
-      if (!message) {
-        const pending = await findStoredOpen(ctx, flowId);
-        if (pending?.state.phase === "poll2_pending") {
-          const heading = publication && "failureHeading" in publication ? publication.failureHeading : spec.poll2PublishFailureHeading;
-          await abortExpected(ctx, flowId, pending, heading, guildId);
-        }
-        return;
-      }
-      const sameReservation = (candidate: State) => candidate.phase === "poll2_pending"
-        && candidate.poll2_message_id === null
-        && candidate.poll2_deadline_ms === resolution.state.poll2_deadline_ms;
-      if (!await persistPublished(ctx, flowId, message.id, sameReservation, (current) => spec.poll2Published(current, message.id))) {
-        await discardAndAbortUnpublished(ctx, flowId, message, "poll2 publication CAS lost", spec.poll2PublishFailureHeading, guildId, sameReservation);
-        return;
-      }
-      schedulePoll2(ctx, flowId, guildId, voteMs);
-      return;
-    }
-
-    const publication = await spec.publishAdmin(ctx, flowId, resolution.state, resolution.adminText);
-    const message = publication && "id" in publication ? publication : null;
-    if (!message) {
-      const pending = await findStoredOpen(ctx, flowId);
-      if (pending?.state.phase === "admin_pending") {
-        const heading = publication && "failureHeading" in publication ? publication.failureHeading : spec.adminPublishFailureHeading;
-        await abortExpected(ctx, flowId, pending, heading, guildId);
-      }
-      return;
-    }
-    const sameReservation = (candidate: State) => candidate.phase === "admin_pending"
-      && candidate.admin_message_id === null
-      && candidate.admin_button_fired === false;
-    if (!await persistPublished(ctx, flowId, null, sameReservation, (current) => spec.adminPublished(current, message.id))) {
-      await discardAndAbortUnpublished(ctx, flowId, message, "admin publication CAS lost", spec.adminPublishFailureHeading, guildId, sameReservation);
-      return;
-    }
-    scheduleAdmin(ctx, flowId, guildId, spec.adminWaitMs(ctx));
-  };
-
-  const transitionPoll2Open = async (ctx: Context, flowId: string, guildId: string): Promise<void> => {
-    const current = await findStoredOpen(ctx, flowId);
-    if (!current || current.state.phase !== "poll2_pending") return;
-    const winner = pickSingleWinner(tallyChoices(current.state.votes_poll2, spec.poll2Choices), spec.poll2Choices);
-    if (winner == null) {
-      const aborted = await abortExpected(ctx, flowId, current, spec.poll2NoWinnerHeading, guildId);
-      if (!aborted) await retryAfterRevisionAdvance(ctx, flowId, current, () => schedulePoll2(ctx, flowId, guildId, 0));
-      return;
-    }
-
-    const resolution = spec.resolvePoll2(current.state, winner);
-    if (!await saveExpected(ctx, flowId, current, resolution.state, null)) {
-      schedulePoll2(ctx, flowId, guildId, 0);
-      return;
-    }
-    await spec.disablePoll2(ctx, flowId, current.state);
-    const publication = await spec.publishAdmin(ctx, flowId, resolution.state, resolution.adminText);
-    const message = publication && "id" in publication ? publication : null;
-    if (!message) {
-      const pending = await findStoredOpen(ctx, flowId);
-      if (pending?.state.phase === "admin_pending") {
-        const heading = publication && "failureHeading" in publication ? publication.failureHeading : spec.adminPublishFailureHeading;
-        await abortExpected(ctx, flowId, pending, heading, guildId);
-      }
-      return;
-    }
-    const sameReservation = (candidate: State) => candidate.phase === "admin_pending"
-      && candidate.admin_message_id === null
-      && candidate.admin_button_fired === false;
-    if (!await persistPublished(ctx, flowId, null, sameReservation, (current) => spec.adminPublished(current, message.id))) {
-      await discardAndAbortUnpublished(ctx, flowId, message, "admin publication CAS lost", spec.adminPublishFailureHeading, guildId, sameReservation);
-      return;
-    }
-    scheduleAdmin(ctx, flowId, guildId, spec.adminWaitMs(ctx));
   };
 
   const reconcileOpen = async (ctx: Context, now = Date.now()): Promise<void> => {

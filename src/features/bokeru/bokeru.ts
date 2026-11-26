@@ -11,8 +11,8 @@ import {
   type ChatInputCommandInteraction,
   type ModalSubmitInteraction,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
-import { parseCustomId } from "../../interactions/parseCustomId.js";
+import type { CoreDeps } from "../../core/deps.js";
+import { parseCustomId } from "../../core/parseCustomId.js";
 import { BOKETE_THREAD_ID } from "../bokete/bokete.slash.js";
 import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import { judgeBokeruAnswer } from "./bokeruJudge.js";
@@ -38,6 +38,8 @@ import {
 } from "./bokeruRepository.js";
 
 export const BOKERU_ROUND_MS = 5 * 60_000;
+// Bokeru の出題・回答・締め切り処理が使う依存。
+type BokeruDeps = Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool">;
 const BOKERU_NOTIFY_ROLE_ID = "1556559586956156990";
 const ANSWER_INPUT_ID = "answer";
 const ANSWER_MAX_LENGTH = 200;
@@ -95,12 +97,12 @@ function renderResults(odai: BokeruOdai, results: BokeruResult[]) {
   return { ...componentCardsPayload([card]), allowedMentions: NO_MENTIONS };
 }
 
-async function fetchSendableChannel(ctx: BotContext, channelId: string) {
+async function fetchSendableChannel(ctx: Pick<CoreDeps, "client">, channelId: string) {
   const channel = await ctx.client.channels.fetch(channelId).catch(() => null);
   return channel?.isSendable() ? channel : null;
 }
 
-export async function finalizeBokeruRound(ctx: BotContext, roundId: string): Promise<void> {
+export async function finalizeBokeruRound(ctx: BokeruDeps, roundId: string): Promise<void> {
   const results = await closeBokeruRound(ctx.mainPgPool, roundId);
   if (!results) return;
   const round = await getBokeruRound(ctx.mainPgPool, roundId);
@@ -118,13 +120,13 @@ export async function finalizeBokeruRound(ctx: BotContext, roundId: string): Pro
 }
 
 // 再起動などでタイマーが失われたお題を締め切る（reminder scheduler の tick から呼ぶ）。
-export async function finalizeDueBokeruRounds(ctx: BotContext): Promise<void> {
+export async function finalizeDueBokeruRounds(ctx: BokeruDeps): Promise<void> {
   for (const id of await listDueBokeruRoundIds(ctx.mainPgPool)) {
     await finalizeBokeruRound(ctx, id).catch((err) => ctx.log.error({ err, roundId: id }, "bokeru: finalize failed"));
   }
 }
 
-async function handleStart(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+async function handleStart(interaction: ChatInputCommandInteraction, ctx: BokeruDeps): Promise<void> {
   if (interaction.channelId !== BOKETE_THREAD_ID || !interaction.guildId) {
     await interaction.reply(ephemeral("このコマンドは指定スレッドでのみ利用できます。"));
     return;
@@ -167,7 +169,7 @@ async function handleStart(interaction: ChatInputCommandInteraction, ctx: BotCon
   }, BOKERU_ROUND_MS).unref();
 }
 
-async function handleRanking(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+async function handleRanking(interaction: ChatInputCommandInteraction, ctx: Pick<CoreDeps, "mainPgPool">): Promise<void> {
   if (!interaction.guildId) {
     await interaction.reply(ephemeral("サーバー内で実行してください。"));
     return;
@@ -187,12 +189,12 @@ async function handleRanking(interaction: ChatInputCommandInteraction, ctx: BotC
   await interaction.reply({ ...componentCardsPayload([card]), allowedMentions: NO_MENTIONS });
 }
 
-export async function handleBokeruSlash(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+export async function handleBokeruSlash(interaction: ChatInputCommandInteraction, ctx: BokeruDeps): Promise<void> {
   if (interaction.options.getSubcommand() === "ranking") return handleRanking(interaction, ctx);
   return handleStart(interaction, ctx);
 }
 
-export async function handleBokeruButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleBokeruButton(interaction: ButtonInteraction, ctx: Pick<CoreDeps, "mainPgPool">): Promise<boolean> {
   const parsed = parseCustomId(interaction.customId);
   if (!parsed || parsed.domain !== "bokeru") return false;
 
@@ -245,7 +247,7 @@ export async function handleBokeruButton(interaction: ButtonInteraction, ctx: Bo
   return false;
 }
 
-export async function handleBokeruModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleBokeruModal(interaction: ModalSubmitInteraction, ctx: BokeruDeps): Promise<boolean> {
   const parsed = parseCustomId(interaction.customId);
   if (!parsed || parsed.domain !== "bokeru" || parsed.action !== "submit") return false;
 

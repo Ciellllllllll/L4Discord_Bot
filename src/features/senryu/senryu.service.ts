@@ -1,6 +1,7 @@
 import { ChannelType } from "discord.js";
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+import type { AiProviderRouter } from "../ai/aiProviderRouter.js";
 import { analyzeSenryu } from "../japaneseAnalysis/japaneseAnalysisClient.js";
 import { pickSenryuCandidate, senryuCandidate575MismatchScore } from "./senryu.detector.js";
 import {
@@ -27,6 +28,9 @@ import {
 import type { SenryuRepository } from "./senryu.repository.js";
 import type { SenryuCandidate } from "./senryu.types.js";
 
+// 川柳パイプラインが使う依存。AI 添削で aiRouter を使う。
+export type SenryuServiceDeps = Pick<CoreDeps, "config" | "db" | "log"> & { aiRouter: AiProviderRouter };
+
 function isPermissionLikeDiscordError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as { code?: number; message?: string };
@@ -38,7 +42,7 @@ function isPermissionLikeDiscordError(err: unknown): boolean {
   return false;
 }
 
-async function isSenryuChannelMuted(ctx: BotContext, message: Message): Promise<boolean> {
+async function isSenryuChannelMuted(ctx: SenryuServiceDeps, message: Message): Promise<boolean> {
   const channelIds = [message.channel.id];
   if (message.channel.isThread()) {
     const p = message.channel.parentId;
@@ -58,7 +62,7 @@ async function isSenryuChannelMuted(ctx: BotContext, message: Message): Promise<
 }
 
 export async function runSenryuPipeline(
-  ctx: BotContext,
+  ctx: SenryuServiceDeps,
   message: Message,
   repo: SenryuRepository,
 ): Promise<boolean> {

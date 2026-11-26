@@ -14,11 +14,9 @@ import {
   recordPendingDispatchUpdate,
   setReminderRetryState,
 } from "./reminderDispatchState.js";
-import {
-  handleReminderHubButton,
-  handleReminderHubChannelSelect,
-  handleReminderHubModal,
-} from "./reminderHubHandlers.js";
+import { handleReminderHubButton } from "./reminderHubHandlers.js";
+import { handleReminderHubChannelSelect } from "./reminderHubSelectHandlers.js";
+import { handleReminderHubModal } from "./reminderHubModalHandlers.js";
 import {
   applyDispatchResult,
   cancelUndeliverableReminder,

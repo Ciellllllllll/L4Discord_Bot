@@ -1,5 +1,9 @@
 import { sql } from "kysely";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+
+// TicketUsage が使う依存。
+type TicketUsageDeps = Pick<CoreDeps, "ticketDb" | "log">;
+
 
 export type TicketUsageSummary = {
   userId: string;
@@ -42,7 +46,7 @@ function timestampSortValue(value: string | null): number {
 }
 
 export async function listTicketUsageSummaries(
-  ctx: BotContext,
+  ctx: TicketUsageDeps,
   guildId: string,
   limit = 25,
 ): Promise<TicketUsageSummary[]> {

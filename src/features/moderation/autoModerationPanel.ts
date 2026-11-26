@@ -6,7 +6,7 @@ import {
   type Message,
   type MessageEditOptions,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import { buildContainerPanelPayload, messageComponentsHaveCustomId } from "../panels/componentPanelPayload.js";
@@ -26,7 +26,7 @@ export function automodPanelMessageMatches(message: Message, botUserId: string, 
   return messageHasAutomodSelect(message, guildId);
 }
 
-export async function buildAutoModPanelPayload(ctx: BotContext, guildId: string) {
+export async function buildAutoModPanelPayload(ctx: Pick<CoreDeps, "config" | "automodDb" | "db">, guildId: string) {
   const s = await getMergedAutoModSettings(ctx, guildId);
   const enabledLabel = (value: boolean): string => (value ? "ON" : "OFF");
   const panelText = [
@@ -66,13 +66,13 @@ export async function buildAutoModPanelPayload(ctx: BotContext, guildId: string)
 
 // !Setup の ADMIN チャンネル（panel_channels.admin_channel_id）
 
-export async function resolveAutoModAdminChannelId(ctx: BotContext, guildId: string): Promise<string | null> {
+export async function resolveAutoModAdminChannelId(ctx: Pick<CoreDeps, "db">, guildId: string): Promise<string | null> {
   const settings = await getGuildSettingsData(ctx.db, guildId);
   const a = settings.panel_channels?.admin_channel_id?.trim();
   return a && /^\d+$/.test(a) ? a : null;
 }
 
-export async function reconcileAutoModPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<boolean> {
+export async function reconcileAutoModPanel(ctx: Pick<CoreDeps, "config" | "automodDb" | "db" | "log" | "client">, guild: Guild, channelId: string): Promise<boolean> {
   const guildId = ctx.config.GUILD_ID;
   if (guild.id !== guildId) {
     return false;

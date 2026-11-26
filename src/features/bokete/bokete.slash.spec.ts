@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { handleBoketeSlash } from "./bokete.slash.js";
 
 type ReplyPayload = {
@@ -48,14 +48,14 @@ function makeInteraction(channelId = BOKETE_THREAD_ID): InteractionRecorder {
   };
 }
 
-function makeContext(): BotContext {
+function makeContext(): Pick<CoreDeps, "config" | "log"> {
   return {
     config: {
       BOKETE_API_BASE_URL: "https://bokete.example",
       BOKETE_REQUEST_TIMEOUT_MS: 1_000,
     },
     log: { warn: () => undefined },
-  } as unknown as BotContext;
+  } as unknown as Pick<CoreDeps, "config" | "log">;
 }
 
 async function run(): Promise<void> {

@@ -8,7 +8,7 @@ import {
   type ButtonInteraction,
   type StringSelectMenuInteraction,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import {
   buildAutoModPanelPayload,
   reconcileAutoModPanel,
@@ -24,7 +24,7 @@ import {
 
 export async function handleAutoModStringSelect(
   interaction: StringSelectMenuInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "automodDb" | "db">,
 ): Promise<boolean> {
   if (!interaction.customId.startsWith(AUTOMOD_SELECT_PREFIX)) return false;
   const guildId = interaction.customId.slice(AUTOMOD_SELECT_PREFIX.length);
@@ -96,7 +96,7 @@ export async function handleAutoModStringSelect(
   return true;
 }
 
-export async function handleAutoModRaidButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleAutoModRaidButton(interaction: ButtonInteraction, ctx: Pick<CoreDeps, "config" | "automodDb" | "db" | "log" | "client">): Promise<boolean> {
   if (
     !interaction.customId.startsWith(AUTOMOD_RAID_CONFIRM_PREFIX) &&
     !interaction.customId.startsWith(AUTOMOD_RAID_CANCEL_PREFIX)

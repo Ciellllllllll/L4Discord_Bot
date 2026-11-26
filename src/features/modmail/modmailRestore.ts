@@ -1,5 +1,5 @@
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { componentCardsPayload } from "../../core/componentCard.js";
 import {
   allPendingReplies,
@@ -36,7 +36,7 @@ function messageHasButtonCustomId(msg: Message, predicate: (customId: string) =>
 
 // 起動時: 未処理の承認パネル・要約パネルを再同期（DiscordBOTv2 registerPersistentUI 相当）
 
-export async function restoreModmailUiState(ctx: BotContext): Promise<void> {
+export async function restoreModmailUiState(ctx: Pick<CoreDeps, "ticketDb" | "client">): Promise<void> {
   const pending = await allPendingReplies(ctx);
   for (const row of pending) {
     const guild = await ctx.client.guilds.fetch(row.guild_id).catch(() => null);

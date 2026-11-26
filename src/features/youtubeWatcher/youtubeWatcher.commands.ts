@@ -1,17 +1,21 @@
 import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { isAdmin } from "../../core/permission.js";
+import type { PreviewTranslationDeps } from "../linkPreviews/shared/previewTranslationGate.js";
 import { parseYouTubeChannelUrl } from "./youtubeRss.js";
 import { PostgresYouTubeWatcherRepository } from "./youtubeWatcher.repository.js";
 import { scanYouTubeWatcher, youtubeSubscriptionSummary } from "./youtubeWatcher.watcher.js";
 
-async function allowed(interaction: ChatInputCommandInteraction, ctx: BotContext, member: GuildMember | null): Promise<boolean> {
+type YouTubeWatcherCommandDeps = Pick<CoreDeps, "config" | "mainPgPool" | "log" | "client" | "db">
+  & { aiRouter: NonNullable<PreviewTranslationDeps["router"]> };
+
+async function allowed(interaction: ChatInputCommandInteraction, ctx: Pick<CoreDeps, "config">, member: GuildMember | null): Promise<boolean> {
   if (member && isAdmin(member, ctx.config)) return true;
   await interaction.reply({ content: "この操作には管理者権限が必要です。", flags: MessageFlags.Ephemeral });
   return false;
 }
 
-export async function handleAdhdCommand(interaction: ChatInputCommandInteraction, ctx: BotContext, member: GuildMember | null): Promise<void> {
+export async function handleAdhdCommand(interaction: ChatInputCommandInteraction, ctx: YouTubeWatcherCommandDeps, member: GuildMember | null): Promise<void> {
   if (!(await allowed(interaction, ctx, member))) return;
   const subcommand = interaction.options.getSubcommand(true);
   const repo = new PostgresYouTubeWatcherRepository(ctx.mainPgPool);

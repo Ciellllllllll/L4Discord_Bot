@@ -11,7 +11,7 @@
     "dev:utf8": "node scripts/dev.mjs --utf8",
     "verify:openai-terra": "node --env-file-if-exists=.env --import tsx src/scripts/verifyOpenAiTerra.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src scripts eslint.config.js",
+    "lint": "eslint src scripts eslint.config.js && node scripts/check-boundaries.mjs",
     "test": "node scripts/run-postgres-specs.mjs",
     "test:postgres": "node scripts/run-postgres-specs.mjs"
   },

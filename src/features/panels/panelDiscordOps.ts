@@ -1,8 +1,12 @@
 import type { Guild } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+
+// PanelDiscordOps が使う依存。
+type PanelDiscordOpsDeps = Pick<CoreDeps, "client">;
+
 
 export async function tryDeleteBotPanelMessage(
-  ctx: BotContext,
+  ctx: PanelDiscordOpsDeps,
   guild: Guild,
   channelId: string,
   messageId: string,

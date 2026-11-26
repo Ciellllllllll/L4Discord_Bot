@@ -1,9 +1,12 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, escapeMarkdown, type ButtonInteraction, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
 import { sql, type Kysely } from "kysely";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import type { Database } from "../../core/db/types.js";
 import { isAdmin } from "../../core/permission.js";
 import { ComponentCardBuilder, componentCardsPayload, ephemeralComponentPayload } from "../../core/componentCard.js";
+
+// 匿名アンケートの結果表示が使う依存。
+type SurveyViewDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 // 自由記述を含むため、メッセージ全体のテキスト上限（4000 字）に収まる件数にする
 export const ANONYMOUS_SURVEY_VIEW_PAGE_SIZE = 5;
@@ -158,7 +161,7 @@ function accessDeniedPayload() {
 
 export async function handleAnonymousSurveyViewCommand(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: SurveyViewDeps,
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
@@ -175,7 +178,7 @@ function parsePage(customId: string): number | null {
   return Number.isInteger(page) && page >= 0 ? page : null;
 }
 
-export async function handleAnonymousSurveyViewButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleAnonymousSurveyViewButton(interaction: ButtonInteraction, ctx: SurveyViewDeps): Promise<boolean> {
   const page = parsePage(interaction.customId);
   if (page === null) return false;
   const member = memberFromInteraction(interaction);

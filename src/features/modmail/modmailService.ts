@@ -8,13 +8,13 @@ import {
   type ThreadChannel,
   type User,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import {
   attachmentMetaToJson,
   buildForwardDmFiles,
   type AttachmentMeta,
   serializeAttachmentsFromMessage,
-} from "./modmailAttachmentUtils.js";
+} from "../../core/discordAttachments.js";
 import { resolveModmailParentChannelId } from "./modmailConstants.js";
 import { logModmailEvent } from "./modmailEventsLog.js";
 import { MODMAIL_USER_SEND_COMMAND } from "./modmailIds.js";
@@ -77,48 +77,48 @@ async function forceAddRoleMembersToThread(guild: Guild, threadId: string, roleI
   }
 }
 
-export async function upsertModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
+export async function upsertModmailIntake(ctx: Pick<CoreDeps, "ticketDb">, guildId: string, userId: string): Promise<void> {
   await upsertModmailIntakeRow(ctx.ticketDb, guildId, userId);
 }
 
-export async function consumeModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<void> {
+export async function consumeModmailIntake(ctx: Pick<CoreDeps, "ticketDb">, guildId: string, userId: string): Promise<void> {
   await consumeModmailIntakeRow(ctx.ticketDb, guildId, userId);
 }
 
-export async function cancelModmailIntake(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
+export async function cancelModmailIntake(ctx: Pick<CoreDeps, "ticketDb">, guildId: string, userId: string): Promise<boolean> {
   return cancelModmailIntakeRow(ctx.ticketDb, guildId, userId);
 }
 
-export async function activeIntakeByGuildUser(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
+export async function activeIntakeByGuildUser(ctx: Pick<CoreDeps, "ticketDb">, guildId: string, userId: string): Promise<boolean> {
   return hasActiveIntakeByGuildUser(ctx.ticketDb, guildId, userId);
 }
 
-export async function activeIntakeByUser(ctx: BotContext, userId: string): Promise<{ guild_id: string } | null> {
+export async function activeIntakeByUser(ctx: Pick<CoreDeps, "ticketDb">, userId: string): Promise<{ guild_id: string } | null> {
   return findActiveIntakeByUser(ctx.ticketDb, userId);
 }
 
-export async function getOpenModmailByThreadId(ctx: BotContext, threadId: string): Promise<ModmailThreadRow | undefined> {
+export async function getOpenModmailByThreadId(ctx: Pick<CoreDeps, "ticketDb">, threadId: string): Promise<ModmailThreadRow | undefined> {
   return findOpenModmailByThreadId(ctx.ticketDb, threadId);
 }
 
 export async function openModmailByGuildUser(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb">,
   guildId: string,
   userId: string,
 ): Promise<ModmailThreadRow | undefined> {
   return findOpenModmailByGuildUser(ctx.ticketDb, guildId, userId);
 }
 
-export async function anyOpenModmailByUser(ctx: BotContext, userId: string): Promise<ModmailThreadRow | undefined> {
+export async function anyOpenModmailByUser(ctx: Pick<CoreDeps, "ticketDb">, userId: string): Promise<ModmailThreadRow | undefined> {
   return findAnyOpenModmailByUser(ctx.ticketDb, userId);
 }
 
-export async function getModmailTicketRow(ctx: BotContext, id: string): Promise<ModmailThreadRow | undefined> {
+export async function getModmailTicketRow(ctx: Pick<CoreDeps, "ticketDb">, id: string): Promise<ModmailThreadRow | undefined> {
   return findModmailTicketRowById(ctx.ticketDb, id);
 }
 
 export async function closeModmailTicketInDb(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb">,
   ticketId: string,
   closerId: string,
   reason: string,
@@ -127,7 +127,7 @@ export async function closeModmailTicketInDb(
 }
 
 async function compensateStaffThread(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log">,
   thread: { id: string; delete(reason?: string): Promise<unknown> },
 ): Promise<void> {
   await thread.delete("modmail ticket creation failed; compensation cleanup").catch((err) => {
@@ -136,7 +136,7 @@ async function compensateStaffThread(
 }
 
 export async function deleteModmailSkeletonBestEffort(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb" | "log">,
   modmailId: string,
   threadId?: string,
 ): Promise<void> {
@@ -146,7 +146,7 @@ export async function deleteModmailSkeletonBestEffort(
 }
 
 export async function createStaffThread(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log">,
   guild: Guild,
   row: ModmailThreadRow,
 ): Promise<StaffThreadResult | null> {
@@ -219,7 +219,7 @@ export async function createStaffThread(
 }
 
 export async function relayUserPayloadToThread(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "client" | "log" | "ticketDb">,
   row: ModmailThreadRow,
   kind: "User Reply" | "User Reply Attachment" | "User DM 受信",
   body: string,
@@ -265,7 +265,7 @@ export async function relayUserPayloadToThread(
 }
 
 async function relayModalIntakeToThread(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "client" | "log">,
   row: ModmailThreadRow,
   title: string,
   body: string,
@@ -307,7 +307,7 @@ async function relayModalIntakeToThread(
 }
 
 export async function createTicketFromIntakeForm(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "ticketDb" | "log" | "client">,
   params: { guildId: string; userId: string; title: string; body: string; attachments: AttachmentMeta[] },
 ): Promise<CreateTicketFromIntakeFormResult> {
   const gid = params.guildId.trim();
@@ -402,7 +402,7 @@ function parseUserSendCommand(content: string): string | null {
   return rest.trim();
 }
 
-export async function handleModmailDmMessage(ctx: BotContext, message: Message): Promise<boolean> {
+export async function handleModmailDmMessage(ctx: Pick<CoreDeps, "ticketDb" | "log" | "client">, message: Message): Promise<boolean> {
   if (message.author.bot) return false;
   const hasBody = Boolean(message.content?.trim());
   const hasAttach = message.attachments.size > 0;

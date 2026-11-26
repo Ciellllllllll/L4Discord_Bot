@@ -1,4 +1,4 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { SteamStoreClient } from "../steam/steamStoreClient.js";
 import type { SteamAppDetails, SteamSearchItem } from "../steam/steamFreeTypes.js";
 import { buildSteamFreeEventEmbed } from "./gameDealEmbeds.js";
@@ -111,7 +111,7 @@ function steamNowEvent(item: SteamSearchItem, details: SteamAppDetails): SteamFr
 }
 
 export async function scanSteamNowFullDiscountItems(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log" | "mainPgPool">,
   limit = DEFAULT_STEAM_NOW_LIMIT,
   options: SteamNowScanOptions = {},
 ): Promise<GameDealFreeItem[]> {
@@ -155,7 +155,7 @@ export async function scanSteamNowFullDiscountItems(
   return items;
 }
 
-export async function listActiveSteamFreeItems(ctx: BotContext, limit = 20): Promise<GameDealFreeItem[]> {
+export async function listActiveSteamFreeItems(ctx: Pick<CoreDeps, "log" | "mainPgPool">, limit = 20): Promise<GameDealFreeItem[]> {
   const repo = createGameDealRepository(ctx);
   return (await repo.listActiveSteamFreeEvents(limit)).map(toFreeItem);
 }

@@ -7,23 +7,24 @@ import {
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
-import { PostgresYouTubeWatcherRepository } from "../../youtubeWatcher/youtubeWatcher.repository.js";
+import { PostgresYouTubeVideoCacheRepository, YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX, youtubeGoogleVideoPendingError } from "../../youtube/youtubeVideoCache.repository.js";
 import type {
   saveYouTubeVideoCacheReferenceForPost,
   YouTubeVideoCachePostMedia,
-} from "../../youtubeWatcher/youtubeVideoCache.service.js";
-import { YOUTUBE_GOOGLEVIDEO_PENDING_PREFIX, youtubeGoogleVideoPendingError } from "../../youtubeWatcher/youtubeWatcher.repository.js";
+} from "../../youtube/youtubeVideoCache.service.js";
 import {
   isGoogleVideoMediaUrl,
   resolveYouTubeVideoMedia,
   resolveYouTubeVideoMediaWithRetry,
-} from "../../utilities/youtubeVideoMedia.js";
+} from "../../youtube/youtubeVideoMedia.js";
 import type { PreviewDocument } from "../shared/previewDocument.js";
 import { buildTranslatedPreview, type PreviewPipelineState } from "../shared/previewPipeline.js";
-import { buildPreviewComponents, replacePreviewMedia } from "../shared/previewRenderer.js";
+import { buildPreviewComponents } from "../shared/previewRenderer.js";
+import { replacePreviewMedia } from "../../../core/previewMedia.js";
+import { waitForNativeYouTubeEmbed } from "./youtubeNativeEmbedWait.js";
 import { isRetryablePreview, isTransientPreviewFailure, markRetryablePreview } from "../shared/previewMediaDownload.js";
 import { savePreviewTranslationState } from "../shared/previewState.repository.js";
 import {
@@ -34,7 +35,6 @@ import {
   fetchYouTubePreview,
   getYouTubeNativeEmbedVideoUrl,
   nativeYouTubeEmbedToDocument,
-  parseYouTubeUrl,
   safeYouTubeHttpsUrl,
   youTubePreviewToDocument,
   type YouTubePreview,
@@ -49,7 +49,6 @@ import {
   YOUTUBE_MEDIA_ATTACHMENT_FILENAME,
 } from "./youtubeMediaAttachment.js";
 
-const NATIVE_EMBED_WAIT_MS = 3_000;
 
 type LoggerLike = { warn: (...args: unknown[]) => void };
 
@@ -258,49 +257,6 @@ export async function buildYouTubeReplyPayloads(
   }));
 }
 
-function toApiEmbed(value: unknown): APIEmbed | null {
-  if (!value || typeof value !== "object") return null;
-  const toJSON = (value as { toJSON?: () => unknown }).toJSON;
-  const json = typeof toJSON === "function" ? toJSON.call(value) : value;
-  return json && typeof json === "object" ? json as APIEmbed : null;
-}
-
-function nativeEmbedForTarget(message: Message, target: YouTubeReplyTarget, allowUrlless: boolean): APIEmbed | null {
-  for (const raw of message.embeds ?? []) {
-    const embed = toApiEmbed(raw);
-    if (!embed) continue;
-    const parsed = embed.url ? parseYouTubeUrl(embed.url) : null;
-    if (parsed?.canonicalUrl === target.canonicalUrl || (allowUrlless && !embed.url && embed.type === "video")) return embed;
-  }
-  return null;
-}
-
-export async function waitForNativeYouTubeEmbed(
-  message: Message,
-  target: YouTubeReplyTarget,
-  allowUrlless: boolean,
-  clientOverride?: { on?: (...args: unknown[]) => unknown; off?: (...args: unknown[]) => unknown },
-): Promise<APIEmbed | null> {
-  const existing = nativeEmbedForTarget(message, target, allowUrlless);
-  if (existing) return existing;
-  const client = clientOverride ?? (message.client ?? null) as unknown as { on?: (...args: unknown[]) => unknown; off?: (...args: unknown[]) => unknown } | null;
-  if (!client?.on || !client.off) return null;
-  return await new Promise((resolve) => {
-    let done = false;
-    const finish = (embed: APIEmbed | null): void => {
-      if (done) return; done = true; timeout.removeEventListener("abort", onTimeout); client.off?.("messageUpdate", onUpdate); resolve(embed);
-    };
-    const onTimeout = (): void => finish(null);
-    const onUpdate = (_old: unknown, next: unknown): void => {
-      if (!next || typeof next !== "object" || (next as { id?: string }).id !== message.id) return;
-      const embed = nativeEmbedForTarget(next as Message, target, allowUrlless);
-      if (embed) finish(embed);
-    };
-    const timeout = AbortSignal.timeout(NATIVE_EMBED_WAIT_MS);
-    timeout.addEventListener("abort", onTimeout, { once: true });
-    client.on?.("messageUpdate", onUpdate);
-  });
-}
 
 export type PreparedYouTubeExpansionItem = {
   target: YouTubeReplyTarget;
@@ -334,8 +290,8 @@ export async function prepareYouTubeLinkExpansion(
 
 export type SendYouTubeExpansionDeps = {
   replyExpansion?: ExpansionReply;
-  db: BotContext["db"];
-  mainPgPool?: BotContext["mainPgPool"];
+  db: CoreDeps["db"];
+  mainPgPool?: CoreDeps["mainPgPool"];
   config: AppConfig;
   log: LoggerLike;
   aiRouter?: AiProviderRouter;
@@ -346,8 +302,8 @@ export type SendYouTubeExpansionDeps = {
   attachmentSizeLimitBytes?: number;
   saveState?: typeof savePreviewTranslationState;
   saveReference?: typeof saveYouTubeVideoCacheReferenceForPost;
-  cacheReferenceRepo?: PostgresYouTubeWatcherRepository;
-  createCacheReferenceRepo?: () => PostgresYouTubeWatcherRepository;
+  cacheReferenceRepo?: PostgresYouTubeVideoCacheRepository;
+  createCacheReferenceRepo?: () => PostgresYouTubeVideoCacheRepository;
 };
 
 export async function sendYouTubeLinkExpansion(
@@ -503,7 +459,7 @@ export async function sendYouTubeLinkExpansion(
             : item.media!);
           const repo = deps.cacheReferenceRepo
             ?? deps.createCacheReferenceRepo?.()
-            ?? new PostgresYouTubeWatcherRepository(deps.mainPgPool!);
+            ?? new PostgresYouTubeVideoCacheRepository(deps.mainPgPool!);
           await deps.saveReference(deps as never, repo, {
             guildId: message.guildId ?? deps.config.GUILD_ID, channelId: message.channelId,
           }, { videoId: item.target.id, videoUrl: item.target.canonicalUrl }, { message: reply as never, media: displayedMedia });

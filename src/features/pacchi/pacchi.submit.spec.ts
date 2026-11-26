@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import type { Message } from "discord.js";
 import type { Pool } from "pg";
-import type { BotContext } from "../../bot/context.js";
 import { createPgPool, quotePgIdent } from "../../core/db/postgres.js";
 import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
-import { handlePacchiMessage } from "./pacchi.message-handler.js";
+import { handlePacchiMessage, type PacchiMessageDeps } from "./pacchi.message-handler.js";
 import { ensurePostgresPacchiSchema } from "./pacchi.schema.js";
 import { PostgresPacchiRepository } from "./postgresPacchiRepository.js";
 
-function makeCtx(mainPgPool: Pool): BotContext {
+function makeCtx(mainPgPool: Pool): PacchiMessageDeps {
   return {
     mainPgPool,
     config: {
@@ -28,7 +27,7 @@ function makeCtx(mainPgPool: Pool): BotContext {
       debug: () => undefined,
     },
     client: { user: { id: "bot-user" } },
-  } as unknown as BotContext;
+  } as unknown as PacchiMessageDeps;
 }
 
 function makeMessage(

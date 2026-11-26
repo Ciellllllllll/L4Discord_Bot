@@ -1,7 +1,7 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 
-export async function getAiR18Enabled(ctx: BotContext, guildId: string, userId: string): Promise<boolean> {
+export async function getAiR18Enabled(ctx: Pick<CoreDeps, "db">, guildId: string, userId: string): Promise<boolean> {
   const row = await ctx.db
     .selectFrom("ai_r18_user_settings")
     .select("enabled")
@@ -12,7 +12,7 @@ export async function getAiR18Enabled(ctx: BotContext, guildId: string, userId: 
 }
 
 export async function setAiR18Enabled(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "db">,
   guildId: string,
   userId: string,
   enabled: boolean,

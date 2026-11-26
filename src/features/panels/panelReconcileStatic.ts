@@ -1,13 +1,16 @@
 import type { Guild, Message, MessageCreateOptions, MessageEditOptions } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import { tryDeleteBotPanelMessage } from "./panelDiscordOps.js";
 import { ensurePanelMessageRow, savePanelMessageRow } from "./panelMessageStore.js";
 
+// PanelReconcileStatic が使う依存。
+type PanelReconcileStaticDeps = Pick<CoreDeps, "client" | "log" | "db">;
+
 // 埋め込み＋ボタン等の静的パネルを 1 種類だけ置く（VC/RR と同じ再接続・版管理ルール）。
 
 export async function reconcileStaticPanelMessage(
-  ctx: BotContext,
+  ctx: PanelReconcileStaticDeps,
   guild: Guild,
   channelId: string,
   panelKind: string,

@@ -1,8 +1,11 @@
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
-import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
+import { looksLikePrefixCommandLine } from "../../core/commandLike.js";
 import { parseGifAutoReplySetting } from "./gifAutoReply.js";
+
+// KeywordResponder が使う依存。
+type KeywordResponderDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 // メッセージ本文に含まれていれば反応する語
 
@@ -26,7 +29,7 @@ function hasConfiguredGif(message: Message, triggerUrl: string): boolean {
 }
 
 export class KeywordResponder {
-  constructor(private readonly ctx: BotContext) {}
+  constructor(private readonly ctx: KeywordResponderDeps) {}
 
   async onMessage(message: Message): Promise<void> {
     if (message.author?.bot) {

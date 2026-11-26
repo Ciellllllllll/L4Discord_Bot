@@ -1,6 +1,6 @@
 import type { ButtonInteraction } from "discord.js";
 import { MessageFlags } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { componentCardsPayload } from "../../core/componentCard.js";
 import { buildSubscriptionButtons, buildSubscriptionDealEmbed } from "./gameDealEmbeds.js";
 import { checkSubscriptions, scanCurrentFreeGamesDetailed } from "./gameDealScanner.js";
@@ -15,6 +15,8 @@ import {
   gameDealAllowedRoleMentions,
   gameDealRoleMention,
 } from "./gameDealDelivery.js";
+
+export type GameDealWatcherDeps = Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool">;
 
 const DEFAULT_TICK_INTERVAL_MS = 60 * 1000;
 const DEFAULT_STOP_GRACE_MS = 10_000;
@@ -146,7 +148,7 @@ export async function groupSubscriptionNotificationHits(
   return { detectedCount, groups };
 }
 
-async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeItem[], signal?: AbortSignal): Promise<number> {
+async function notifyFreeGameDealItems(ctx: GameDealWatcherDeps, freeItems: GameDealFreeItem[], signal?: AbortSignal): Promise<number> {
   const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
   if (freeItems.length === 0) return 0;
@@ -231,7 +233,7 @@ async function notifyFreeGameDealItems(ctx: BotContext, freeItems: GameDealFreeI
   return sentCount;
 }
 
-async function scanAndNotifySubscriptions(ctx: BotContext, signal?: AbortSignal): Promise<number> {
+async function scanAndNotifySubscriptions(ctx: GameDealWatcherDeps, signal?: AbortSignal): Promise<number> {
   const repo = createGameDealRepository(ctx);
   const configuredChannelId = configuredGameDealChannelId(ctx);
   let detectedCount = 0;
@@ -287,7 +289,7 @@ async function scanAndNotifySubscriptions(ctx: BotContext, signal?: AbortSignal)
   return detectedCount;
 }
 
-export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_INTERVAL_MS): GameDealWatcherController {
+export function startGameDealWatcher(ctx: GameDealWatcherDeps, intervalMs = DEFAULT_TICK_INTERVAL_MS): GameDealWatcherController {
   let lastSteamNowAt = 0;
   let lastEpicAt = 0;
   let lastSubscriptionAt = 0;
@@ -356,7 +358,7 @@ export function startGameDealWatcher(ctx: BotContext, intervalMs = DEFAULT_TICK_
   });
 }
 
-export async function handleGameDealButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleGameDealButton(interaction: ButtonInteraction, ctx: Pick<CoreDeps, "mainPgPool">): Promise<boolean> {
   const [domain, action, notificationId] = interaction.customId.split(":");
   if (domain !== "gameDeals" || !action || !notificationId) return false;
   const repo = createGameDealRepository(ctx);

@@ -5,10 +5,13 @@ import {
   type Message,
   type TextChannel,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { ComponentCardBuilder, componentCardsPayload } from "../../core/componentCard.js";
 import { flowTargetLocks, normalizePollStateRevision } from "./flowLifecycle.js";
-import { parsePersistedFlowState } from "./twoStagePollRuntime.js";
+import { parsePersistedFlowState } from "./twoStagePollTally.js";
+
+// 投票フローの共通処理が使う依存。
+type PollFlowHelperDeps = Pick<CoreDeps, "config" | "db" | "log">;
 
 export type OpenPollFlowRow = {
   id: string;
@@ -54,7 +57,7 @@ export function adminWaitDeadlineMs(updatedAt: Date, waitSeconds: number): numbe
 }
 
 export async function findOpenPollFlowById<TState>(
-  ctx: BotContext,
+  ctx: PollFlowHelperDeps,
   flowId: string,
   kind: string,
   parse: (raw: unknown) => TState | null,
@@ -82,7 +85,7 @@ export async function findOpenPollFlowById<TState>(
 }
 
 export async function deletePollFlowMessagesQuietly(
-  ctx: BotContext,
+  ctx: PollFlowHelperDeps,
   channel: TextChannel,
   messageIds: string[],
   logPrefix: string,
@@ -99,7 +102,7 @@ export async function deletePollFlowMessagesQuietly(
 }
 
 export async function editPollMessagesStopped(
-  ctx: BotContext,
+  ctx: PollFlowHelperDeps,
   channel: TextChannel,
   messages: Array<{ id: string | null | undefined; components: ActionRowBuilder<ButtonBuilder>[] }>,
   heading: string,
@@ -123,7 +126,7 @@ export async function editPollMessagesStopped(
 }
 
 export async function postPollAdminRequest(
-  ctx: BotContext,
+  ctx: PollFlowHelperDeps,
   channel: TextChannel,
   flowId: string,
   body: string,

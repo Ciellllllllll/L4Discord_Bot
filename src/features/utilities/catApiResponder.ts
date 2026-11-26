@@ -1,7 +1,10 @@
 import type { Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
-import { looksLikePrefixCommandLine } from "../../message/commandLike.js";
+import { looksLikePrefixCommandLine } from "../../core/commandLike.js";
+
+// CatApiResponder が使う依存。
+type CatApiResponderDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 const CAT_TRIGGER_PATTERN = /猫|ねこ|neko|neco/i;
 const DEFAULT_MIME_TYPES = "jpg,png,gif,mp4";
@@ -31,7 +34,7 @@ function pickCatMediaUrl(items: CatApiImage[]): string | null {
   return first?.url ?? null;
 }
 
-async function fetchCatMediaUrl(ctx: BotContext): Promise<string | null> {
+async function fetchCatMediaUrl(ctx: CatApiResponderDeps): Promise<string | null> {
   const apiKey = ctx.config.THECATAPI_API_KEY.trim();
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -56,7 +59,7 @@ async function fetchCatMediaUrl(ctx: BotContext): Promise<string | null> {
 }
 
 export class CatApiResponder {
-  constructor(private readonly ctx: BotContext) {}
+  constructor(private readonly ctx: CatApiResponderDeps) {}
 
   async onMessage(message: Message): Promise<void> {
     if (!this.ctx.config.THECATAPI_ENABLED) {

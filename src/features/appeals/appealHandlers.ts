@@ -7,10 +7,9 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { componentCardsPayload } from "../../core/componentCard.js";
 import { isAdmin } from "../../core/permission.js";
-import { cancelPendingRepliesByAppeal } from "../modmail/modmailStaffFlow.js";
 import {
   APPEAL_REASON_FIELD,
   APPEAL_START_PREFIX,
@@ -36,6 +35,21 @@ import {
   patchAppeal,
   sendAppealReviewMessage,
 } from "./appealService.js";
+
+/**
+ * modmail の cancelPendingRepliesByAppeal と同じシグネチャ。
+ * appeals は modmail を直接 import せず、組み立て時に実装を受け取る。
+ */
+export type CancelPendingModmailReplies = (
+  ctx: Pick<CoreDeps, "config" | "ticketDb" | "log" | "client">,
+  appealId: string,
+) => Promise<void>;
+
+// 異議申し立てのボタン・モーダル処理が使う依存。呼び出し先 (appealService と
+// cancelPendingModmailReplies) も同じ項目を使うため、この型を使う関数は全項目を使う。
+type AppealHandlerDeps =
+  & Pick<CoreDeps, "config" | "db" | "log" | "client" | "ticketDb">
+  & { cancelPendingModmailReplies: CancelPendingModmailReplies };
 
 const reviewActionLocks = new Set<string>();
 
@@ -91,7 +105,7 @@ async function respondReviewEphemeral(interaction: ButtonInteraction, content: s
   } catch {}
 }
 
-export async function handleAppealStartButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleAppealStartButton(interaction: ButtonInteraction, ctx: Pick<CoreDeps, "log">): Promise<boolean> {
   if (!interaction.customId.startsWith(APPEAL_START_PREFIX)) return false;
 
   const ctxId = interaction.customId.slice(APPEAL_START_PREFIX.length);
@@ -149,7 +163,7 @@ export async function handleAppealStartButton(interaction: ButtonInteraction, ct
   return true;
 }
 
-export async function handleAppealSubmitModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleAppealSubmitModal(interaction: ModalSubmitInteraction, ctx: AppealHandlerDeps): Promise<boolean> {
   if (!interaction.customId.startsWith(APPEAL_SUBMIT_PREFIX)) return false;
 
   const ctxId = interaction.customId.slice(APPEAL_SUBMIT_PREFIX.length);
@@ -214,7 +228,7 @@ export async function handleAppealSubmitModal(interaction: ModalSubmitInteractio
   return true;
 }
 
-export async function handleAppealReviewButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleAppealReviewButton(interaction: ButtonInteraction, ctx: AppealHandlerDeps): Promise<boolean> {
   const parsed = parseAppealReviewCustomId(interaction.customId);
   if (!parsed) return false;
 
@@ -329,7 +343,7 @@ export async function handleAppealReviewButton(interaction: ButtonInteraction, c
       }
     }
 
-    await cancelPendingRepliesByAppeal(ctx, appealId);
+    await ctx.cancelPendingModmailReplies(ctx, appealId);
 
     await patchAppeal(ctx, appealId, {
       status: nextStatus,

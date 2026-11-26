@@ -7,10 +7,11 @@ import {
   type ChatInputCommandInteraction,
   type GuildMember,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { AiProviderRouter } from "./aiProviderRouter.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { isAdmin } from "../../core/permission.js";
 import { checkJapaneseWorkerHealth } from "../japaneseAnalysis/japaneseAnalysisClient.js";
-import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles } from "./aiQueryService.js";
+import { AiQueryService, SHOW_PROMPT_APPLY_BUTTON_ID, readAiBasePromptFiles, type AiQueryServiceDeps } from "./aiQueryService.js";
 import { AiRequestError } from "./aiRequestError.js";
 import { getAiR18Enabled, setAiR18Enabled } from "./aiR18Settings.js";
 import { sanitizeAiModelName } from "./modelDisplay.js";
@@ -24,7 +25,7 @@ const inFlightQUsers = new Set<string>();
 
 export async function handleThinkingCommand(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "db">,
   member: GuildMember | null,
 ): Promise<void> {
   const target = interaction.options.getUser("user") ?? interaction.user;
@@ -42,7 +43,7 @@ export async function handleThinkingCommand(
   });
 }
 
-export async function handleR18Command(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+export async function handleR18Command(interaction: ChatInputCommandInteraction, ctx: Pick<CoreDeps, "db">): Promise<void> {
   const enabled = interaction.options.getBoolean("enabled", true);
   await setAiR18Enabled(ctx, interaction.guildId!, interaction.user.id, enabled);
   await interaction.reply({
@@ -51,7 +52,7 @@ export async function handleR18Command(interaction: ChatInputCommandInteraction,
   });
 }
 
-export async function handleShowPromptCommand(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+export async function handleShowPromptCommand(interaction: ChatInputCommandInteraction, ctx: AiQueryServiceDeps): Promise<void> {
   const svc = new AiQueryService(ctx);
   const prompt = svc.loadUserPrompt(interaction.user.id, interaction.user.username);
   const card = new ComponentCardBuilder()
@@ -74,12 +75,12 @@ export async function handleShowPromptCommand(interaction: ChatInputCommandInter
 
 export type HandleQCommandDeps = {
   getAiR18Enabled?: typeof getAiR18Enabled;
-  createQueryService?: (ctx: BotContext) => Pick<AiQueryService, "routeSlashInteraction">;
+  createQueryService?: (ctx: AiQueryServiceDeps) => Pick<AiQueryService, "routeSlashInteraction">;
 };
 
 async function sendQFailureReply(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log">,
   content: string,
   options: { answerSent?: boolean } = {},
 ): Promise<void> {
@@ -117,7 +118,7 @@ async function sendQFailureReply(
 
 export async function handleQCommand(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: AiQueryServiceDeps,
   deps: HandleQCommandDeps = {},
 ): Promise<void> {
   const raw = interaction.options.getString("text")?.trim() ?? "";
@@ -131,7 +132,7 @@ export async function handleQCommand(
     return;
   }
   const resolveR18 = deps.getAiR18Enabled ?? getAiR18Enabled;
-  const createQueryService = deps.createQueryService ?? ((c: BotContext) => new AiQueryService(c));
+  const createQueryService = deps.createQueryService ?? ((c: AiQueryServiceDeps) => new AiQueryService(c));
   inFlightQUsers.add(userId);
   try {
     let r18: boolean;
@@ -201,7 +202,7 @@ export function buildAiPingReply(
   };
 }
 
-export async function handlePingCommand(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+export async function handlePingCommand(interaction: ChatInputCommandInteraction, ctx: Pick<CoreDeps, "config" | "db" | "log"> & { aiRouter: AiProviderRouter }): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const worker = ctx.config.JAPANESE_WORKER_ENABLED
     ? await checkJapaneseWorkerHealth({
@@ -254,7 +255,7 @@ function openAiPreferenceLabel(preference: "gpt56" | "gpt54_mini"): string {
   return preference === "gpt56" ? "GPT-5.6 Terra" : "GPT-5.4 mini";
 }
 
-function effectiveRouteLabel(status: Awaited<ReturnType<BotContext["aiRouter"]["getStatus"]>>): string {
+function effectiveRouteLabel(status: Awaited<ReturnType<AiProviderRouter["getStatus"]>>): string {
   if (status.effectiveProvider === "deepseek") return "DeepSeek";
   if (status.effectiveProvider === "openrouter") {
     return status.effectiveModel ? `OpenRouter (${status.effectiveModel})` : "OpenRouter";
@@ -266,7 +267,7 @@ function effectiveRouteLabel(status: Awaited<ReturnType<BotContext["aiRouter"]["
 
 export async function handleSwitch(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config"> & { aiRouter: AiProviderRouter },
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {

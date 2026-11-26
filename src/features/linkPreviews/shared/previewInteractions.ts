@@ -1,5 +1,5 @@
 import { MessageFlags, type ButtonInteraction } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import {
   patchPreviewTextComponents,
   PREVIEW_SHOW_ORIGINAL_ID,
@@ -86,7 +86,7 @@ async function reportFailure(interaction: ButtonInteraction): Promise<void> {
 
 export async function handlePreviewInteraction(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "db" | "log" | "client">,
   deps: PreviewInteractionDeps = {},
 ): Promise<boolean> {
   const mode = previewToggleMode(interaction.customId);

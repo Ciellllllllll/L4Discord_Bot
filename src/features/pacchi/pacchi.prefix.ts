@@ -5,7 +5,7 @@ import {
   type MessageMentionOptions,
 } from "discord.js";
 import { z } from "zod";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { isAdmin } from "../../core/permission.js";
 import { readResponseArrayBufferWithLimit } from "../../core/http/fetchWithLimits.js";
 import { buildVerifiedPacchiPoem, pacchiVerifiedPoemFailureMessage } from "./pacchi.poem.js";
@@ -13,6 +13,9 @@ import { createPacchiRepositoryForContext } from "./pacchi.repository.js";
 import { formatDuration, RATE_CONFIG } from "./pacchi.reply.js";
 import { parseLimit, sanitizeForReply } from "./pacchi.filters.js";
 import type { PacchiExportData, PacchiRate } from "./pacchi.types.js";
+
+// PacchiPrefix が使う依存。
+type PacchiPrefixDeps = Pick<CoreDeps, "config" | "log" | "mainPgPool">;
 
 const ADMIN_ONLY = "このコマンドは管理者のみ使用できます。";
 const SAFE_REPLY: MessageMentionOptions = { parse: [] };
@@ -72,7 +75,7 @@ function isPacchiRate(input: string): input is PacchiRate {
   return input === "silent" || input === "low" || input === "normal" || input === "high" || input === "unlimited";
 }
 
-function requireAdmin(message: Message, ctx: BotContext): boolean {
+function requireAdmin(message: Message, ctx: PacchiPrefixDeps): boolean {
   return Boolean(message.member && isAdmin(message.member, ctx.config));
 }
 
@@ -82,7 +85,7 @@ async function replySafe(message: Message, content: string): Promise<void> {
 
 export async function handlePacchiPrefixMessage(
   message: Message,
-  ctx: BotContext,
+  ctx: PacchiPrefixDeps,
   lower: string,
   args: string[],
 ): Promise<boolean> {
@@ -160,7 +163,7 @@ export async function handlePacchiPrefixMessage(
   }
 }
 
-async function handleChannel(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
+async function handleChannel(message: Message, ctx: PacchiPrefixDeps, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const repo = createPacchiRepositoryForContext(ctx);
   const current = await repo.getChannelSettings(message.guildId!, message.channelId);
@@ -181,7 +184,7 @@ async function handleChannel(message: Message, ctx: BotContext, args: string[]):
   return true;
 }
 
-async function handleRate(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
+async function handleRate(message: Message, ctx: PacchiPrefixDeps, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const rate = args[0];
   if (!rate || !isPacchiRate(rate)) {
@@ -193,7 +196,7 @@ async function handleRate(message: Message, ctx: BotContext, args: string[]): Pr
   return true;
 }
 
-async function handleStatus(message: Message, ctx: BotContext): Promise<boolean> {
+async function handleStatus(message: Message, ctx: PacchiPrefixDeps): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const repo = createPacchiRepositoryForContext(ctx);
   const settings = await repo.getSettings(message.guildId!);
@@ -219,7 +222,7 @@ async function handleStatus(message: Message, ctx: BotContext): Promise<boolean>
   return true;
 }
 
-async function handleMemory(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
+async function handleMemory(message: Message, ctx: PacchiPrefixDeps, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const repo = createPacchiRepositoryForContext(ctx);
   const limit = parseLimit(args[0], 10, 50);
@@ -233,7 +236,7 @@ async function handleMemory(message: Message, ctx: BotContext, args: string[]): 
   return true;
 }
 
-async function handleWords(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
+async function handleWords(message: Message, ctx: PacchiPrefixDeps, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const words = await createPacchiRepositoryForContext(ctx).topWords(message.guildId!, parseLimit(args[0], 10, 50));
   const embed = new ComponentCardBuilder()
@@ -243,7 +246,7 @@ async function handleWords(message: Message, ctx: BotContext, args: string[]): P
   return true;
 }
 
-async function handleForget(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
+async function handleForget(message: Message, ctx: PacchiPrefixDeps, args: string[]): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const repo = createPacchiRepositoryForContext(ctx);
   const [kind, ...rest] = args;
@@ -264,7 +267,7 @@ async function handleForget(message: Message, ctx: BotContext, args: string[]): 
   return true;
 }
 
-async function handlePoem(message: Message, ctx: BotContext, args: string[]): Promise<boolean> {
+async function handlePoem(message: Message, ctx: PacchiPrefixDeps, args: string[]): Promise<boolean> {
   const pattern = args[0] ?? "";
   const repo = createPacchiRepositoryForContext(ctx);
   const result = ctx.config.JAPANESE_WORKER_ENABLED
@@ -280,21 +283,21 @@ async function handlePoem(message: Message, ctx: BotContext, args: string[]): Pr
   return true;
 }
 
-export async function handleWorkStart(message: Message, ctx: BotContext, goalText: string): Promise<boolean> {
+export async function handleWorkStart(message: Message, ctx: PacchiPrefixDeps, goalText: string): Promise<boolean> {
   const safeGoal = sanitizeForReply(goalText) ?? "";
   const ok = await createPacchiRepositoryForContext(ctx).startReport(message.guildId!, message.author.id, message.channelId, safeGoal);
   await replySafe(message, ok ? "日報を開始しました。" : "既に日報を開始中です。先に `!pacchi_work_end` してください。");
   return true;
 }
 
-export async function handleWorkEnd(message: Message, ctx: BotContext, progressText: string): Promise<boolean> {
+export async function handleWorkEnd(message: Message, ctx: PacchiPrefixDeps, progressText: string): Promise<boolean> {
   const safeProgress = sanitizeForReply(progressText) ?? "";
   const report = await createPacchiRepositoryForContext(ctx).endReport(message.guildId!, message.author.id, safeProgress);
   await replySafe(message, report ? report.reportText : "開始中の日報がありません。");
   return true;
 }
 
-async function handleSleep(message: Message, ctx: BotContext): Promise<boolean> {
+async function handleSleep(message: Message, ctx: PacchiPrefixDeps): Promise<boolean> {
   const latest = await createPacchiRepositoryForContext(ctx).latestSleep(message.guildId!, message.author.id);
   if (!latest) {
     await replySafe(message, "睡眠記録がありません。");
@@ -304,7 +307,7 @@ async function handleSleep(message: Message, ctx: BotContext): Promise<boolean> 
   return true;
 }
 
-async function handleExport(message: Message, ctx: BotContext): Promise<boolean> {
+async function handleExport(message: Message, ctx: PacchiPrefixDeps): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const json = JSON.stringify(await createPacchiRepositoryForContext(ctx).exportData(message.guildId!), null, 2);
   const file = new AttachmentBuilder(Buffer.from(json, "utf8"), { name: "pacchi-memory.json" });
@@ -312,7 +315,7 @@ async function handleExport(message: Message, ctx: BotContext): Promise<boolean>
   return true;
 }
 
-async function handleImport(message: Message, ctx: BotContext): Promise<boolean> {
+async function handleImport(message: Message, ctx: PacchiPrefixDeps): Promise<boolean> {
   if (!requireAdmin(message, ctx)) return void await replySafe(message, ADMIN_ONLY), true;
   const attachment = message.attachments.first();
   if (!attachment) {

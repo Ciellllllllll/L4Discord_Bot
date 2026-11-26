@@ -589,13 +589,13 @@ async function run(): Promise<void> {
   } as never);
   assert.equal(debugCacheCalls, 0);
 
-const githubTarget = parseGithubUrl("https://github.com/octo/hello/issues/42")!;
-const githubEmbedImageUrl = "https://opengraph.githubassets.com/abc/octo/hello";
-assert.deepEqual(extractGithubEmbedImageUrls({ embeds: [
-  { toJSON: () => ({ url: "https://github.com/octo/hello", image: { url: githubEmbedImageUrl } }) },
-  { toJSON: () => ({ url: "https://example.com/not-github", image: { url: "https://example.com/ignored.png" } }) },
-] } as never), new Map([["https://github.com/octo/hello", githubEmbedImageUrl]]));
-const githubFailureResult = {
+  const githubTarget = parseGithubUrl("https://github.com/octo/hello/issues/42")!;
+  const githubEmbedImageUrl = "https://opengraph.githubassets.com/abc/octo/hello";
+  assert.deepEqual(extractGithubEmbedImageUrls({ embeds: [
+    { toJSON: () => ({ url: "https://github.com/octo/hello", image: { url: githubEmbedImageUrl } }) },
+    { toJSON: () => ({ url: "https://example.com/not-github", image: { url: "https://example.com/ignored.png" } }) },
+  ] } as never), new Map([["https://github.com/octo/hello", githubEmbedImageUrl]]));
+  const githubFailureResult = {
     target: githubTarget,
     status: "error" as const,
     reason: "not_found" as const,

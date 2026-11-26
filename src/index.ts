@@ -7,6 +7,7 @@ if (process.platform === "win32") {
 }
 
 import { PostgresVcRankingRepository } from "./adapters/legacyDb/postgresVcRankingRepository.js";
+import { botCancelPendingModmailReplies } from "./bot/appealModmailWiring.js";
 import { CLIENT_INTENT_NAMES, createDiscordClient } from "./bot/createClient.js";
 import type { BotContext } from "./bot/context.js";
 import { closeDatabaseRuntime, createDatabaseRuntime } from "./bot/databaseRuntime.js";
@@ -88,6 +89,7 @@ async function main(): Promise<void> {
     mainPgPool,
     vcRanking: new PostgresVcRankingRepository(vcTimePgPool, config.VC_TIME_RANKING_TIMEZONE),
     vcTemp,
+    cancelPendingModmailReplies: botCancelPendingModmailReplies,
   };
   log.debug("repositories: PostgreSQL schemas selected for tickets, message log, attachments, VC, AI history, automoderation, reminders");
 

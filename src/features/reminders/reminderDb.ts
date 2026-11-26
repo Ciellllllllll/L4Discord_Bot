@@ -1,11 +1,14 @@
 import type { Kysely } from "kysely";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { createPostgresReminderKysely } from "../../core/db/kysely.js";
 import type { ReminderDatabase } from "../../core/db/types.js";
 
+// ReminderDb が使う依存。
+type ReminderDbDeps = Pick<CoreDeps, "config">;
+
 let reminderKysely: Kysely<ReminderDatabase> | null = null;
 
-export function getReminderDb(ctx: BotContext): Kysely<ReminderDatabase> {
+export function getReminderDb(ctx: ReminderDbDeps): Kysely<ReminderDatabase> {
   if (reminderKysely) return reminderKysely;
   reminderKysely = createPostgresReminderKysely({
     connectionString: ctx.config.DATABASE_URL,

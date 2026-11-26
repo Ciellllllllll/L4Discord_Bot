@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { LEGACY_FLAG_COLUMNS } from "../../bot/databaseRuntime.js";
+import { LEGACY_FLAG_COLUMNS } from "./legacyFlagColumns.js";
 import { getOptionalPostgresTestUrl } from "../../test/postgresTestEnv.js";
 import { migrateLegacyBooleanColumns } from "./legacyBooleanColumns.js";
 import { createPgPool, quotePgIdent } from "./postgres.js";

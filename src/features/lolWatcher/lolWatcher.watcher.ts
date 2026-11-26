@@ -1,5 +1,5 @@
 import type { Client, GuildTextBasedChannel } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { componentCardsPayload } from "../../core/componentCard.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import { buildLolWatcherCompletedEmbed, buildLolWatcherStartEmbed } from "./lolWatcher.embeds.js";
@@ -60,7 +60,9 @@ async function findActiveGameForCompleted(
   return legacyId ? await repo.getActiveGame(accountKeyNorm, legacyId) : null;
 }
 
-async function validateLolWatcherEnv(ctx: BotContext, repo: LolWatcherRepositoryLike): Promise<boolean> {
+type LolWatcherDeps = Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool">;
+
+async function validateLolWatcherEnv(ctx: LolWatcherDeps, repo: LolWatcherRepositoryLike): Promise<boolean> {
   const missing: string[] = [];
   if (!ctx.config.RIOT_API_KEY.trim()) missing.push("RIOT_API_KEY");
   if (missing.length === 0) return true;
@@ -74,7 +76,7 @@ async function validateLolWatcherEnv(ctx: BotContext, repo: LolWatcherRepository
   return false;
 }
 
-export async function validateAndPrepareLolWatcher(ctx: BotContext): Promise<boolean> {
+export async function validateAndPrepareLolWatcher(ctx: LolWatcherDeps): Promise<boolean> {
   if (!ctx.config.DEEPLOL_WATCHER_ENABLED) return false;
   const repo = createLolWatcherRepository(ctx);
   try {
@@ -99,7 +101,7 @@ async function fetchLolWatcherChannel(client: Client, channelId: string): Promis
 }
 
 async function postStartEmbed(
-  ctx: BotContext,
+  ctx: LolWatcherDeps,
   repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   accountKeyNorm: string,
@@ -135,7 +137,7 @@ async function postStartEmbed(
 }
 
 async function postCompletedEmbed(
-  ctx: BotContext,
+  ctx: LolWatcherDeps,
   repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   input: {
@@ -180,7 +182,7 @@ async function postCompletedEmbed(
 }
 
 function withDeepLolDetailUrl(
-  ctx: BotContext,
+  ctx: LolWatcherDeps,
   input: {
     accountKey: string;
     accountKeyNorm: string;
@@ -205,7 +207,7 @@ function withDeepLolDetailUrl(
 }
 
 async function editCompletedEmbed(
-  ctx: BotContext,
+  ctx: LolWatcherDeps,
   repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   active: LolWatcherActiveGame,
@@ -262,7 +264,7 @@ async function editCompletedEmbed(
 }
 
 async function handleCompletedGame(
-  ctx: BotContext,
+  ctx: LolWatcherDeps,
   repo: LolWatcherRepositoryLike,
   thread: GuildTextBasedChannel,
   accountKey: string,
@@ -318,7 +320,7 @@ async function updateMissingAndStale(repo: LolWatcherRepositoryLike, accountKeyN
 }
 
 export async function scanLolWatcher(
-  ctx: BotContext,
+  ctx: LolWatcherDeps,
 ): Promise<LolWatcherScanResult> {
   const result = emptyScanResult();
   const repo = createLolWatcherRepository(ctx);
@@ -403,7 +405,7 @@ export async function scanLolWatcher(
   return result;
 }
 
-export async function startLolWatcher(ctx: BotContext): Promise<LolWatcherController | null> {
+export async function startLolWatcher(ctx: LolWatcherDeps): Promise<LolWatcherController | null> {
   if (!(await validateAndPrepareLolWatcher(ctx))) return null;
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;

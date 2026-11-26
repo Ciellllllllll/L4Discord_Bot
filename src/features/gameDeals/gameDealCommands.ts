@@ -1,5 +1,5 @@
 import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { componentCardsPayload } from "../../core/componentCard.js";
 import { isAdmin } from "../../core/permission.js";
 import {
@@ -14,7 +14,7 @@ import { createGameDealRepository } from "./postgresGameDealRepository.js";
 import { scanSteamNowFullDiscountItems } from "./steamFreeScanner.js";
 import type { GameDealFreeItem, GameDealScanResult } from "./gameDealTypes.js";
 
-async function ensureGameDealCommandChannel(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<string | null> {
+async function ensureGameDealCommandChannel(interaction: ChatInputCommandInteraction, ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">): Promise<string | null> {
   const channelId = configuredGameDealChannelId(ctx);
   if (!channelId) {
     await interaction.reply({
@@ -33,7 +33,7 @@ async function ensureGameDealCommandChannel(interaction: ChatInputCommandInterac
 async function sendGameDealItemsToChannel(
   interaction: ChatInputCommandInteraction,
   items: GameDealFreeItem[],
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">,
   channelId: string,
 ): Promise<boolean> {
   const channel = await fetchGameDealTextChannel(interaction.client, channelId);
@@ -77,7 +77,7 @@ function steamWatchNote(): string {
 
 export async function handleGameOn(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">,
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
@@ -114,7 +114,7 @@ export async function handleGameOn(
 
 export async function handleGameOff(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">,
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
@@ -128,7 +128,7 @@ export async function handleGameOff(
 
 export async function handleGameNow(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">,
   member: GuildMember | null,
 ): Promise<void> {
   if (!member || !isAdmin(member, ctx.config)) {
@@ -154,7 +154,7 @@ export async function handleGameNow(
   await interaction.editReply(sent ? `Steamの100%割引商品 ${items.length}件を送信しました。` : "通知チャンネルを取得できませんでした。");
 }
 
-export async function handleGameSub(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+export async function handleGameSub(interaction: ChatInputCommandInteraction, ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">): Promise<void> {
   const repo = createGameDealRepository(ctx);
   const channelId = await ensureGameDealCommandChannel(interaction, ctx);
   if (!channelId) return;
@@ -182,7 +182,7 @@ export async function handleGameSub(interaction: ChatInputCommandInteraction, ct
   });
 }
 
-export async function handleGameSubList(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+export async function handleGameSubList(interaction: ChatInputCommandInteraction, ctx: Pick<CoreDeps, "config" | "log" | "mainPgPool">): Promise<void> {
   const repo = createGameDealRepository(ctx);
   const rows = await repo.listActiveSubscriptionsForUser(interaction.guildId!, interaction.user.id);
   if (rows.length === 0) {

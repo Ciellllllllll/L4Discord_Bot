@@ -12,14 +12,14 @@ import {
   type User,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import type { AppealsRow } from "../../core/db/types.js";
 import {
   attachmentMetaToJson,
   buildForwardDmFiles,
   type AttachmentMeta,
-} from "../modmail/modmailAttachmentUtils.js";
+} from "../../core/discordAttachments.js";
 import {
   APPEAL_REVIEW_PREFIX,
   APPEAL_REVIEW_THREAD_PREFIX,
@@ -147,7 +147,7 @@ export function buildThreadJumpRows(guildId: string, threadId: string): ActionRo
 }
 
 export async function createAppealRecord(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb">,
   pending: PendingAppealStartCtx,
   appealReason: string,
 ): Promise<{ id: string; code: string }> {
@@ -177,13 +177,13 @@ export async function createAppealRecord(
   return { id, code };
 }
 
-export async function getAppealById(ctx: BotContext, appealId: string): Promise<AppealsRow | undefined> {
+export async function getAppealById(ctx: Pick<CoreDeps, "ticketDb">, appealId: string): Promise<AppealsRow | undefined> {
   const row = await ctx.ticketDb.selectFrom("appeals").selectAll().where("id", "=", appealId).executeTakeFirst();
   return row;
 }
 
 /** 保留審査スレッド内で !reply するためのルックアップ */
-export async function getAppealHoldByThreadId(ctx: BotContext, threadId: string): Promise<AppealsRow | undefined> {
+export async function getAppealHoldByThreadId(ctx: Pick<CoreDeps, "ticketDb">, threadId: string): Promise<AppealsRow | undefined> {
   const row = await ctx.ticketDb
     .selectFrom("appeals")
     .selectAll()
@@ -194,7 +194,7 @@ export async function getAppealHoldByThreadId(ctx: BotContext, threadId: string)
 }
 
 export async function patchAppeal(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb">,
   appealId: string,
   patch: Partial<{
     status: string;
@@ -211,7 +211,7 @@ export async function patchAppeal(
     .execute();
 }
 
-export async function clearAppealStartButton(ctx: BotContext, pending: PendingAppealStartCtx): Promise<void> {
+export async function clearAppealStartButton(ctx: Pick<CoreDeps, "client">, pending: PendingAppealStartCtx): Promise<void> {
   if (!pending.sourceChannelId || !pending.sourceMessageId) return;
   let channel = ctx.client.channels.cache.get(pending.sourceChannelId);
   if (!channel) {
@@ -224,7 +224,7 @@ export async function clearAppealStartButton(ctx: BotContext, pending: PendingAp
 }
 
 export async function sendAppealReviewMessage(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log" | "client" | "ticketDb">,
   appeal: AppealsRow,
   requester: { tag: string; displayName: string; userId: string; guildId: string },
 ): Promise<Message | null> {
@@ -259,7 +259,7 @@ export async function sendAppealReviewMessage(
 }
 
 export async function notifyAppealUserResult(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "client">,
   appeal: AppealsRow,
   result: string,
   note: string,
@@ -305,7 +305,7 @@ async function forceAddRoleMembersToThread(guild: Guild, thread: ThreadChannel, 
 }
 
 export async function applyAppealApproveRemoveTimeout(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log" | "client">,
   appeal: AppealsRow,
   guildId: string,
   userId: string,
@@ -331,7 +331,7 @@ export async function applyAppealApproveRemoveTimeout(
 
 export async function createAppealHoldThread(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "log">,
   appeal: AppealsRow,
   reviewContext: { userId: string; guildId: string },
 ): Promise<{ thread: ThreadChannel; panel: Message } | null> {
@@ -446,7 +446,7 @@ function trimMaxLocal(text: string, n: number): string {
 
 /** 保留スレッドへユーザー返信を転送（Modmail の relay と同様） */
 export async function relayUserPayloadToAppealHoldThread(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log" | "client">,
   appeal: AppealsRow,
   kind: "User Reply" | "User Reply Attachment",
   body: string,

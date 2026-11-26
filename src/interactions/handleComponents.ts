@@ -5,13 +5,15 @@ import type {
   StringSelectMenuInteraction,
 } from "discord.js";
 import type { BotContext } from "../bot/context.js";
+import { handleSlashCommand } from "../commands/slashHandlers.js";
+import type { ReplaySlashCommand } from "../features/anonymousSurvey/surveyHandlers.js";
 import { routeMessageLogButton, routeMessageLogModal } from "../features/messageLog/messageLogsView.js";
 import {
   handleSetupChannelSelect,
   handleSetupUiOpenButton,
-} from "../features/panels/setupWizard.js";
+} from "../features/panelHub/setupWizard.js";
 import { routeModmailStaffAndUserInteractions } from "../features/modmail/modmailStaffInteractions.js";
-import { handleUserContactPanelButton } from "../features/panels/userPanelHandlers.js";
+import { handleUserContactPanelButton } from "../features/panelHub/userPanelHandlers.js";
 import {
   handleVcCreateModal,
   handleVcCreatorButton,
@@ -28,15 +30,15 @@ import {
   handleAiHistoryAdminButton,
   handleAiHistoryAdminStringSelect,
 } from "../features/ai/aiHistoryAdminPanel.js";
-import { handleAiHistoryClearButton, handleShowPromptApplyButton } from "../features/ai/aiQueryService.js";
+import { handleAiHistoryClearButton, handleShowPromptApplyButton } from "../features/ai/aiQueryHandlers.js";
 import { handleChangePromptModalSubmit } from "../features/ai/changePromptHandlers.js";
 import { handleCreatePromptButton, handleCreatePromptModalSubmit } from "../features/ai/createPrompt.js";
+import { handleReminderHubButton } from "../features/reminders/reminderHubHandlers.js";
 import {
-  handleReminderHubButton,
   handleReminderHubChannelSelect,
-  handleReminderHubModal,
   handleReminderHubStringSelect,
-} from "../features/reminders/reminderHubHandlers.js";
+} from "../features/reminders/reminderHubSelectHandlers.js";
+import { handleReminderHubModal } from "../features/reminders/reminderHubModalHandlers.js";
 import {
   handleAutoModRaidButton,
   handleAutoModStringSelect,
@@ -47,14 +49,14 @@ import {
   handleAppealSubmitModal,
 } from "../features/appeals/appealHandlers.js";
 import { handleDetecterButton, handleDetecterModal } from "../features/detecter/detecterInteractions.js";
-import { handleExecutionFlowButton } from "../features/execution/executionFlow.js";
-import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlow.js";
+import { handleExecutionFlowButton } from "../features/execution/executionFlowEntry.js";
+import { handleTimeoutExtendFlowButton } from "../features/execution/timeoutExtendFlowEntry.js";
 import { handleGameDealButton } from "../features/gameDeals/gameDealWatcher.js";
 import { handleWerewolfButton, handleWerewolfStringSelect } from "../features/werewolf/werewolfGame.js";
 import { handleAnonymousSurveyButton, handleAnonymousSurveyModalSubmit } from "../features/anonymousSurvey/surveyHandlers.js";
 import { handleAnonymousSurveyViewButton } from "../features/anonymousSurvey/surveyView.js";
 import { handleBokeruButton, handleBokeruModal } from "../features/bokeru/bokeru.js";
-import { handleVxTwitterPreviewButton } from "../features/utilities/vxtwitterPreviewInteractions.js";
+import { handleVxTwitterPreviewButton } from "../features/linkPreviews/twitter/vxtwitterPreviewInteractions.js";
 import { handlePreviewInteraction } from "../features/linkPreviews/shared/previewInteractions.js";
 import { refreshPreviewTranslationState } from "../features/linkPreviews/linkPreviewMessageHandler.js";
 import { handleWebSummaryInteraction } from "../features/linkPreviews/web/webSummaryInteractions.js";
@@ -73,7 +75,10 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
   if (await handleYouTubeMediaRefresh(interaction, ctx)) return;
   if (await handleVxTwitterPreviewButton(interaction, ctx)) return;
   if (await handleAnonymousSurveyViewButton(interaction, ctx)) return;
-  if (await handleAnonymousSurveyButton(interaction, ctx)) return;
+  // handleSlashCommand は BotContext を受け取るため、この ctx を束縛して渡す。
+  const replaySlashCommand: ReplaySlashCommand = (replayInteraction, options) =>
+    handleSlashCommand(replayInteraction, ctx, options);
+  if (await handleAnonymousSurveyButton(interaction, ctx, replaySlashCommand)) return;
   if (await handleExecutionFlowButton(interaction, ctx)) return;
   if (await handleTimeoutExtendFlowButton(interaction, ctx)) return;
   if (await handleWerewolfButton(interaction, ctx)) return;
@@ -98,7 +103,9 @@ export async function routeButton(interaction: ButtonInteraction, ctx: BotContex
 }
 
 export async function routeModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<void> {
-  if (await handleAnonymousSurveyModalSubmit(interaction, ctx)) return;
+  const replaySlashCommand: ReplaySlashCommand = (replayInteraction, options) =>
+    handleSlashCommand(replayInteraction, ctx, options);
+  if (await handleAnonymousSurveyModalSubmit(interaction, ctx, replaySlashCommand)) return;
   if (await handleBokeruModal(interaction, ctx)) return;
   if (await handleChangePromptModalSubmit(interaction, ctx)) return;
   if (await handleCreatePromptModalSubmit(interaction, ctx)) return;

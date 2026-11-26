@@ -1,5 +1,5 @@
 import { PermissionFlagsBits, type Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getMergedAutoModSettings } from "./autoModerationSettings.js";
 import type { AutoModSettings } from "./autoModerationTypes.js";
 
@@ -23,7 +23,9 @@ function trackSpam(guildId: string, userId: string): number[] {
   return arr;
 }
 
-async function handleViolation(message: Message, reason: string, settings: AutoModSettings, ctx: BotContext): Promise<void> {
+type AutoModerationMessageDeps = Pick<CoreDeps, "config" | "automodDb" | "client">;
+
+async function handleViolation(message: Message, reason: string, settings: AutoModSettings, ctx: AutoModerationMessageDeps): Promise<void> {
   await message.delete().catch(() => undefined);
 
   if (settings.timeoutSec > 0 && message.member?.moderatable) {
@@ -61,7 +63,7 @@ async function handleViolation(message: Message, reason: string, settings: AutoM
 
 // ギルドメッセージの自動モデレーション（DiscordBOTv2 AutoModeration.js と同順序）
 
-export async function handleAutoModerationMessage(message: Message, ctx: BotContext): Promise<void> {
+export async function handleAutoModerationMessage(message: Message, ctx: AutoModerationMessageDeps): Promise<void> {
   if (!message.guild || message.author.bot) return;
   if (message.guild.id !== ctx.config.GUILD_ID) return;
 

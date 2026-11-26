@@ -1,26 +1,14 @@
-import type { Client } from "discord.js";
-import type { Kysely } from "kysely";
-import type pino from "pino";
-import type { Pool } from "pg";
-import type { AppConfig } from "../core/config.js";
-import type { AiHistoryDatabase, AutomoderationDatabase, Database, TicketDatabase } from "../core/db/types.js";
 import type { IVcRankingRepository } from "../adapters/legacyDb/vcRankingRepository.js";
 import type { VcTemporaryChannelManager } from "../features/vc/vcTemporaryChannelManager.js";
 import type { AiProviderRouter } from "../features/ai/aiProviderRouter.js";
+import type { CancelPendingModmailReplies } from "../features/appeals/appealHandlers.js";
+import type { CoreDeps } from "../core/deps.js";
 
-export type BotContext = {
-  config: AppConfig;
-  db: Kysely<Database>;
-  ticketDb: Kysely<TicketDatabase>;
-  messageLogPgPool: Pool;
-  messageAttachmentPgPool: Pool;
-  vcTimePgPool: Pool;
-  aiHistoryDb: Kysely<AiHistoryDatabase>;
-  automodDb: Kysely<AutomoderationDatabase>;
-  log: pino.Logger;
-  client: Client;
+// BotContext は最下層の依存 (CoreDeps) に、機能固有の実装を組み立て時に足した型。
+export type BotContext = CoreDeps & {
   aiRouter: AiProviderRouter;
-  mainPgPool: Pool;
   vcRanking: IVcRankingRepository;
   vcTemp: VcTemporaryChannelManager;
+  /** 異議申し立ての解決時に、modmail 側の保留返信をキャンセルする実装 */
+  cancelPendingModmailReplies: CancelPendingModmailReplies;
 };

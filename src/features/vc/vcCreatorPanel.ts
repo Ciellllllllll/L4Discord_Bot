@@ -7,7 +7,7 @@ import {
   type Message,
   type MessageEditOptions,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import { PANEL_KIND_VC_CREATOR } from "../panels/constants.js";
 import { tryDeleteBotPanelMessage } from "../panels/panelDiscordOps.js";
@@ -18,6 +18,9 @@ import {
   buildVcRenameModalCustomId,
   VC_NAME_MODAL_PREFIX,
 } from "./vcCreatorUi.js";
+
+// VcCreatorPanel が使う依存。
+type VcCreatorPanelDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
 
 export function buildVcNameModal(genre: string): ModalBuilder {
   return new ModalBuilder()
@@ -70,7 +73,7 @@ export function vcPanelMessageHasOpenButton(message: Message<boolean>): boolean 
   return messageComponentsHaveCustomId(message.components, new Set(["open_vc_modal"]));
 }
 
-export async function reconcileVcCreatorPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<boolean> {
+export async function reconcileVcCreatorPanel(ctx: VcCreatorPanelDeps, guild: Guild, channelId: string): Promise<boolean> {
   const kind = PANEL_KIND_VC_CREATOR;
   const codeVer = getPermanentUiVersion(kind);
   let row = await ensurePanelMessageRow(ctx, guild.id, kind, channelId);

@@ -10,7 +10,11 @@ import {
   type ChatInputCommandInteraction,
   type GuildMember,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+
+// AfkDisconnect が使う依存。
+type AfkDisconnectDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
+
 
 const AFK_CUSTOM_ID_PREFIX = "afk:";
 const AFK_CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -96,7 +100,7 @@ function disconnectReason(invoker: GuildMember): string {
 }
 
 async function sendAfkModLog(
-  ctx: BotContext,
+  ctx: AfkDisconnectDeps,
   invoker: GuildMember,
   target: GuildMember,
   channelId: string,
@@ -139,7 +143,7 @@ async function sendAfkModLog(
 
 export async function startAfkDisconnectCommand(
   interaction: ChatInputCommandInteraction,
-  _ctx: BotContext,
+  _ctx: AfkDisconnectDeps,
 ): Promise<void> {
   const guild = interaction.guild;
   if (!guild) {
@@ -205,7 +209,7 @@ export async function startAfkDisconnectCommand(
 
 export async function handleAfkDisconnectButton(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: AfkDisconnectDeps,
 ): Promise<boolean> {
   const payload = parseAfkCustomId(interaction.customId);
   if (!payload) return false;

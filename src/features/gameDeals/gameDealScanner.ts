@@ -1,4 +1,4 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { detectEpicFreeCandidates } from "../epic/epicFreeDetector.js";
 import { buildEpicFreeEmbed } from "../epic/epicFreeEmbeds.js";
 import { EpicStoreClient } from "../epic/epicStoreClient.js";
@@ -18,7 +18,7 @@ function epicDedupeKey(candidate: ReturnType<typeof detectEpicFreeCandidates>[nu
   return `epic:${candidate.dedupeKey}`;
 }
 
-export async function scanCurrentFreeGamesDetailed(ctx: BotContext, options: { signal?: AbortSignal } = {}): Promise<GameDealScanResult> {
+export async function scanCurrentFreeGamesDetailed(ctx: Pick<CoreDeps, "log" | "mainPgPool">, options: { signal?: AbortSignal } = {}): Promise<GameDealScanResult> {
   const tasks = [
     { platform: "steam" as const, promise: scanSteamCurrentFreeGamesWithStatus(ctx, options) },
     { platform: "epic" as const, promise: scanEpicCurrentFreeGamesWithStatus(ctx, options) },
@@ -40,21 +40,21 @@ export async function scanCurrentFreeGamesDetailed(ctx: BotContext, options: { s
 }
 
 async function scanSteamCurrentFreeGamesWithStatus(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log" | "mainPgPool">,
   _options: { signal?: AbortSignal },
 ): Promise<{ items: GameDealFreeItem[]; source: GameDealSourceStatus }> {
   return { items: await listActiveSteamFreeItems(ctx), source: { platform: "steam", status: "ok" } };
 }
 
 async function scanEpicCurrentFreeGamesWithStatus(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log">,
   options: { signal?: AbortSignal },
 ): Promise<{ items: GameDealFreeItem[]; source: GameDealSourceStatus }> {
   const items = await scanEpicCurrentFreeGames(ctx, options);
   return { items, source: { platform: "epic", status: "ok" } };
 }
 
-async function scanEpicCurrentFreeGames(ctx: BotContext, options: { signal?: AbortSignal }): Promise<GameDealFreeItem[]> {
+async function scanEpicCurrentFreeGames(ctx: Pick<CoreDeps, "log">, options: { signal?: AbortSignal }): Promise<GameDealFreeItem[]> {
   const epic = new EpicStoreClient(ctx.log);
   const offers = await epic.fetchFreePromotions(options);
   const items: GameDealFreeItem[] = [];
@@ -112,7 +112,7 @@ function steamPriceHit(sub: GameDealSubscription, details: SteamAppDetails): Gam
 }
 
 export async function checkSubscriptions(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "log">,
   subscriptions: GameDealSubscription[],
   options: { signal?: AbortSignal } = {},
 ): Promise<GameDealSubscriptionHit[]> {

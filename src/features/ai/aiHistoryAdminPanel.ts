@@ -11,7 +11,7 @@ import {
   type StringSelectMenuInteraction,
 } from "discord.js";
 import { sql } from "kysely";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 import { getPermanentUiVersion } from "../../core/releaseVersions.js";
 import { PANEL_KIND_AI_QUERY_HISTORY } from "../panels/constants.js";
@@ -28,7 +28,10 @@ export const HISTORY_CLEAR_ME_ID = "chatgpt_history_clear_me";
 
 // !Setup で保存した ADMIN パネルチャンネルのみ（履歴管理 UI をここに置く）
 
-export async function resolveAiHistoryAdminChannelId(ctx: BotContext, guildId: string): Promise<string | null> {
+// 履歴管理パネルの組み立てと操作で使う依存。この型を使う関数は全項目を使う。
+type AiHistoryAdminDeps = Pick<CoreDeps, "config" | "db" | "aiHistoryDb" | "log" | "client">;
+
+export async function resolveAiHistoryAdminChannelId(ctx: Pick<CoreDeps, "db">, guildId: string): Promise<string | null> {
   const settings = await getGuildSettingsData(ctx.db, guildId);
   const a = settings.panel_channels?.admin_channel_id?.trim();
   return a && /^\d+$/.test(a) ? a : null;
@@ -84,7 +87,7 @@ function getConversationSegments(
   return segments;
 }
 
-async function listDistinctHistoryUserIds(ctx: BotContext, guildId: string): Promise<string[]> {
+async function listDistinctHistoryUserIds(ctx: Pick<CoreDeps, "aiHistoryDb">, guildId: string): Promise<string[]> {
   const rows = await ctx.aiHistoryDb
     .selectFrom("ai_history")
     .select(["user_id", sql<string>`max(created_at)`.as("last_at")])
@@ -96,7 +99,7 @@ async function listDistinctHistoryUserIds(ctx: BotContext, guildId: string): Pro
 }
 
 async function loadUserHistoryRows(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "aiHistoryDb">,
   guildId: string,
   userId: string,
 ): Promise<{ id: string; role: string; content: string }[]> {
@@ -110,7 +113,7 @@ async function loadUserHistoryRows(
 }
 
 export async function deleteAiHistoryRanges(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "aiHistoryDb">,
   guildId: string,
   userId: string,
   ranges: { start: number; end: number }[],
@@ -136,12 +139,12 @@ export async function deleteAiHistoryRanges(
   return uniqueIds.length;
 }
 
-export async function clearAllAiHistoryInGuild(ctx: BotContext, guildId: string): Promise<number> {
+export async function clearAllAiHistoryInGuild(ctx: Pick<CoreDeps, "aiHistoryDb">, guildId: string): Promise<number> {
   const r = await ctx.aiHistoryDb.deleteFrom("ai_history").where("guild_id", "=", guildId).executeTakeFirst();
   return Number(r.numDeletedRows ?? 0);
 }
 
-export async function clearUserAiHistory(ctx: BotContext, guildId: string, userId: string): Promise<void> {
+export async function clearUserAiHistory(ctx: Pick<CoreDeps, "aiHistoryDb">, guildId: string, userId: string): Promise<void> {
   await ctx.aiHistoryDb
     .deleteFrom("ai_history")
     .where("guild_id", "=", guildId)
@@ -149,7 +152,7 @@ export async function clearUserAiHistory(ctx: BotContext, guildId: string, userI
     .execute();
 }
 
-function buildHistoryUserOptions(ctx: BotContext, userIds: string[]) {
+function buildHistoryUserOptions(ctx: Pick<CoreDeps, "client">, userIds: string[]) {
   const ids = userIds.slice(0, 25);
   return ids.map((id) => {
     const cached = ctx.client.users.cache.get(id);
@@ -164,7 +167,7 @@ function buildHistoryUserOptions(ctx: BotContext, userIds: string[]) {
   });
 }
 
-export async function buildAiHistoryAdminPanelPayload(ctx: BotContext, guildId: string) {
+export async function buildAiHistoryAdminPanelPayload(ctx: Pick<CoreDeps, "aiHistoryDb" | "client">, guildId: string) {
   const userIds = await listDistinctHistoryUserIds(ctx, guildId);
   const userOptions = buildHistoryUserOptions(ctx, userIds);
   const userRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
@@ -213,7 +216,7 @@ export async function buildAiHistoryAdminPanelPayload(ctx: BotContext, guildId: 
   );
 }
 
-export async function refreshHistoryAdminPanelMessage(message: Message, ctx: BotContext): Promise<void> {
+export async function refreshHistoryAdminPanelMessage(message: Message, ctx: Pick<CoreDeps, "aiHistoryDb" | "client">): Promise<void> {
   const botId = ctx.client.user?.id;
   if (!message || message.author?.id !== botId || !message.guildId) {
     return;
@@ -222,7 +225,7 @@ export async function refreshHistoryAdminPanelMessage(message: Message, ctx: Bot
   await message.edit({ ...payload, content: null } satisfies MessageEditOptions).catch(() => undefined);
 }
 
-export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild, channelId: string): Promise<boolean> {
+export async function reconcileAiHistoryAdminPanel(ctx: AiHistoryAdminDeps, guild: Guild, channelId: string): Promise<boolean> {
   const guildId = ctx.config.GUILD_ID;
   if (guild.id !== guildId) {
     return false;
@@ -299,7 +302,7 @@ export async function reconcileAiHistoryAdminPanel(ctx: BotContext, guild: Guild
   return true;
 }
 
-export async function sendOrReconnectAiHistoryAdminPanel(ctx: BotContext): Promise<boolean> {
+export async function sendOrReconnectAiHistoryAdminPanel(ctx: AiHistoryAdminDeps): Promise<boolean> {
   const guildId = ctx.config.GUILD_ID;
   const channelId = await resolveAiHistoryAdminChannelId(ctx, guildId);
   if (!channelId) {
@@ -314,13 +317,13 @@ export async function sendOrReconnectAiHistoryAdminPanel(ctx: BotContext): Promi
   return reconcileAiHistoryAdminPanel(ctx, guild, channelId);
 }
 
-function isOwner(ctx: BotContext, userId: string): boolean {
+function isOwner(ctx: Pick<CoreDeps, "config">, userId: string): boolean {
   const oid = ctx.config.OWNER_ID.trim();
   return /^\d+$/.test(oid) && userId === oid;
 }
 
 async function buildConversationOptionsForUser(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "aiHistoryDb">,
   guildId: string,
   userId: string,
 ): Promise<{
@@ -353,7 +356,7 @@ async function buildConversationOptionsForUser(
 
 export async function handleAiHistoryAdminButton(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: AiHistoryAdminDeps,
 ): Promise<boolean> {
   if (interaction.customId === HISTORY_CLEAR_ALL_ID) {
     if (!interaction.guildId || interaction.guildId !== ctx.config.GUILD_ID) {
@@ -386,7 +389,7 @@ export async function handleAiHistoryAdminButton(
 
 export async function handleAiHistoryAdminStringSelect(
   interaction: StringSelectMenuInteraction,
-  ctx: BotContext,
+  ctx: AiHistoryAdminDeps,
 ): Promise<boolean> {
   if (!interaction.guildId || interaction.guildId !== ctx.config.GUILD_ID) {
     return false;

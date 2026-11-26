@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { ComponentType, MessageFlags, type Message, type MessageCreateOptions, type MessageEditOptions } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import { LinkExpansionRepository, type ExpansionRecord, type ExpansionSource } from "./linkExpansionRepository.js";
 import { LinkExpansionTracker } from "./linkExpansionTracker.js";
 
@@ -113,7 +113,7 @@ function fixture() {
     messages.set(id, message);
     return message;
   }
-  const ctx = { client: { channels: { fetch: async () => channel } }, log: { warn: (entry: unknown) => warnings.push(entry) } } as unknown as BotContext;
+  const ctx = { client: { channels: { fetch: async () => channel } }, log: { warn: (entry: unknown) => warnings.push(entry) } } as unknown as Pick<CoreDeps, "client" | "log">;
   const quote = makeMessage("quote", { content: "引用本文" });
   const source = makeMessage("source", { content: "https://example.com/one https://example.com/two" });
   const render = async (message: Message) => {

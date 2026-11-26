@@ -9,7 +9,7 @@ import {
   shouldMarkYouTubeWatcherPostFailed,
   startYouTubeWatcher,
 } from "./youtubeWatcher.watcher.js";
-import { YouTubeVideoCacheReferenceRecoveryError } from "./youtubeVideoCache.service.js";
+import { YouTubeVideoCacheReferenceRecoveryError } from "../youtube/youtubeVideoCacheMaintenance.js";
 import type { YouTubeFeedEntry } from "./youtubeRss.js";
 
 const entry = {

@@ -1,8 +1,8 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 
 export async function logModmailEvent(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb" | "log">,
   eventType: string,
   payload: Record<string, unknown>,
 ): Promise<void> {

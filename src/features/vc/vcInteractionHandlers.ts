@@ -4,7 +4,8 @@ import {
   type ModalSubmitInteraction,
   type StringSelectMenuInteraction,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+import type { VcTemporaryChannelManager } from "./vcTemporaryChannelManager.js";
 import {
   buildVcCreatorGenreRows,
   buildVcRenameGenreRows,
@@ -18,6 +19,9 @@ import {
 import { runNologToggleAndBuildEmbed, trySendNologEmbedInChannel } from "../messageLog/messageLogNolog.js";
 import { buildVcNameModal, buildVcRenameModal } from "./vcCreatorPanel.js";
 import { vcCreatorErrText, vcRenameErrText } from "./vcTemporaryChannelManager.js";
+
+// VcInteraction が使う依存。
+type VcInteractionDeps = Pick<CoreDeps, "config" | "db" | "log" | "client"> & { vcTemp: VcTemporaryChannelManager };
 
 async function resolveCurrentVoiceChannel(
   interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
@@ -39,7 +43,7 @@ function normalizeRenamedVcName(rawName: string, genre: string): string {
 
 export async function handleVcCreatorButton(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: VcInteractionDeps,
 ): Promise<boolean> {
   if (interaction.customId === VC_OPEN_MODAL_ID) {
     await interaction.reply({
@@ -79,7 +83,7 @@ export async function handleVcCreatorButton(
 
 export async function handleVcGenreSelect(
   interaction: StringSelectMenuInteraction,
-  ctx: BotContext,
+  ctx: VcInteractionDeps,
 ): Promise<boolean> {
   if (interaction.customId === VC_GENRE_SELECT_ID) {
     const genre = interaction.values?.[0];
@@ -123,7 +127,7 @@ export async function handleVcGenreSelect(
 
 export async function handleVcCreateModal(
   interaction: ModalSubmitInteraction,
-  ctx: BotContext,
+  ctx: VcInteractionDeps,
 ): Promise<boolean> {
   if (!interaction.customId.startsWith(VC_NAME_MODAL_PREFIX)) return false;
   const guild = interaction.guild;
@@ -166,7 +170,7 @@ export async function handleVcCreateModal(
 
 export async function handleVcRenameModal(
   interaction: ModalSubmitInteraction,
-  ctx: BotContext,
+  ctx: VcInteractionDeps,
 ): Promise<boolean> {
   const parsed = parseVcRenameModalCustomId(interaction.customId);
   if (!parsed) return false;

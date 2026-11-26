@@ -5,7 +5,7 @@ import {
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
-import type { BotContext } from "../../../bot/context.js";
+import type { CoreDeps } from "../../../core/deps.js";
 import type { AppConfig } from "../../../core/config.js";
 import type { AiProviderRouter } from "../../ai/aiProviderRouter.js";
 import type { PreviewDocument } from "../shared/previewDocument.js";
@@ -139,7 +139,7 @@ export async function buildTwitterReplyPayloads(
 
 type TwitterExpansionDeps = {
   replyExpansion?: ExpansionReply;
-  db: BotContext["db"];
+  db: CoreDeps["db"];
   log: LoggerLike;
   config?: AppConfig;
   aiRouter?: AiProviderRouter;

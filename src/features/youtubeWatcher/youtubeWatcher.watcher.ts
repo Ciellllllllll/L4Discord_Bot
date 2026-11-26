@@ -2,30 +2,33 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { MessageFlags, type Client, type GuildTextBasedChannel, type Message } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { isDiscordMissingResourceError } from "../../core/discordErrors.js";
 import {
   sendYouTubeWatcherNotification,
   type YouTubeWatcherNotificationResult,
   type YouTubeWatcherPostMedia,
-} from "../linkPreviews/youtube/adhdYouTubeExpansion.js";
-import { replacePreviewMedia } from "../linkPreviews/shared/previewRenderer.js";
+} from "./adhdYouTubeExpansion.js";
+import { replacePreviewMedia } from "../../core/previewMedia.js";
 import { youtubeAttachmentSizeLimitForPremiumTier } from "../linkPreviews/youtube/youtubeMediaAttachment.js";
 import {
   isGoogleVideoMediaUrl,
   resolveYouTubeVideoMedia,
   resolveYouTubeVideoMediaWithRetry,
-} from "../utilities/youtubeVideoMedia.js";
+} from "../youtube/youtubeVideoMedia.js";
 import { fetchYouTubeChannelFeed, type YouTubeFeedEntry } from "./youtubeRss.js";
 import { fetchYouTubeChannelVideos, isYouTubeVideoPubliclyPlayable, resolveYouTubeWatcherEntries } from "./youtubeWatcherFallback.js";
-import { cacheYouTubeVideoForPost, createYouTubeVideoCacheMaintenanceForContext, saveYouTubeVideoCacheReferenceForPost, YouTubeVideoCacheReferenceRecoveryError } from "./youtubeVideoCache.service.js";
-import { persistYouTubeVideo, youtubeVideoPublicUrl } from "./youtubeWatcher.videoStore.js";
-import { PostgresYouTubeWatcherRepository, toUnnotifiedEntries, youtubeGoogleVideoPendingError, type YouTubeVideoCacheReferenceRecoveryCandidate, type YouTubeWatchSubscription } from "./youtubeWatcher.repository.js";
+import { cacheYouTubeVideoForPost, saveYouTubeVideoCacheReferenceForPost } from "../youtube/youtubeVideoCache.service.js";
+import { createYouTubeVideoCacheMaintenanceForContext, YouTubeVideoCacheReferenceRecoveryError } from "../youtube/youtubeVideoCacheMaintenance.js";
+import { persistYouTubeVideo, youtubeVideoPublicUrl } from "../youtube/youtubeWatcher.videoStore.js";
+import { PostgresYouTubeWatcherRepository, toUnnotifiedEntries, type YouTubeVideoCacheReferenceRecoveryCandidate, type YouTubeWatchSubscription } from "./youtubeWatcher.repository.js";
+import { PostgresYouTubeVideoCacheRepository, youtubeGoogleVideoPendingError } from "../youtube/youtubeVideoCache.repository.js";
+import type { PreviewTranslationDeps } from "../linkPreviews/shared/previewTranslationGate.js";
 
 export type YouTubeWatcherController = { scanNow(): Promise<void>; stop(): void };
 export const YOUTUBE_VIDEO_CACHE_REFERENCE_RECOVERY_PENDING = "youtube_video_cache_reference_recovery_pending";
 
-type YouTubeWatcherCacheRepository = Pick<PostgresYouTubeWatcherRepository, "withVideoCacheLock">;
+type YouTubeWatcherCacheRepository = Pick<PostgresYouTubeVideoCacheRepository, "withVideoCacheLock">;
 
 type YouTubeWatcherCacheMaintenance = {
   fallbackVideos(videoIds: readonly string[]): Promise<void>;
@@ -33,7 +36,7 @@ type YouTubeWatcherCacheMaintenance = {
 };
 
 export async function cacheYouTubeWatcherVideo(
-  ctx: Pick<BotContext, "config" | "log">,
+  ctx: Pick<CoreDeps, "config" | "log">,
   entry: YouTubeFeedEntry,
   repo: YouTubeWatcherCacheRepository,
   deps: {
@@ -44,7 +47,7 @@ export async function cacheYouTubeWatcherVideo(
     maintenance: YouTubeWatcherCacheMaintenance;
   },
 ): Promise<YouTubeWatcherPostMedia> {
-  return cacheYouTubeVideoForPost(ctx as Pick<BotContext, "config" | "log" | "client" | "mainPgPool">, {
+  return cacheYouTubeVideoForPost(ctx as Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool">, {
     videoId: entry.videoId,
     videoUrl: entry.videoUrl,
   }, { repo, ...deps });
@@ -58,8 +61,8 @@ async function fetchTarget(client: Client, id: string): Promise<GuildTextBasedCh
 }
 
 export async function saveYouTubeWatcherVideoCacheReference(
-  ctx: Pick<BotContext, "config" | "log">,
-  repo: Pick<PostgresYouTubeWatcherRepository, "upsertVideoCacheReference" | "updateVideoCacheReferenceMedia" | "withVideoCacheLock">,
+  ctx: Pick<CoreDeps, "config" | "log">,
+  repo: Pick<PostgresYouTubeVideoCacheRepository, "upsertVideoCacheReference" | "updateVideoCacheReferenceMedia" | "withVideoCacheLock">,
   target: Pick<GuildTextBasedChannel, "guildId" | "id">,
   entry: YouTubeFeedEntry,
   notification: YouTubeWatcherNotificationResult,
@@ -98,7 +101,7 @@ export async function saveYouTubeWatcherReferenceRecoveryPending(
 const isUnknownDiscordResourceError = isDiscordMissingResourceError;
 
 async function resolveYouTubeWatcherRecoveryMedia(
-  ctx: Pick<BotContext, "config" | "log">,
+  ctx: Pick<CoreDeps, "config" | "log">,
   candidate: YouTubeVideoCacheReferenceRecoveryCandidate,
   deps: {
     videoExists?: (videoId: string) => Promise<boolean>;
@@ -134,9 +137,9 @@ async function resolveYouTubeWatcherRecoveryMedia(
 }
 
 export async function recoverYouTubeWatcherVideoCacheReferenceCandidate(
-  ctx: Pick<BotContext, "config" | "log" | "client">,
+  ctx: Pick<CoreDeps, "config" | "log" | "client">,
   repo: Pick<PostgresYouTubeWatcherRepository, "savePost">,
-  cacheRepo: Pick<PostgresYouTubeWatcherRepository, "upsertVideoCacheReference" | "updateVideoCacheReferenceMedia" | "withVideoCacheLock">,
+  cacheRepo: Pick<PostgresYouTubeVideoCacheRepository, "upsertVideoCacheReference" | "updateVideoCacheReferenceMedia" | "withVideoCacheLock">,
   candidate: YouTubeVideoCacheReferenceRecoveryCandidate,
   deps: {
     videoExists?: (videoId: string) => Promise<boolean>;
@@ -205,7 +208,12 @@ export async function recoverYouTubeWatcherVideoCacheReferenceCandidate(
   }
 }
 
-export async function scanYouTubeWatcher(ctx: BotContext, deps: {
+// スキャン処理が使う依存。通知内の翻訳で aiRouter を使う。
+// ai の型は linkPreviews 側の依存型から取り出す (youtubeWatcher → ai は許可リストにないため)。
+type YouTubeWatcherScanDeps = Pick<CoreDeps, "config" | "log" | "client" | "mainPgPool" | "db">
+  & { aiRouter: NonNullable<PreviewTranslationDeps["router"]> };
+
+export async function scanYouTubeWatcher(ctx: YouTubeWatcherScanDeps, deps: {
   fetchFeed?: typeof fetchYouTubeChannelFeed;
   fetchFallback?: typeof fetchYouTubeChannelVideos;
   isPlayable?: typeof isYouTubeVideoPubliclyPlayable;
@@ -218,7 +226,7 @@ export async function scanYouTubeWatcher(ctx: BotContext, deps: {
   locked = lock.rows[0]?.locked === true;
    if (!locked) return;
    const repo = new PostgresYouTubeWatcherRepository(client);
-   const cacheRepo = new PostgresYouTubeWatcherRepository(ctx.mainPgPool);
+   const cacheRepo = new PostgresYouTubeVideoCacheRepository(ctx.mainPgPool);
    const cacheMaintenance = ctx.config.BOT_PROFILE === "production"
      ? createYouTubeVideoCacheMaintenanceForContext(ctx)
      : null;
@@ -310,7 +318,7 @@ export async function scanYouTubeWatcher(ctx: BotContext, deps: {
   }
 }
 
-export function startYouTubeWatcher(ctx: BotContext): YouTubeWatcherController | null {
+export function startYouTubeWatcher(ctx: YouTubeWatcherScanDeps): YouTubeWatcherController | null {
   if (!ctx.config.ADHD_WATCHER_ENABLED) return null;
   let stopped = false;
   let running: Promise<void> | null = null;

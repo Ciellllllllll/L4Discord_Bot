@@ -4,9 +4,9 @@ import {
   type GuildMember,
   type TextBasedChannel,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
-import type { VcRankPeriod } from "../../adapters/legacyDb/vcRankingRepository.js";
-import { vcCreatorErrText } from "../vc/vcTemporaryChannelManager.js";
+import type { CoreDeps } from "../../core/deps.js";
+import type { IVcRankingRepository, VcRankPeriod } from "../../adapters/legacyDb/vcRankingRepository.js";
+import { vcCreatorErrText, type VcTemporaryChannelManager } from "../vc/vcTemporaryChannelManager.js";
 
 const ALLOWED_ACTIONS = new Set(["create_vc", "vc_ranking"]);
 const CREATE_VC_GENRES = new Set(["雑談", "ゲーム", "作業"]);
@@ -81,7 +81,12 @@ export type AiCommandExecResult = {
   cards?: ComponentCardBuilder[];
 };
 
-export async function runAiSlashCommand(ctx: BotContext, params: {
+// AI コマンド実行が使う依存。aiRouter は使わない。
+type AiCommandExecutionDeps =
+  & Pick<CoreDeps, "config" | "log">
+  & { vcTemp: VcTemporaryChannelManager; vcRanking: IVcRankingRepository };
+
+export async function runAiSlashCommand(ctx: AiCommandExecutionDeps, params: {
   guild: Guild | null;
   channel: TextBasedChannel;
   member: GuildMember | null;

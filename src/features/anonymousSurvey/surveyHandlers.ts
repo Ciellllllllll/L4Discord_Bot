@@ -1,6 +1,5 @@
-import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
-import { handleSlashCommand } from "../../commands/slashHandlers.js";
+import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction, type ModalSubmitInteraction } from "discord.js";
+import type { CoreDeps } from "../../core/deps.js";
 import {
   consumeAnonymousSurveySession,
   createAnonymousSurveySession,
@@ -27,6 +26,13 @@ import {
 const MODAL_SLASH_COMMANDS = new Set(["change_prompt", "create_prompt"]);
 const SURVEY_ONLY_SLASH_COMMANDS = new Set(["survey"]);
 
+// commands/slashHandlers.ts の handleSlashCommand を入口層が束ねて渡す。
+// 実際の BotContext は入口層が束縛する。
+export type ReplaySlashCommand = (
+  interaction: ChatInputCommandInteraction,
+  options?: { skipSurvey?: boolean },
+) => Promise<void>;
+
 function parseActionId(customId: string, prefix: string): string | null {
   if (!customId.startsWith(prefix)) return null;
   const sessionId = customId.slice(prefix.length).trim();
@@ -35,7 +41,7 @@ function parseActionId(customId: string, prefix: string): string | null {
 
 async function getOwnedSessionOrReply(
   interaction: ButtonInteraction | ModalSubmitInteraction,
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "db">,
   sessionId: string,
   action: AnonymousSurveySessionAction = "slashGate",
 ) {
@@ -67,7 +73,11 @@ function readStringSelectField(interaction: ModalSubmitInteraction, customId: st
   }
 }
 
-export async function handleAnonymousSurveyModalSubmit(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleAnonymousSurveyModalSubmit(
+  interaction: ModalSubmitInteraction,
+  ctx: Pick<CoreDeps, "db" | "log">,
+  replaySlashCommand: ReplaySlashCommand,
+): Promise<boolean> {
   const sessionId = parseActionId(interaction.customId, SURVEY_MODAL_PREFIX);
   if (!sessionId) return false;
   if (!(await getOwnedSessionOrReply(interaction, ctx, sessionId))) return true;
@@ -104,14 +114,18 @@ export async function handleAnonymousSurveyModalSubmit(interaction: ModalSubmitI
     ctx.log.error({ err, guildId: session.guildId }, "failed to record anonymous survey submission");
   });
   try {
-    await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command), ctx, { skipSurvey: true });
+    await replaySlashCommand(createSurveyReplayInteraction(interaction, session.command), { skipSurvey: true });
   } finally {
     await recorded;
   }
   return true;
 }
 
-export async function handleAnonymousSurveyButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export async function handleAnonymousSurveyButton(
+  interaction: ButtonInteraction,
+  ctx: Pick<CoreDeps, "db" | "log">,
+  replaySlashCommand: ReplaySlashCommand,
+): Promise<boolean> {
   const continueSessionId = parseActionId(interaction.customId, SURVEY_CONTINUE_PREFIX);
   if (continueSessionId) {
     if (!(await getOwnedSessionOrReply(interaction, ctx, continueSessionId, "continueCommand"))) return true;
@@ -120,7 +134,7 @@ export async function handleAnonymousSurveyButton(interaction: ButtonInteraction
       await interaction.reply({ ...buildAnonymousSurveyExpiredMessage(), flags: MessageFlags.Ephemeral });
       return true;
     }
-    await handleSlashCommand(createSurveyReplayInteraction(interaction, session.command), ctx, { skipSurvey: true });
+    await replaySlashCommand(createSurveyReplayInteraction(interaction, session.command), { skipSurvey: true });
     return true;
   }
 

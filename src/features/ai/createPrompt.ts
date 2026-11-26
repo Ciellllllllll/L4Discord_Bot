@@ -13,9 +13,10 @@ import {
   type ModalSubmitInteraction,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
+import type { AiProviderRouter } from "./aiProviderRouter.js";
+import { AiQueryService, type AiQueryServiceDeps } from "./aiQueryService.js";
 import type { ChatMessage } from "./chatTypes.js";
-import { AiQueryService } from "./aiQueryService.js";
 
 const MODAL_ID = "ai_create_prompt:modal";
 const FIELD_NAME = "name";
@@ -212,7 +213,10 @@ function buildGeneratorMessages(conditions: PromptConditions, previousPrompts: s
   ];
 }
 
-async function generatePrompt(ctx: BotContext, conditions: PromptConditions, previousPrompts: string[]): Promise<string> {
+// プロンプト生成 (aiRouter) とボタン操作 (AiQueryService) で使う依存。
+type CreatePromptDeps = Pick<CoreDeps, "config" | "log"> & { aiRouter: AiProviderRouter };
+
+async function generatePrompt(ctx: Pick<CreatePromptDeps, "config" | "aiRouter">, conditions: PromptConditions, previousPrompts: string[]): Promise<string> {
   const { content } = await ctx.aiRouter.chat(ctx.config.GUILD_ID, "prompt_generator", buildGeneratorMessages(conditions, previousPrompts), {
     thinking: true,
     sanitizeOutput: false,
@@ -296,7 +300,7 @@ function createAttachment(prompt: string, ext: "txt" | "md"): AttachmentBuilder 
 
 export async function handleCreatePromptModalSubmit(
   interaction: ModalSubmitInteraction,
-  ctx: BotContext,
+  ctx: CreatePromptDeps,
 ): Promise<boolean> {
   if (interaction.customId !== MODAL_ID) return false;
   if (!interaction.inGuild() || interaction.guildId !== ctx.config.GUILD_ID) {
@@ -336,7 +340,7 @@ export async function handleCreatePromptModalSubmit(
 
 export async function handleCreatePromptButton(
   interaction: ButtonInteraction,
-  ctx: BotContext,
+  ctx: AiQueryServiceDeps,
 ): Promise<boolean> {
   const parsed = parseButtonId(interaction.customId);
   if (!parsed) return false;

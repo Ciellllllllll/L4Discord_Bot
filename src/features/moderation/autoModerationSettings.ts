@@ -1,13 +1,13 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import type { AutoModSettings } from "./autoModerationTypes.js";
 
-function defaultModlogChannelId(ctx: BotContext): string {
+function defaultModlogChannelId(ctx: Pick<CoreDeps, "config">): string {
   const c = ctx.config;
   return String(c.MOD_LOG_CHANNEL_ID || c.LOGGER_CHANNEL_ID || c.LOG_CHANNEL_ID || "").trim();
 }
 
-export function getDefaultAutoModSettings(ctx: BotContext): AutoModSettings {
+export function getDefaultAutoModSettings(ctx: Pick<CoreDeps, "config">): AutoModSettings {
   const modlogChannelId = defaultModlogChannelId(ctx);
   return {
     enabled: true,
@@ -46,7 +46,7 @@ function parseRowData(data: unknown): Partial<AutoModSettings> {
   }
 }
 
-export async function getMergedAutoModSettings(ctx: BotContext, guildId: string): Promise<AutoModSettings> {
+export async function getMergedAutoModSettings(ctx: Pick<CoreDeps, "config" | "automodDb">, guildId: string): Promise<AutoModSettings> {
   const row = await ctx.automodDb
     .selectFrom("automod_guild_settings")
     .selectAll()
@@ -61,7 +61,7 @@ export async function getMergedAutoModSettings(ctx: BotContext, guildId: string)
 }
 
 export async function updateAutoModSettings(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "config" | "automodDb">,
   guildId: string,
   patch: Partial<AutoModSettings>,
 ): Promise<AutoModSettings> {

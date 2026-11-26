@@ -4,7 +4,7 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
 } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { componentCardsPayload, ephemeralComponentPayload } from "../../core/componentCard.js";
 import { isAdmin } from "../../core/permission.js";
 import { TtlStore } from "../../core/ttlStore.js";
@@ -38,7 +38,7 @@ const MAX_EXPORT_ROWS = 5000;
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const searchSessions = new TtlStore<SearchSession>(SESSION_TTL_MS);
 
-function canUseLogUi(interaction: { guildId: string | null; member: unknown }, ctx: BotContext): boolean {
+function canUseLogUi(interaction: { guildId: string | null; member: unknown }, ctx: MessageLogsViewDeps): boolean {
   const member = interaction.member && typeof interaction.member === "object" && "roles" in interaction.member
     ? interaction.member
     : null;
@@ -48,7 +48,7 @@ function canUseLogUi(interaction: { guildId: string | null; member: unknown }, c
 
 async function requireSession(
   interaction: ButtonInteraction | ModalSubmitInteraction,
-  ctx: BotContext,
+  ctx: MessageLogsViewDeps,
   sessionId: string,
 ): Promise<SearchSession | null> {
   const session = searchSessions.get(String(sessionId || "").trim());
@@ -76,7 +76,9 @@ async function requireSession(
   return session;
 }
 
-export async function routeMessageLogButton(interaction: ButtonInteraction, ctx: BotContext): Promise<boolean> {
+export type MessageLogsViewDeps = Pick<CoreDeps, "config" | "client" | "messageLogPgPool" | "messageAttachmentPgPool">;
+
+export async function routeMessageLogButton(interaction: ButtonInteraction, ctx: MessageLogsViewDeps): Promise<boolean> {
   searchSessions.sweep();
   const id = interaction.customId;
 
@@ -203,7 +205,7 @@ export async function routeMessageLogButton(interaction: ButtonInteraction, ctx:
   return false;
 }
 
-export async function routeMessageLogModal(interaction: ModalSubmitInteraction, ctx: BotContext): Promise<boolean> {
+export async function routeMessageLogModal(interaction: ModalSubmitInteraction, ctx: MessageLogsViewDeps): Promise<boolean> {
   if (!interaction.customId.startsWith(MESSAGE_LOG_MODAL_PREFIX)) return false;
   searchSessions.sweep();
 

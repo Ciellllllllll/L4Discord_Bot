@@ -1,11 +1,11 @@
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { nowIso } from "../../core/db/nowIso.js";
 import {
   attachmentMetaToJson,
   mergeAttachmentLists,
   parseAttachmentMetadata,
   type AttachmentMeta,
-} from "./modmailAttachmentUtils.js";
+} from "../../core/discordAttachments.js";
 
 export const REPLY_STATUS = {
   PENDING: "Pending",
@@ -47,12 +47,12 @@ function asReplyRow(r: Record<string, unknown>): ModmailReplyRow {
   return r as unknown as ModmailReplyRow;
 }
 
-export async function replyById(ctx: BotContext, id: string): Promise<ModmailReplyRow | undefined> {
+export async function replyById(ctx: Pick<CoreDeps, "ticketDb">, id: string): Promise<ModmailReplyRow | undefined> {
   const row = await ctx.ticketDb.selectFrom("modmail_replies").selectAll().where("id", "=", id).executeTakeFirst();
   return row ? asReplyRow(row as Record<string, unknown>) : undefined;
 }
 
-export async function pendingReplyByTicket(ctx: BotContext, ticketId: string): Promise<ModmailReplyRow | undefined> {
+export async function pendingReplyByTicket(ctx: Pick<CoreDeps, "ticketDb">, ticketId: string): Promise<ModmailReplyRow | undefined> {
   const row = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
@@ -63,7 +63,7 @@ export async function pendingReplyByTicket(ctx: BotContext, ticketId: string): P
   return row ? asReplyRow(row as Record<string, unknown>) : undefined;
 }
 
-export async function allPendingReplies(ctx: BotContext): Promise<ModmailReplyRow[]> {
+export async function allPendingReplies(ctx: Pick<CoreDeps, "ticketDb">): Promise<ModmailReplyRow[]> {
   const rows = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
@@ -73,7 +73,7 @@ export async function allPendingReplies(ctx: BotContext): Promise<ModmailReplyRo
   return rows.map((r) => asReplyRow(r as Record<string, unknown>));
 }
 
-export async function pendingRepliesBySource(ctx: BotContext, sourceMessageId: string): Promise<ModmailReplyRow[]> {
+export async function pendingRepliesBySource(ctx: Pick<CoreDeps, "ticketDb">, sourceMessageId: string): Promise<ModmailReplyRow[]> {
   const rows = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
@@ -83,7 +83,7 @@ export async function pendingRepliesBySource(ctx: BotContext, sourceMessageId: s
   return rows.map((r) => asReplyRow(r as Record<string, unknown>));
 }
 
-export async function pendingRepliesByTicket(ctx: BotContext, ticketId: string): Promise<ModmailReplyRow[]> {
+export async function pendingRepliesByTicket(ctx: Pick<CoreDeps, "ticketDb">, ticketId: string): Promise<ModmailReplyRow[]> {
   const rows = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
@@ -93,7 +93,7 @@ export async function pendingRepliesByTicket(ctx: BotContext, ticketId: string):
   return rows.map((r) => asReplyRow(r as Record<string, unknown>));
 }
 
-export async function pendingRepliesByAppealId(ctx: BotContext, appealId: string): Promise<ModmailReplyRow[]> {
+export async function pendingRepliesByAppealId(ctx: Pick<CoreDeps, "ticketDb">, appealId: string): Promise<ModmailReplyRow[]> {
   const rows = await ctx.ticketDb
     .selectFrom("modmail_replies")
     .selectAll()
@@ -103,7 +103,7 @@ export async function pendingRepliesByAppealId(ctx: BotContext, appealId: string
   return rows.map((r) => asReplyRow(r as Record<string, unknown>));
 }
 
-export async function createReplyRow(ctx: BotContext, input: {
+export async function createReplyRow(ctx: Pick<CoreDeps, "ticketDb">, input: {
   id: string;
   ticket_id: string;
   appeal_id?: string | null;
@@ -148,7 +148,7 @@ export async function createReplyRow(ctx: BotContext, input: {
     .execute();
 }
 
-export async function setReplyConfirmMessageId(ctx: BotContext, replyId: string, confirmId: string): Promise<void> {
+export async function setReplyConfirmMessageId(ctx: Pick<CoreDeps, "ticketDb">, replyId: string, confirmId: string): Promise<void> {
   const ts = nowIso();
   await ctx.ticketDb
     .updateTable("modmail_replies")
@@ -161,7 +161,7 @@ export async function setReplyConfirmMessageId(ctx: BotContext, replyId: string,
 }
 
 export async function updateReplyStatus(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb">,
   replyId: string,
   fromStatus: string,
   toStatus: string,
@@ -192,7 +192,7 @@ export async function updateReplyStatus(
 }
 
 export async function appendReplyAttachmentsMeta(
-  ctx: BotContext,
+  ctx: Pick<CoreDeps, "ticketDb">,
   replyId: string,
   extra: AttachmentMeta[],
 ): Promise<boolean> {

@@ -1,6 +1,6 @@
 import { MessageFlags, type Attachment, type ModalSubmitInteraction } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
-import { AiQueryService } from "./aiQueryService.js";
+import type pino from "pino";
+import { AiQueryService, type AiQueryServiceDeps } from "./aiQueryService.js";
 import { CHANGE_PROMPT_FILE_ID, CHANGE_PROMPT_MODAL_ID, CHANGE_PROMPT_TEXT_ID } from "./changePromptIds.js";
 import { readResponseArrayBufferWithLimit } from "../../core/http/fetchWithLimits.js";
 
@@ -13,7 +13,7 @@ function isTxtOrMdFilename(name: string): boolean {
   return n.endsWith(".txt") || n.endsWith(".md");
 }
 
-async function fetchAttachmentAsUtf8(att: Attachment, log: BotContext["log"]): Promise<string | null> {
+async function fetchAttachmentAsUtf8(att: Attachment, log: pino.Logger): Promise<string | null> {
   if (att.size > MAX_PROMPT_ATTACHMENT_BYTES) {
     log.warn({ size: att.size }, "change_prompt attachment too large");
     return null;
@@ -43,7 +43,7 @@ async function fetchAttachmentAsUtf8(att: Attachment, log: BotContext["log"]): P
 
 export async function handleChangePromptModalSubmit(
   interaction: ModalSubmitInteraction,
-  ctx: BotContext,
+  ctx: AiQueryServiceDeps,
 ): Promise<boolean> {
   if (interaction.customId !== CHANGE_PROMPT_MODAL_ID) {
     return false;

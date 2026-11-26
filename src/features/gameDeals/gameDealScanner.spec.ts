@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { checkSubscriptions } from "./gameDealScanner.js";
 import type { GameDealSubscription } from "./gameDealTypes.js";
 
@@ -8,8 +8,8 @@ function subscription(id: string, platform: GameDealSubscription["platform"], ta
   return { id, guildId: "guild", channelId: "channel", userId: `user-${id}`, platform, targetId, url: `https://example.test/${targetId}`, title: null, lastStateKey: null, active: true };
 }
 
-function context(): BotContext {
-  return { log: { warn: () => undefined } } as unknown as BotContext;
+function context(): Pick<CoreDeps, "log" | "mainPgPool"> {
+  return { log: { warn: () => undefined } } as unknown as Pick<CoreDeps, "log" | "mainPgPool">;
 }
 
 test("checkSubscriptions deduplicates Steam app ids and fetches Epic promotions once", async () => {

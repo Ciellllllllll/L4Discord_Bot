@@ -1,5 +1,5 @@
 import { type ChatInputCommandInteraction, type GuildMember } from "discord.js";
-import type { BotContext } from "../../bot/context.js";
+import type { CoreDeps } from "../../core/deps.js";
 import { isAdmin } from "../../core/permission.js";
 import {
   canPromptAnonymousSurvey,
@@ -8,6 +8,9 @@ import {
 import { storeSlashCommand } from "./surveyCommandState.js";
 import { buildAnonymousSurveyModal } from "./surveyUi.js";
 
+// 匿名アンケートのゲートが使う依存。
+type SurveyGateDeps = Pick<CoreDeps, "config" | "db" | "log" | "client">;
+
 type AnonymousSurveyPromptOptions = {
   ignoreAdmin?: boolean;
   ignoreCooldown?: boolean;
@@ -15,7 +18,7 @@ type AnonymousSurveyPromptOptions = {
 
 export async function promptAnonymousSurvey(
   interaction: ChatInputCommandInteraction,
-  ctx: BotContext,
+  ctx: SurveyGateDeps,
   member: GuildMember | null,
   options: AnonymousSurveyPromptOptions = {},
 ): Promise<boolean> {
