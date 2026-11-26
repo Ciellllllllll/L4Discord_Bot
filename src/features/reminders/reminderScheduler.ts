@@ -430,7 +430,8 @@ export function startReminderScheduler(
             timedOut = true;
             resolve();
           }, timeoutMs);
-          timeoutId.unref?.();
+          // unref しない。停止処理はこの待機を await しており、ほかに動いているものがないと
+          // イベントループが先に空になって待機自体が打ち切られるため
         });
         try {
           await Promise.race([inFlight, timeoutPromise]);
