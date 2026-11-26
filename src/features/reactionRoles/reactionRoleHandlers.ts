@@ -7,8 +7,11 @@ import {
   TextInputBuilder,
   TextInputStyle,
   type ButtonInteraction,
+  type Guild,
+  type GuildMember,
   type InteractionReplyOptions,
   type ModalSubmitInteraction,
+  type Role,
   type StringSelectMenuInteraction,
 } from "discord.js";
 import type { BotContext } from "../../bot/context.js";
@@ -44,6 +47,93 @@ import {
   updateEntryRow,
   type ReactionRoleEntry,
 } from "./reactionRoleService.js";
+
+const DANGEROUS_REACTION_ROLE_PERMISSION_ENTRIES = [
+  ["Administrator", PermissionFlagsBits.Administrator],
+  ["ManageGuild", PermissionFlagsBits.ManageGuild],
+  ["ManageRoles", PermissionFlagsBits.ManageRoles],
+  ["ManageChannels", PermissionFlagsBits.ManageChannels],
+  ["ManageWebhooks", PermissionFlagsBits.ManageWebhooks],
+  ["BanMembers", PermissionFlagsBits.BanMembers],
+  ["KickMembers", PermissionFlagsBits.KickMembers],
+  ["ModerateMembers", PermissionFlagsBits.ModerateMembers],
+  ["MentionEveryone", PermissionFlagsBits.MentionEveryone],
+  ["ManageMessages", PermissionFlagsBits.ManageMessages],
+  ["ManageNicknames", PermissionFlagsBits.ManageNicknames],
+  ["ManageGuildExpressions", PermissionFlagsBits.ManageGuildExpressions],
+  ["ManageEvents", PermissionFlagsBits.ManageEvents],
+  ["ManageThreads", PermissionFlagsBits.ManageThreads],
+  ["ViewAuditLog", PermissionFlagsBits.ViewAuditLog],
+] as const;
+
+export function getDangerousReactionRolePermissionNames(role: Pick<Role, "permissions">): string[] {
+  return DANGEROUS_REACTION_ROLE_PERMISSION_ENTRIES
+    .filter(([, perm]) => role.permissions.has(perm, false))
+    .map(([name]) => name);
+}
+
+export function hasDangerousReactionRolePermission(role: Pick<Role, "permissions">): boolean {
+  return getDangerousReactionRolePermissionNames(role).length > 0;
+}
+
+async function findDangerousRolesNotice(guild: Guild, roleIds: string[]): Promise<string | null> {
+  const dangerousLabels: string[] = [];
+  const seen = new Set<string>();
+  for (const roleId of roleIds) {
+    if (seen.has(roleId)) continue;
+    seen.add(roleId);
+    const role = guild.roles.cache.get(roleId) ?? (await guild.roles.fetch(roleId).catch(() => null));
+    if (!role) continue;
+    const perms = getDangerousReactionRolePermissionNames(role);
+    if (perms.length > 0) {
+      dangerousLabels.push(`${role.name} (${role.id}: ${perms.join(", ")})`);
+    }
+  }
+  if (!dangerousLabels.length) return null;
+  return `\n⚠️ 付与できないロール: ${dangerousLabels.join(" / ")}`;
+}
+
+export function parseToggleCustomId(customId: string): { entryId: string; roleId: string } | null {
+  if (!customId.startsWith(TOGGLE_PREFIX)) return null;
+  const rest = customId.slice(TOGGLE_PREFIX.length);
+  const lastColon = rest.lastIndexOf(":");
+  if (lastColon <= 0 || lastColon >= rest.length - 1) return null;
+  const entryId = rest.slice(0, lastColon).trim();
+  const roleId = rest.slice(lastColon + 1).trim();
+  if (!entryId || !/^\d+$/.test(roleId)) return null;
+  return { entryId, roleId };
+}
+
+export async function validateAssignableReactionRoles(
+  guild: Guild,
+  actor: GuildMember,
+  roleIds: string[],
+): Promise<string | null> {
+  const me = guild.members.me ?? (await guild.members.fetchMe().catch(() => null));
+  if (!me?.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    return "Bot にロール管理権限がありません。";
+  }
+  const isOwner = guild.ownerId === actor.id;
+  for (const roleId of roleIds) {
+    const role = guild.roles.cache.get(roleId) ?? (await guild.roles.fetch(roleId).catch(() => null));
+    if (!role) {
+      return `指定されたロールが見つかりません: ${roleId}`;
+    }
+    if (role.id === guild.id || role.managed) {
+      return `このロールはリアクションロールに設定できません: ${role.name}`;
+    }
+    if (hasDangerousReactionRolePermission(role)) {
+      return `危険な権限を持つロールはリアクションロールに設定できません: ${role.name}`;
+    }
+    if (!isOwner && role.position >= actor.roles.highest.position) {
+      return `自身の最上位ロール以上のロールは設定できません: ${role.name}`;
+    }
+    if (role.position >= me.roles.highest.position) {
+      return `Bot の最上位ロール以上のロールは設定できません: ${role.name}`;
+    }
+  }
+  return null;
+}
 
 function canManageRoles(
   interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
@@ -189,12 +279,17 @@ async function handleRoleToggle(interaction: ButtonInteraction, ctx: BotContext)
     await replyEphemeral(interaction, "Guild only");
     return;
   }
-  const parts = String(interaction.customId || "").split(":");
-  if (parts.length < 3) {
+  const parsed = parseToggleCustomId(String(interaction.customId || ""));
+  if (!parsed) {
     await replyEphemeral(interaction, "不正なボタンです。");
     return;
   }
-  const roleId = parts[parts.length - 1]!;
+  const entry = await getEntryByEntryId(ctx.db, interaction.guild.id, parsed.entryId);
+  if (!entry || !entry.roles.some((item) => item.roleId === parsed.roleId)) {
+    await replyEphemeral(interaction, "このボタンのロールは現在登録されていません。");
+    return;
+  }
+  const roleId = parsed.roleId;
   const role =
     interaction.guild.roles.cache.get(roleId) ?? (await interaction.guild.roles.fetch(roleId).catch(() => null));
   if (!role) {
@@ -211,7 +306,7 @@ async function handleRoleToggle(interaction: ButtonInteraction, ctx: BotContext)
     await replyEphemeral(interaction, "Bot にロール管理権限がありません。");
     return;
   }
-  if (role.managed) {
+  if (role.managed || role.id === interaction.guild.id) {
     await replyEphemeral(interaction, "このロールは管理対象外のため変更できません。");
     return;
   }
@@ -220,6 +315,25 @@ async function handleRoleToggle(interaction: ButtonInteraction, ctx: BotContext)
     return;
   }
   const hasRole = member.roles.cache.has(role.id);
+  if (!hasRole) {
+    const dangerousPermissions = getDangerousReactionRolePermissionNames(role);
+    if (dangerousPermissions.length > 0) {
+      ctx.log.warn(
+        {
+          guildId: interaction.guild.id,
+          entryId: parsed.entryId,
+          roleId: role.id,
+          permissions: dangerousPermissions,
+        },
+        "reaction role add blocked due to dangerous permissions",
+      );
+      await replyEphemeral(
+        interaction,
+        "このロールは強い権限を持つため、ボタンからは付与できません。サーバー管理者に連絡してください。",
+      );
+      return;
+    }
+  }
   try {
     if (hasRole) {
       await member.roles.remove(role, "reaction role toggle");
@@ -357,6 +471,22 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
       await replyEphemeral(interaction, normalized.error);
       return true;
     }
+    const actor =
+      interaction.guild.members.cache.get(interaction.user.id) ??
+      (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+    if (!actor) {
+      await replyEphemeral(interaction, "メンバー情報の取得に失敗しました。");
+      return true;
+    }
+    const roleValidationError = await validateAssignableReactionRoles(
+      interaction.guild,
+      actor,
+      normalized.roles.map((item) => item.roleId),
+    );
+    if (roleValidationError) {
+      await replyEphemeral(interaction, roleValidationError);
+      return true;
+    }
     const entry: ReactionRoleEntry = {
       entryId: makeEntryId(),
       channelId,
@@ -369,7 +499,10 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
       const messageId = await sendOrUpdateEntryMessage(ctx, interaction.guild, entry);
       entry.messageId = messageId;
       await insertEntry(ctx.db, interaction.guild.id, entry);
-      await replyEphemeral(interaction, `リアクションロールを作成しました。entry_id=${entry.entryId}`);
+      await replyEphemeral(
+        interaction,
+        `リアクションロールを作成しました。entry_id=${entry.entryId}`,
+      );
     } catch (err) {
       ctx.log.warn(
         { err, guildId: interaction.guild.id, userId: interaction.user.id },
@@ -395,6 +528,7 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
       await replyEphemeral(interaction, "entry_id が見つかりません。");
       return true;
     }
+    const existingRoleIds = new Set(entry.roles.map((item) => item.roleId));
     const channelRaw = String(interaction.fields.getTextInputValue(RR_MODAL_CHANNEL) || "").trim();
     const titleRaw = String(interaction.fields.getTextInputValue(RR_MODAL_TITLE) || "").trim();
     const descriptionRaw = String(interaction.fields.getTextInputValue(RR_MODAL_DESCRIPTION) || "");
@@ -426,11 +560,36 @@ export async function handleReactionRoleModal(interaction: ModalSubmitInteractio
       }
       entry.roles = normalized.roles;
     }
+    const addedRoleIds = entry.roles
+      .map((item) => item.roleId)
+      .filter((roleId) => !existingRoleIds.has(roleId));
+    if (addedRoleIds.length > 0) {
+      const actor =
+        interaction.guild.members.cache.get(interaction.user.id) ??
+        (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+      if (!actor) {
+        await replyEphemeral(interaction, "メンバー情報の取得に失敗しました。");
+        return true;
+      }
+      const roleValidationError = await validateAssignableReactionRoles(
+        interaction.guild,
+        actor,
+        addedRoleIds,
+      );
+      if (roleValidationError) {
+        await replyEphemeral(interaction, roleValidationError);
+        return true;
+      }
+    }
     try {
       const messageId = await sendOrUpdateEntryMessage(ctx, interaction.guild, entry);
       entry.messageId = messageId;
       await updateEntryRow(ctx.db, interaction.guild.id, entry);
-      await replyEphemeral(interaction, "更新しました。");
+      const dangerousNotice = await findDangerousRolesNotice(
+        interaction.guild,
+        entry.roles.map((item) => item.roleId),
+      );
+      await replyEphemeral(interaction, `更新しました。${dangerousNotice ?? ""}`);
     } catch (err) {
       ctx.log.warn(
         { err, guildId: interaction.guild.id, userId: interaction.user.id, entryId },

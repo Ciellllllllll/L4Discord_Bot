@@ -9,9 +9,34 @@ import type { BotContext } from "../../bot/context.js";
 import { getGuildSettingsData } from "../../core/guildSettings.js";
 
 const CUSTOM_EMOJI = /<a?:\w+:\d+>/;
-const UNICODE_EMOJI = /\p{Extended_Pictographic}/u;
+// レビューで方針が揺れたため、以下の明示的な許可リスト方式で絵文字判定を確定した:
+// (a) \p{Emoji_Presentation}（U+FE0E が後続しても検出）
+// (b) \p{Emoji} + U+FE0F
+// (c) ZWJ 連結シーケンス
+// (d) キーキャップ（[#*0-9]\uFE0F?\u20E3）
+// (e) 国旗（Regional Indicator 2文字）
+// (f) スキントーン修飾子付きの文字
+// (g) 未割り当ての Extended_Pictographic（\p{Cn}、将来の絵文字対策）
+// (h) Discord が絵文字表示する頻出のテキスト既定文字（許可リスト。U+FE0E が後続する場合は除外）
+// それ以外の Emoji_Presentation=No の文字（© ® ™ ‼ ⁉ ℹ ↔ 〰 〽 ㊗ ㊙ ⌨ ♀ ♂ ♨ 等）は U+FE0F が付かない限り検出しない。
+const EMOJI_ZWJ_PART = String.raw`(?=\p{Emoji}|\p{Cn})\p{Extended_Pictographic}(?:\p{Emoji_Modifier})?\uFE0F?`;
+const DISCORD_TEXT_DEFAULT_EMOJI_ALLOWLIST =
+  String.raw`[\u2764\u2665\u2660\u2663\u2666\u2714\u270C\u263A\u2600\u25B6\u25C0\u2B06\u2B07\u2B05\u27A1\u2709]`;
+const UNICODE_EMOJI = new RegExp(
+  [
+    String.raw`\p{Regional_Indicator}{2}`,
+    String.raw`[#*0-9]\uFE0F?\u20E3`,
+    String.raw`${EMOJI_ZWJ_PART}(?:\u200D${EMOJI_ZWJ_PART})+`,
+    String.raw`\p{Emoji}\p{Emoji_Modifier}`,
+    String.raw`\p{Emoji}\uFE0F`,
+    String.raw`\p{Emoji_Presentation}`,
+    String.raw`(?=\p{Cn})\p{Extended_Pictographic}`,
+    String.raw`${DISCORD_TEXT_DEFAULT_EMOJI_ALLOWLIST}(?!\uFE0E)`,
+  ].join("|"),
+  "u",
+);
 
-function messageContainsEmoji(content: string): boolean {
+export function messageContainsEmoji(content: string): boolean {
   return CUSTOM_EMOJI.test(content) || UNICODE_EMOJI.test(content);
 }
 

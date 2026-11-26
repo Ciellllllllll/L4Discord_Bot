@@ -1,6 +1,40 @@
 // DiscordBotv2 remindersystem.js の編集モーダル customId 接頭辞
 
 export const EDIT_MODAL_PREFIX = "rem_manage_edit_modal";
+export const DISCORD_CUSTOM_ID_MAX = 100;
+
+export function buildEditModalCustomId(rowId: string, fireAtIso: string): string | null {
+  const parsedMs = Date.parse(fireAtIso);
+  // fire_at がパースできない旧データ等では番兵値 0 を使い、編集モーダルを開けるようにする。
+  const fireAtMs = Number.isFinite(parsedMs) && parsedMs >= 0 ? parsedMs : 0;
+  const withFireAt = `${EDIT_MODAL_PREFIX}:${rowId}:${fireAtMs}`;
+  // rowId は UUID (36文字) のため通常は 72 文字前後で DISCORD_CUSTOM_ID_MAX (100文字) を超えない。
+  // 万が一超える場合も fire_at なしの旧形式へフォールバックせず null を返す。
+  if (withFireAt.length > DISCORD_CUSTOM_ID_MAX) {
+    return null;
+  }
+  return withFireAt;
+}
+
+export function parseEditModalCustomId(
+  customId: string,
+): { rowId: string; modalFireAtMs: number | null } | null {
+  const prefix = `${EDIT_MODAL_PREFIX}:`;
+  if (!customId.startsWith(prefix)) return null;
+  const suffix = customId.slice(prefix.length);
+  if (!suffix) return null;
+  const lastColon = suffix.lastIndexOf(":");
+  if (lastColon > 0) {
+    const maybeMs = suffix.slice(lastColon + 1);
+    if (/^\d+$/.test(maybeMs)) {
+      const parsedMs = Number(maybeMs);
+      if (Number.isSafeInteger(parsedMs)) {
+        return { rowId: suffix.slice(0, lastColon), modalFireAtMs: parsedMs };
+      }
+    }
+  }
+  return { rowId: suffix, modalFireAtMs: null };
+}
 
 // モーダル入力の繰り返し欄（`10m` 形式）
 

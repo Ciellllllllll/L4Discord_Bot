@@ -110,6 +110,23 @@ test("runtime shutdown stops timers, watcher, worker, VC sweep, and Discord clie
   assert.deepEqual(calls, ["presence", "reminder", "deals", "lol", "worker", "vc", "client"]);
 });
 
+test("runtime shutdown awaits async reminder scheduler stop before destroying Discord client", async () => {
+  const calls: string[] = [];
+  const shutdown = createRuntimeShutdown({
+    reminderTimer: {
+      stop: async () => {
+        calls.push("reminder:start");
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        calls.push("reminder:done");
+      },
+    },
+    vcTemp: { stopSweep: () => { calls.push("vc"); } },
+    client: { destroy: () => { calls.push("client"); } },
+  });
+  await shutdown();
+  assert.deepEqual(calls, ["reminder:start", "reminder:done", "vc", "client"]);
+});
+
 test("runtime shutdown stops the uptime controller before destroying the Discord client", async () => {
   const calls: string[] = [];
   const shutdown = createRuntimeShutdown({
@@ -364,4 +381,44 @@ test("cache maintenance startup failure clears already registered resources", as
   });
   assert.equal(started, false);
   assert.deepEqual(calls, ["presence", "reminder", "deals"]);
+});
+
+test("mid-startup failure stops timers created before the failing service", async () => {
+  const calls: string[] = [];
+  const lifecycle = createRuntimeResourceLifecycle({
+    vcTemp: { stopSweep: () => undefined },
+    client: { destroy: () => undefined },
+    clearInterval: (timer) => { calls.push((timer as unknown as { marker: string }).marker); },
+  });
+  const started = await startClientReadyBackgroundServices({
+    lifecycle,
+    startPresence: () => ({ marker: "presence" } as never),
+    startReminder: () => { throw new Error("reminder failed"); },
+    startGameDeal: () => ({ stop: async () => { calls.push("deals"); } }),
+    startLolWatcher: async () => null,
+    startYouTubeWatcher: () => null,
+    logError: () => undefined,
+  });
+  assert.equal(started, false);
+  assert.deepEqual(calls, ["presence"]);
+});
+
+test("YouTube watcher startup failure stops lolWatcher and earlier timers", async () => {
+  const calls: string[] = [];
+  const lifecycle = createRuntimeResourceLifecycle({
+    vcTemp: { stopSweep: () => undefined },
+    client: { destroy: () => undefined },
+    clearInterval: (timer) => { calls.push((timer as unknown as { marker: string }).marker); },
+  });
+  const started = await startClientReadyBackgroundServices({
+    lifecycle,
+    startPresence: () => ({ marker: "presence" } as never),
+    startReminder: () => ({ marker: "reminder" } as never),
+    startGameDeal: () => ({ stop: async () => { calls.push("deals"); } }),
+    startLolWatcher: async () => ({ stop: async () => { calls.push("lol"); } }),
+    startYouTubeWatcher: () => { throw new Error("youtube failed"); },
+    logError: () => undefined,
+  });
+  assert.equal(started, false);
+  assert.deepEqual(calls, ["presence", "reminder", "deals", "lol"]);
 });

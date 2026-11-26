@@ -17,9 +17,9 @@ import {
   type ContainerPanelPayload,
 } from "../panels/componentPanelPayload.js";
 import {
+  buildEditModalCustomId,
   cut,
   dueToInput,
-  EDIT_MODAL_PREFIX,
   EVENT_META,
   EVENT_TYPES,
   formatDue,
@@ -275,11 +275,13 @@ export function buildCreateModal(kind: ReminderEvType, channelId = ""): ModalBui
     );
 }
 
-export function buildEditModal(row: ReminderHubRowView): ModalBuilder {
+export function buildEditModal(row: ReminderHubRowView): ModalBuilder | null {
+  const customId = buildEditModalCustomId(row.id, row.fire_at);
+  if (!customId) return null;
   const kind = normalizeEventType(row.ev_type);
 
   return new ModalBuilder()
-    .setCustomId(`${EDIT_MODAL_PREFIX}:${row.id}`)
+    .setCustomId(customId)
     .setTitle(`${EVENT_META[kind].label}編集`.slice(0, 45))
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(

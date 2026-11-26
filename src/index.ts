@@ -125,12 +125,19 @@ async function main(): Promise<void> {
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = () => shutdownPromise ??= (async () => {
     log.info("shutting down");
-    await shutdownWithCleanup({
-      shutdownHandlers: () => runtimeHandlers.shutdown(),
-      closeDatabase: () => closeDatabaseRuntime(runtime),
-      warn: (err, message) => log.warn({ err }, message),
-    });
-    process.exit(0);
+    let exitCode = 0;
+    try {
+      await shutdownWithCleanup({
+        shutdownHandlers: () => runtimeHandlers.shutdown(),
+        closeDatabase: () => closeDatabaseRuntime(runtime),
+        warn: (err, message) => log.warn({ err }, message),
+      });
+    } catch (err) {
+      exitCode = 1;
+      log.error({ err }, "shutdown failed");
+    } finally {
+      process.exit(exitCode);
+    }
   })();
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());

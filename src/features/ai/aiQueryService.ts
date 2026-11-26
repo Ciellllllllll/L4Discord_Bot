@@ -8,7 +8,9 @@ import {
   type ChatInputCommandInteraction,
   type Guild,
   type GuildMember,
+  type InteractionEditReplyOptions,
   type Message,
+  type MessagePayload,
   type TextBasedChannel,
 } from "discord.js";
 import type { AppConfig } from "../../core/config.js";
@@ -43,6 +45,7 @@ const localLlmQueues = new WeakMap<AppConfig, LocalLlmQueue>();
 
 export type AiQueryRouteOptions = {
   r18?: boolean;
+  editProgressReply?: (options: string | MessagePayload | InteractionEditReplyOptions) => Promise<unknown>;
 };
 
 type QuestionProvider = "openai" | "deepseek" | "openrouter" | "local_llm";
@@ -228,7 +231,9 @@ export class AiQueryService {
     userName: string,
     question: string,
     attachment?: PreparedQAttachment,
+    editProgressReply?: AiQueryRouteOptions["editProgressReply"],
   ): Promise<QuestionAnswer | null> {
+    const sendProgress = editProgressReply ?? ((opts) => interaction.editReply(opts));
     if (!this.ctx.config.R18_CHANNEL_ID || interaction.channelId !== this.ctx.config.R18_CHANNEL_ID) {
       await interaction.editReply({
         content: "R18モードの /q は指定されたR18チャンネルでのみ利用できます。",
@@ -256,7 +261,7 @@ export class AiQueryService {
       userId,
       onStart: () => {
         started = true;
-        startNotice = interaction.editReply({
+        startNotice = sendProgress({
           content: "生成中です。ローカルLLMのため時間がかかる場合があります。",
           embeds: [],
           components: [],
@@ -281,7 +286,7 @@ export class AiQueryService {
 
     const waitingAhead = started ? ticket.queuedAhead : ticket.queuedAhead + 1;
     if (waitingAhead > 0) {
-      await interaction.editReply({
+      await sendProgress({
         content: `待機中: あなたの前に${waitingAhead}件あります。`,
         embeds: [],
         components: [],
@@ -360,7 +365,7 @@ export class AiQueryService {
 
     const runQuestionFlow = async () => {
       const answer = r18
-        ? await this.askR18Question(interaction, guildId, userId, userName, text, attachment)
+        ? await this.askR18Question(interaction, guildId, userId, userName, text, attachment, options.editProgressReply)
         : await this.askQuestion(guildId, userId, userName, text, attachment);
       if (answer === null) return;
       const questionDisplay = ["### 質問", text.slice(0, 2000)].join("\n");

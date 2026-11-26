@@ -109,6 +109,7 @@ export class DetecterService {
       defaultReasonText: this.ctx.config.DETECTER_DEFAULT_REASON_TEXT,
       isProcessedAuditId: (auditId) => this.processedAuditIds.has(auditId),
       warn: (meta, msg) => this.ctx.log.warn(meta, msg),
+      debug: (meta, msg) => this.ctx.log.debug(meta, msg),
     });
   }
 

@@ -20,6 +20,7 @@ import { canUseAi, markAiUse } from "./userCooldown.js";
 
 const Q_COOLDOWN_MS = 15_000;
 const Q_FAILED_MESSAGE = "AI への問い合わせに失敗しました。しばらくしてから再度お試しください。";
+const inFlightQUsers = new Set<string>();
 
 export async function handleThinkingCommand(
   interaction: ChatInputCommandInteraction,
@@ -71,35 +72,113 @@ export async function handleShowPromptCommand(interaction: ChatInputCommandInter
   });
 }
 
-export async function handleQCommand(interaction: ChatInputCommandInteraction, ctx: BotContext): Promise<void> {
+export type HandleQCommandDeps = {
+  getAiR18Enabled?: typeof getAiR18Enabled;
+  createQueryService?: (ctx: BotContext) => Pick<AiQueryService, "routeSlashInteraction">;
+};
+
+async function sendQFailureReply(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  content: string,
+  options: { answerSent?: boolean } = {},
+): Promise<void> {
+  try {
+    if (options.answerSent) {
+      await interaction.followUp({
+        content,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    } else if (interaction.deferred) {
+      await interaction.editReply({
+        content,
+        embeds: [],
+        components: [],
+        allowedMentions: { parse: [] },
+      });
+    } else if (interaction.replied) {
+      await interaction.followUp({
+        content,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    } else {
+      await interaction.reply({
+        content,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    }
+  } catch (replyErr) {
+    ctx.log.warn({ err: replyErr }, "AI question failure reply failed");
+  }
+}
+
+export async function handleQCommand(
+  interaction: ChatInputCommandInteraction,
+  ctx: BotContext,
+  deps: HandleQCommandDeps = {},
+): Promise<void> {
   const raw = interaction.options.getString("text")?.trim() ?? "";
   if (!raw && !interaction.options.getAttachment("attachment")) {
     await interaction.reply({ content: "質問の本文か添付ファイルを指定してください。", flags: MessageFlags.Ephemeral });
     return;
   }
-  if (!canUseAi(interaction.user.id, Q_COOLDOWN_MS)) {
+  const userId = interaction.user.id;
+  if (inFlightQUsers.has(userId) || !canUseAi(userId, Q_COOLDOWN_MS)) {
     await interaction.reply({ content: "少し待ってから再度お試しください。", flags: MessageFlags.Ephemeral });
     return;
   }
-  const r18 = await getAiR18Enabled(ctx, interaction.guildId!, interaction.user.id);
-  await interaction.deferReply(r18 ? { flags: MessageFlags.Ephemeral } : undefined);
+  const resolveR18 = deps.getAiR18Enabled ?? getAiR18Enabled;
+  const createQueryService = deps.createQueryService ?? ((c: BotContext) => new AiQueryService(c));
+  inFlightQUsers.add(userId);
   try {
-    const svc = new AiQueryService(ctx);
-    await svc.routeSlashInteraction(interaction, { r18 });
-    markAiUse(interaction.user.id);
-  } catch (e) {
-    if (!(e instanceof QAttachmentError)) ctx.log.error({ err: e }, "AI question failed");
-    const content = e instanceof QAttachmentError
-      ? e.message
-      : e instanceof AiRequestError && e.kind === "configuration"
-        ? "AIプロバイダーの設定が未完了です。管理者に .env のAPIキー設定を確認してください。"
-        : Q_FAILED_MESSAGE;
-    await interaction.editReply({
-      content,
-      embeds: [],
-      components: [],
-      allowedMentions: { parse: [] },
+    let r18: boolean;
+    try {
+      r18 = await resolveR18(ctx, interaction.guildId!, userId);
+      await interaction.deferReply(r18 ? { flags: MessageFlags.Ephemeral } : undefined);
+    } catch (e) {
+      ctx.log.error({ err: e }, "AI question setup failed");
+      await sendQFailureReply(interaction, ctx, Q_FAILED_MESSAGE);
+      return;
+    }
+    let answerSent = false;
+    const trackedInteraction = new Proxy(interaction, {
+      get(target, prop, receiver) {
+        if (prop === "editReply") {
+          return async (...args: Parameters<ChatInputCommandInteraction["editReply"]>) => {
+            const result = await target.editReply(...args);
+            answerSent = true;
+            return result;
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
     });
+    try {
+      const svc = createQueryService(ctx);
+      await svc.routeSlashInteraction(trackedInteraction, {
+        r18,
+        editProgressReply: (opts) => interaction.editReply(opts),
+      });
+      markAiUse(userId);
+    } catch (e) {
+      const isConfigurationError = e instanceof AiRequestError && e.kind === "configuration";
+      if (!(e instanceof QAttachmentError)) ctx.log.error({ err: e }, "AI question failed");
+      if (!(e instanceof QAttachmentError) && !isConfigurationError) {
+        markAiUse(userId);
+      }
+      const content = e instanceof QAttachmentError
+        ? e.message
+        : isConfigurationError
+          ? "AIプロバイダーの設定が未完了です。管理者に .env のAPIキー設定を確認してください。"
+          : Q_FAILED_MESSAGE;
+      await sendQFailureReply(interaction, ctx, content, { answerSent });
+    }
+  } finally {
+    inFlightQUsers.delete(userId);
   }
 }
 

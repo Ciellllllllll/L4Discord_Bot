@@ -8,15 +8,25 @@ import {
   type VoiceState,
 } from "discord.js";
 import type { AppConfig } from "../../core/config.js";
-import { isDiscordUnknownChannel } from "../../core/discordErrors.js";
+import {
+  DISCORD_API_MISSING_ACCESS,
+  DISCORD_API_MISSING_PERMISSIONS,
+  getDiscordErrorCode,
+  getHttpStatus,
+  isDiscordUnknownChannel,
+  isDiscordUnknownChannelOrNotFound,
+} from "../../core/discordErrors.js";
 import type pino from "pino";
 import { setTimeout as delay } from "node:timers/promises";
 import type { VcTempPersistence } from "./vcTempPersistence.js";
 
 const GRACE_NO_JOIN_MS = 24 * 60 * 60 * 1000;
 const EMPTY_DELETE_DEBOUNCE_MS = 1000;
+const MAX_ACCESS_DENIED_FAILURES = 10;
+const ACCESS_DENIED_BACKOFF_SWEEP_INTERVAL = 10;
 
 type ActiveVcMeta = {
+  guildId: string;
   createdAtMs: number;
   userEverJoined: boolean;
 };
@@ -64,8 +74,28 @@ export const vcRenameErrText = {
 
 export type VcRenameErrorKey = keyof typeof vcRenameErrText;
 
+function fetchErrorDedupKey(err: unknown): string {
+  const code = getDiscordErrorCode(err);
+  if (code !== null) return `code:${code}`;
+  const status = getHttpStatus(err);
+  if (status !== null) return `status:${status}`;
+  if (err instanceof Error) return `err:${err.name}:${err.message}`;
+  return `err:${String(err)}`;
+}
+
+function isAccessDeniedError(err: unknown): boolean {
+  const code = getDiscordErrorCode(err);
+  if (code === DISCORD_API_MISSING_ACCESS || code === DISCORD_API_MISSING_PERMISSIONS) {
+    return true;
+  }
+  return getHttpStatus(err) === 403;
+}
+
 export class VcTemporaryChannelManager {
   private readonly activeVcs = new Map<string, ActiveVcMeta>();
+  private readonly lastFetchErrorKeyByChannel = new Map<string, string>();
+  private readonly accessDeniedCountByChannel = new Map<string, number>();
+  private readonly accessDeniedBackoffRemainingSweeps = new Map<string, number>();
   private sweepTimer: NodeJS.Timeout | undefined;
 
   constructor(
@@ -114,50 +144,163 @@ export class VcTemporaryChannelManager {
         this.removeTracking(row.channelId);
         continue;
       }
+      if (this.isGuildMissingFromCache(row.guildId)) {
+        this.removeTracking(row.channelId);
+        this.log.info(
+          { channelId: row.channelId, guildId: row.guildId, context: "restoreFromDatabase" },
+          "temporary VC guild not in cache; removed tracking",
+        );
+        continue;
+      }
       this.activeVcs.set(row.channelId, {
+        guildId: row.guildId,
         createdAtMs: row.createdAtMs,
         userEverJoined: row.userEverJoined,
       });
-      const ch =
-        (this.client.channels.cache.get(row.channelId) as VoiceBasedChannel | undefined) ??
-        ((await this.client.channels.fetch(row.channelId).catch(() => null)) as VoiceBasedChannel | null);
-      if (!ch || ch.type !== ChannelType.GuildVoice) {
+      const fetched = await this.fetchTrackedVoiceChannel(row.channelId, "restoreFromDatabase");
+      if (fetched.status === "missing") {
         this.removeTracking(row.channelId);
         continue;
       }
-      if (ch.members.size === 0) {
-        void this.maybeDeleteEmptyVc(ch);
+      if (fetched.status !== "ok") {
+        continue;
+      }
+      if (fetched.channel.members.size === 0) {
+        void this.maybeDeleteEmptyVc(fetched.channel);
       }
     }
   }
 
+  private async fetchTrackedVoiceChannel(
+    channelId: string,
+    context: string,
+    options: { countAccessDenied?: boolean } = {},
+  ): Promise<
+    | { status: "ok"; channel: VoiceChannel }
+    | { status: "missing" }
+    | { status: "error"; err: unknown }
+  > {
+    const cached = this.client.channels.cache.get(channelId);
+    if (cached) {
+      this.lastFetchErrorKeyByChannel.delete(channelId);
+      this.accessDeniedCountByChannel.delete(channelId);
+      this.accessDeniedBackoffRemainingSweeps.delete(channelId);
+      if (cached.type !== ChannelType.GuildVoice) {
+        return { status: "missing" };
+      }
+      return { status: "ok", channel: cached };
+    }
+    try {
+      const fetched = await this.client.channels.fetch(channelId);
+      this.lastFetchErrorKeyByChannel.delete(channelId);
+      this.accessDeniedCountByChannel.delete(channelId);
+      this.accessDeniedBackoffRemainingSweeps.delete(channelId);
+      if (!fetched || fetched.type !== ChannelType.GuildVoice) {
+        return { status: "missing" };
+      }
+      return { status: "ok", channel: fetched };
+    } catch (err) {
+      if (isDiscordUnknownChannelOrNotFound(err)) {
+        this.lastFetchErrorKeyByChannel.delete(channelId);
+        this.accessDeniedCountByChannel.delete(channelId);
+        this.accessDeniedBackoffRemainingSweeps.delete(channelId);
+        return { status: "missing" };
+      }
+      if (options.countAccessDenied) {
+        if (isAccessDeniedError(err)) {
+          const failures = (this.accessDeniedCountByChannel.get(channelId) ?? 0) + 1;
+          this.accessDeniedCountByChannel.set(channelId, failures);
+          if (failures >= MAX_ACCESS_DENIED_FAILURES) {
+            // 追跡と DB 行は維持したまま確認間隔を長くする（以後は 10 回の sweep に 1 回だけ fetch する）
+            this.accessDeniedBackoffRemainingSweeps.set(channelId, ACCESS_DENIED_BACKOFF_SWEEP_INTERVAL - 1);
+            if (failures === MAX_ACCESS_DENIED_FAILURES) {
+              this.lastFetchErrorKeyByChannel.set(channelId, fetchErrorDedupKey(err));
+              this.log.warn(
+                {
+                  err,
+                  channelId,
+                  context,
+                  consecutiveFailures: failures,
+                  sweepInterval: ACCESS_DENIED_BACKOFF_SWEEP_INTERVAL,
+                },
+                "temporary VC fetch access denied repeatedly; reducing sweep frequency",
+              );
+              return { status: "error", err };
+            }
+          }
+        } else {
+          // 5xx・429・ネットワーク等、アクセス拒否以外の失敗を挟んだ場合は連続カウンタと間隔延長をリセットする
+          this.accessDeniedCountByChannel.delete(channelId);
+          this.accessDeniedBackoffRemainingSweeps.delete(channelId);
+        }
+      }
+      const errKey = fetchErrorDedupKey(err);
+      if (this.lastFetchErrorKeyByChannel.get(channelId) === errKey) {
+        this.log.debug?.({ err, channelId, context }, "temporary VC fetch failed; keeping tracking");
+      } else {
+        this.lastFetchErrorKeyByChannel.set(channelId, errKey);
+        this.log.warn({ err, channelId, context }, "temporary VC fetch failed; keeping tracking");
+      }
+      return { status: "error", err };
+    }
+  }
+
+  private isGuildMissingFromCache(guildId: string): boolean {
+    if (typeof this.client.isReady !== "function" || !this.client.isReady()) {
+      return false;
+    }
+    const guildsCache = this.client.guilds?.cache;
+    if (!guildsCache) {
+      return false;
+    }
+    return !guildsCache.has(guildId);
+  }
+
   private removeTracking(channelId: string): void {
     this.activeVcs.delete(channelId);
+    this.lastFetchErrorKeyByChannel.delete(channelId);
+    this.accessDeniedCountByChannel.delete(channelId);
+    this.accessDeniedBackoffRemainingSweeps.delete(channelId);
     void this.persistence.deleteTracked(channelId).catch((err) => this.log.warn({ err, channelId }, "temporary VC tracking delete failed"));
   }
 
   private async maybeDeleteEmptyVcById(channelId: string): Promise<void> {
     if (!this.activeVcs.has(channelId)) return;
-    const ch =
-      (this.client.channels.cache.get(channelId) as VoiceBasedChannel | undefined) ??
-      ((await this.client.channels.fetch(channelId).catch(() => null)) as VoiceBasedChannel | null);
-    if (!ch || ch.type !== ChannelType.GuildVoice) {
+    const fetched = await this.fetchTrackedVoiceChannel(channelId, "maybeDeleteEmptyVcById");
+    if (fetched.status === "missing") {
       this.removeTracking(channelId);
       return;
     }
-    await this.maybeDeleteEmptyVc(ch);
+    if (fetched.status !== "ok") {
+      return;
+    }
+    await this.maybeDeleteEmptyVc(fetched.channel);
   }
 
   private async sweepTask(): Promise<void> {
-    for (const channelId of [...this.activeVcs.keys()]) {
-      const ch =
-        this.client.channels.cache.get(channelId) ??
-        (await this.client.channels.fetch(channelId).catch(() => null));
-      if (!ch || ch.type !== ChannelType.GuildVoice) {
+    for (const [channelId, meta] of [...this.activeVcs.entries()]) {
+      if (this.isGuildMissingFromCache(meta.guildId)) {
+        this.removeTracking(channelId);
+        this.log.info(
+          { channelId, guildId: meta.guildId, context: "sweepTask" },
+          "temporary VC guild not in cache; removed tracking",
+        );
+        continue;
+      }
+      const remaining = this.accessDeniedBackoffRemainingSweeps.get(channelId) ?? 0;
+      if (remaining > 0) {
+        this.accessDeniedBackoffRemainingSweeps.set(channelId, remaining - 1);
+        continue;
+      }
+      const fetched = await this.fetchTrackedVoiceChannel(channelId, "sweepTask", { countAccessDenied: true });
+      if (fetched.status === "missing") {
         this.removeTracking(channelId);
         continue;
       }
-      if (ch.members.size === 0) await this.maybeDeleteEmptyVc(ch);
+      if (fetched.status === "error") {
+        continue;
+      }
+      if (fetched.channel.members.size === 0) await this.maybeDeleteEmptyVc(fetched.channel);
     }
   }
 
@@ -166,25 +309,28 @@ export class VcTemporaryChannelManager {
     const meta = this.activeVcs.get(channel.id);
     if (!meta) return;
 
-    let fresh =
-      (this.client.channels.cache.get(channel.id) as VoiceBasedChannel | undefined) ??
-      ((await this.client.channels.fetch(channel.id).catch(() => null)) as VoiceBasedChannel | null);
-    if (!fresh || fresh.type !== ChannelType.GuildVoice) {
+    const firstCheck = await this.fetchTrackedVoiceChannel(channel.id, "maybeDeleteEmptyVc:beforeDebounce");
+    if (firstCheck.status === "missing") {
       this.removeTracking(channel.id);
       return;
     }
-    if (fresh.members.size > 0) return;
+    if (firstCheck.status !== "ok") {
+      return;
+    }
+    if (firstCheck.channel.members.size > 0) return;
     if (!meta.userEverJoined && Date.now() - meta.createdAtMs < GRACE_NO_JOIN_MS) return;
 
     await delay(EMPTY_DELETE_DEBOUNCE_MS);
 
-    fresh =
-      (this.client.channels.cache.get(channel.id) as VoiceBasedChannel | undefined) ??
-      ((await this.client.channels.fetch(channel.id).catch(() => null)) as VoiceBasedChannel | null);
-    if (!fresh || fresh.type !== ChannelType.GuildVoice) {
+    const secondCheck = await this.fetchTrackedVoiceChannel(channel.id, "maybeDeleteEmptyVc:afterDebounce");
+    if (secondCheck.status === "missing") {
       this.removeTracking(channel.id);
       return;
     }
+    if (secondCheck.status !== "ok") {
+      return;
+    }
+    const fresh = secondCheck.channel;
     if (fresh.members.size > 0) return;
 
     try {
@@ -228,6 +374,7 @@ export class VcTemporaryChannelManager {
 
       const createdAtMs = Date.now();
       this.activeVcs.set(vc.id, {
+        guildId: guild.id,
         createdAtMs,
         userEverJoined: false,
       });
@@ -273,13 +420,15 @@ export class VcTemporaryChannelManager {
       return { ok: false, error: "invalid_name_length" };
     }
 
-    const ch =
-      (this.client.channels.cache.get(channelId) as VoiceBasedChannel | undefined) ??
-      ((await this.client.channels.fetch(channelId).catch(() => null)) as VoiceBasedChannel | null);
-    if (!ch || ch.type !== ChannelType.GuildVoice) {
+    const fetched = await this.fetchTrackedVoiceChannel(channelId, "renameTemporaryVc");
+    if (fetched.status === "missing") {
       this.removeTracking(channelId);
       return { ok: false, error: "not_temporary_vc" };
     }
+    if (fetched.status !== "ok") {
+      return { ok: false, error: "api_error" };
+    }
+    const ch = fetched.channel;
 
     try {
       await ch.setName(vcName, `一時VC 名称変更者: ${opts.actorTag || opts.actorUserId}`);

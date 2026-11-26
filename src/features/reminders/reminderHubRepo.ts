@@ -11,6 +11,14 @@ function rdb(ctx: BotContext) {
 
 const MANAGE_MAX_ITEMS = 25;
 
+function getValidRecurrenceIntervalSec(recurrence: unknown): number | null {
+  if (!recurrence || typeof recurrence !== "object" || !("interval_sec" in recurrence)) {
+    return null;
+  }
+  const sec = Number((recurrence as { interval_sec: unknown }).interval_sec);
+  return Number.isFinite(sec) && sec > 0 ? sec : null;
+}
+
 function rowData(row: RemindersRow): ReminderStoredData {
   const raw = row.data;
   let d: Record<string, unknown>;
@@ -25,18 +33,18 @@ function rowData(row: RemindersRow): ReminderStoredData {
   }
   const ev = normalizeEventType(String(d.ev_type ?? "reminder"));
   const title = typeof d.title === "string" && d.title.trim() ? d.title.trim() : row.body.slice(0, 100);
-  const rec = d.recurrence;
-  let recurrence: { interval_sec: number } | null | undefined;
-  if (rec && typeof rec === "object" && rec !== null && "interval_sec" in rec) {
-    const sec = Number((rec as { interval_sec: unknown }).interval_sec);
-    if (Number.isFinite(sec) && sec > 0) recurrence = { interval_sec: sec };
-  }
-  return { ev_type: ev, title, recurrence: recurrence ?? null };
+  const sec = getValidRecurrenceIntervalSec(d.recurrence);
+  const recurrence = sec !== null ? { interval_sec: sec } : null;
+  return { ev_type: ev, title, recurrence };
+}
+
+export function isRecurringReminder(row: RemindersRow): boolean {
+  return getValidRecurrenceIntervalSec(rowData(row).recurrence) !== null;
 }
 
 function recurrenceJsonFromData(data: ReminderStoredData): string | null {
-  const r = data.recurrence;
-  if (r && Number(r.interval_sec) > 0) return JSON.stringify({ interval_sec: r.interval_sec });
+  const sec = getValidRecurrenceIntervalSec(data.recurrence);
+  if (sec !== null) return JSON.stringify({ interval_sec: sec });
   return null;
 }
 
@@ -147,6 +155,18 @@ export async function getActiveForAuthor(
   return row ? toView(row as RemindersRow) : null;
 }
 
+export async function getReminderRowById(
+  ctx: BotContext,
+  id: string,
+): Promise<RemindersRow | null> {
+  const row = await rdb(ctx)
+    .selectFrom("reminders")
+    .selectAll()
+    .where("id", "=", id)
+    .executeTakeFirst();
+  return row ? (row as RemindersRow) : null;
+}
+
 export async function getReminderRowForAuthor(
   ctx: BotContext,
   guildId: string,
@@ -164,7 +184,25 @@ export async function getReminderRowForAuthor(
   return row ? (row as RemindersRow) : null;
 }
 
-export async function updateReminderHubContent(
+export async function updateReminderHubChannel(
+  ctx: BotContext,
+  guildId: string,
+  authorId: string,
+  id: string,
+  channelId: string,
+): Promise<number> {
+  const result = await rdb(ctx)
+    .updateTable("reminders")
+    .set({ channel_id: channelId })
+    .where("guild_id", "=", guildId)
+    .where("author_id", "=", authorId)
+    .where("id", "=", id)
+    .where("status", "=", "pending")
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0);
+}
+
+export async function updateReminderHubContentAndChannel(
   ctx: BotContext,
   input: {
     guildId: string;
@@ -174,9 +212,11 @@ export async function updateReminderHubContent(
     body: string;
     fireAt: Date;
     recurrence: { interval_sec: number } | null;
+    channelId: string;
   },
+  db = rdb(ctx),
 ): Promise<number> {
-  const cur = await rdb(ctx)
+  const cur = await db
     .selectFrom("reminders")
     .selectAll()
     .where("guild_id", "=", input.guildId)
@@ -192,34 +232,17 @@ export async function updateReminderHubContent(
     recurrence: input.recurrence,
   };
   const nextDataJson = JSON.stringify(nextData);
-  const result = await rdb(ctx)
+  const result = await db
     .updateTable("reminders")
     .set({
       body: input.body,
       fire_at: input.fireAt.toISOString(),
       data: nextDataJson as unknown as Record<string, unknown>,
+      channel_id: input.channelId,
     })
     .where("guild_id", "=", input.guildId)
     .where("author_id", "=", input.authorId)
     .where("id", "=", input.id)
-    .where("status", "=", "pending")
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0);
-}
-
-export async function updateReminderHubChannel(
-  ctx: BotContext,
-  guildId: string,
-  authorId: string,
-  id: string,
-  channelId: string,
-): Promise<number> {
-  const result = await rdb(ctx)
-    .updateTable("reminders")
-    .set({ channel_id: channelId })
-    .where("guild_id", "=", guildId)
-    .where("author_id", "=", authorId)
-    .where("id", "=", id)
     .where("status", "=", "pending")
     .executeTakeFirst();
   return Number(result.numUpdatedRows ?? 0);
@@ -242,12 +265,21 @@ export async function cancelReminderForAuthor(
   return Number(result.numUpdatedRows ?? 0);
 }
 
-export async function fetchDuePending(ctx: BotContext, nowIsoStr: string, limit: number): Promise<RemindersRow[]> {
-  const rows = await rdb(ctx)
+export async function fetchDuePending(
+  ctx: BotContext,
+  nowIsoStr: string,
+  limit: number,
+  excludeIds: readonly string[] = [],
+): Promise<RemindersRow[]> {
+  let query = rdb(ctx)
     .selectFrom("reminders")
     .selectAll()
     .where("status", "=", "pending")
-    .where("fire_at", "<=", nowIsoStr)
+    .where("fire_at", "<=", nowIsoStr);
+  if (excludeIds.length > 0) {
+    query = query.where("id", "not in", [...excludeIds]);
+  }
+  const rows = await query
     .orderBy("fire_at", "asc")
     .limit(limit)
     .execute();
@@ -256,25 +288,93 @@ export async function fetchDuePending(ctx: BotContext, nowIsoStr: string, limit:
 
 // 即時投稿後の更新（繰り返しは基準を「今」に）
 
+export function computeNextRecurringFireAt(
+  fireAt: string,
+  intervalSec: number,
+  forceNow: boolean,
+  nowMs = Date.now(),
+): Date {
+  const intervalMs = intervalSec * 1000;
+  if (forceNow) {
+    return new Date(nowMs + intervalMs);
+  }
+  const base = new Date(fireAt);
+  const baseTime = Number.isNaN(base.getTime()) ? nowMs : base.getTime();
+  if (baseTime + intervalMs > nowMs) {
+    return new Date(baseTime + intervalMs);
+  }
+  const steps = Math.floor((nowMs - baseTime) / intervalMs) + 1;
+  return new Date(baseTime + steps * intervalMs);
+}
+
+export function computeNextFireAtForRow(
+  row: RemindersRow,
+  forceNow: boolean,
+  nowMs = Date.now(),
+): string | null {
+  if (!isRecurringReminder(row)) return null;
+  const intervalSec = rowData(row).recurrence!.interval_sec;
+  return computeNextRecurringFireAt(row.fire_at, intervalSec, forceNow, nowMs).toISOString();
+}
+
+export type ReminderDispatchUpdateResult = {
+  updated: number;
+  recurring: boolean;
+  nextFireAt: string | null;
+};
+
 export async function applyDispatchResult(
   ctx: BotContext,
   row: RemindersRow,
   forceNow: boolean,
-): Promise<void> {
-  const data = rowData(row);
-  const recurrence = data.recurrence;
-  if (recurrence && Number(recurrence.interval_sec) > 0) {
-    const base = forceNow ? new Date() : new Date(row.fire_at);
-    const baseTime = Number.isNaN(base.getTime()) ? Date.now() : base.getTime();
-    const next = new Date(baseTime + Number(recurrence.interval_sec) * 1000);
-    await rdb(ctx)
+  db = rdb(ctx),
+  fixedNextFireAt?: string | null,
+): Promise<ReminderDispatchUpdateResult> {
+  if (isRecurringReminder(row)) {
+    const nextIso =
+      typeof fixedNextFireAt === "string" && fixedNextFireAt.length > 0
+        ? fixedNextFireAt
+        : computeNextFireAtForRow(row, forceNow)!;
+    const result = await db
       .updateTable("reminders")
-      .set({ fire_at: next.toISOString() })
+      .set({ fire_at: nextIso })
       .where("id", "=", row.id)
-      .execute();
-  } else {
-    await rdb(ctx).updateTable("reminders").set({ status: "fired" }).where("id", "=", row.id).execute();
+      .where("status", "=", "pending")
+      .where("fire_at", "=", row.fire_at)
+      .executeTakeFirst();
+    return {
+      updated: Number(result.numUpdatedRows ?? 0),
+      recurring: true,
+      nextFireAt: nextIso,
+    };
   }
+  const result = await db
+    .updateTable("reminders")
+    .set({ status: "fired" })
+    .where("id", "=", row.id)
+    .where("status", "=", "pending")
+    .where("fire_at", "=", row.fire_at)
+    .executeTakeFirst();
+  return {
+    updated: Number(result.numUpdatedRows ?? 0),
+    recurring: false,
+    nextFireAt: null,
+  };
+}
+
+export async function cancelUndeliverableReminder(
+  ctx: BotContext,
+  row: RemindersRow,
+  db = rdb(ctx),
+): Promise<number> {
+  const result = await db
+    .updateTable("reminders")
+    .set({ status: "cancelled" })
+    .where("id", "=", row.id)
+    .where("status", "=", "pending")
+    .where("fire_at", "=", row.fire_at)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0);
 }
 
 export function reminderRowStoredData(row: RemindersRow): ReminderStoredData {

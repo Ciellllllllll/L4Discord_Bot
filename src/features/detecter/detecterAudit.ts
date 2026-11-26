@@ -4,24 +4,68 @@ import {
   type GuildAuditLogsEntry,
 } from "discord.js";
 import { setTimeout as delay } from "node:timers/promises";
-import { getDiscordErrorCode } from "../../core/discordErrors.js";
+import { getHttpStatus } from "../../core/discordErrors.js";
 import { normalizeSnowflake } from "../../core/snowflake.js";
 
+const TRANSIENT_NETWORK_ERROR_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EPIPE",
+  "ECONNABORTED",
+  "ERR_SOCKET_CONNECTION_TIMEOUT",
+]);
+
+function isTransientNetworkErrorCode(code: unknown): boolean {
+  if (typeof code !== "string") return false;
+  return TRANSIENT_NETWORK_ERROR_CODES.has(code) || code.startsWith("UND_ERR_");
+}
+
+const MAX_CAUSE_DEPTH = 5;
+
+function hasTransientNetworkError(error: unknown, depth = 0): boolean {
+  if (!error || typeof error !== "object" || depth > MAX_CAUSE_DEPTH) return false;
+  if ("code" in error && isTransientNetworkErrorCode((error as { code: unknown }).code)) {
+    return true;
+  }
+  if ("cause" in error) {
+    return hasTransientNetworkError((error as { cause: unknown }).cause, depth + 1);
+  }
+  return false;
+}
+
+// 恒久エラーや未知のエラーを何度も再試行して無駄な呼び出しや警告ログを増やさないよう、
+// 既知の一時的エラー（タイムアウト・レート制限・5xx・一時的ネットワークエラー）だけをリトライ対象とする。
 function isTransientAuditFetchError(error: unknown): boolean {
-  if (error instanceof TypeError || error instanceof RangeError || error instanceof SyntaxError) {
-    return false;
-  }
-  const discordCode = getDiscordErrorCode(error);
-  if (discordCode !== null) {
-    return false;
-  }
-  if (error && typeof error === "object" && "status" in error) {
-    const status = Number((error as { status: unknown }).status);
-    if (Number.isFinite(status)) {
-      return status === 429 || status >= 500;
+  if (error && typeof error === "object" && "name" in error) {
+    const name = (error as { name: unknown }).name;
+    if (
+      name === "AbortError"
+      || name === "TimeoutError"
+      || name === "RateLimitError"
+      || (typeof name === "string" && name.startsWith("RateLimitError["))
+    ) {
+      return true;
     }
   }
-  return true;
+  if (error instanceof TypeError) {
+    return "cause" in error && hasTransientNetworkError((error as { cause: unknown }).cause, 1);
+  }
+  if (error instanceof RangeError || error instanceof SyntaxError) {
+    return false;
+  }
+  if (hasTransientNetworkError(error)) {
+    return true;
+  }
+  const status = getHttpStatus(error);
+  if (status !== null) {
+    return status === 429 || status >= 500;
+  }
+  return false;
 }
 
 export type AuditLookupResult = {
@@ -119,6 +163,7 @@ export async function findAuditLogForTarget(input: {
   defaultReasonText: string;
   isProcessedAuditId: (auditId: string) => boolean;
   warn: (meta: Record<string, unknown>, message: string) => void;
+  debug?: (meta: Record<string, unknown>, message: string) => void;
   retryDelaysMs?: readonly number[];
 }): Promise<AuditLookupResult | null> {
   const normalizedTargetId = normalizeSnowflake(input.targetUserId);
@@ -128,7 +173,8 @@ export async function findAuditLogForTarget(input: {
   if (!me?.permissions.has("ViewAuditLog")) return null;
 
   const retries = input.retryDelaysMs ?? [250, 800, 1500];
-  for (const wait of retries) {
+  for (let i = 0; i < retries.length; i += 1) {
+    const wait = retries[i] ?? 0;
     if (wait > 0) await delay(wait);
     try {
       const audits = await input.guild.fetchAuditLogs({ limit: 50, type: input.action });
@@ -163,10 +209,12 @@ export async function findAuditLogForTarget(input: {
         };
       }
     } catch (err) {
-      input.warn({ err }, "detecter: failed to inspect audit log");
-      if (!isTransientAuditFetchError(err)) {
+      const isLastAttempt = i === retries.length - 1;
+      if (!isTransientAuditFetchError(err) || isLastAttempt) {
+        input.warn({ err }, "detecter: failed to inspect audit log");
         return null;
       }
+      input.debug?.({ err, attempt: i + 1 }, "detecter: transient audit log fetch error; retrying");
     }
   }
   return null;
